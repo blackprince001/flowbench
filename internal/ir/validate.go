@@ -60,7 +60,7 @@ func (s *Scenario) Validate() error {
 	}
 	flowNames := map[string]bool{}
 	for i, f := range s.Flows {
-		path := fmt.Sprintf("flow %d (%q)", i, f.Name)
+		path := posPrefix(f.Pos) + fmt.Sprintf("flow %d (%q)", i, f.Name)
 		if flowNames[f.Name] {
 			errs = append(errs, errf(path, "duplicate flow name"))
 		}
@@ -148,7 +148,7 @@ func (f *Flow) validate(path string, pools map[string]bool) []error {
 
 	ids := map[string]bool{}
 	for i, st := range f.Steps {
-		sp := fmt.Sprintf("%s: step %d (%q)", path, i, st.ID)
+		sp := fmt.Sprintf("%s: %sstep %d (%q)", path, posPrefix(st.Pos), i, st.ID)
 		if ids[st.ID] {
 			errs = append(errs, errf(sp, "duplicate step id"))
 		}
@@ -463,4 +463,13 @@ func cmpOr(s, fallback string) string {
 
 func errf(path, format string, args ...any) error {
 	return fmt.Errorf("%s: %s", path, fmt.Sprintf(format, args...))
+}
+
+// posPrefix renders "file:line: " when provenance is present, so validation
+// failures on parsed flows read as compiler-style pre-run errors.
+func posPrefix(p *Pos) string {
+	if p == nil {
+		return ""
+	}
+	return p.String() + ": "
 }

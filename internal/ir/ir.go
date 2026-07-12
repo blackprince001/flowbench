@@ -17,7 +17,10 @@
 //     forms will be added additively.
 package ir
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // StepType discriminates Step's union. Exactly one spec field matching the
 // type must be set.
@@ -69,6 +72,24 @@ type Capture struct {
 	Payloads CaptureMode `json:"payloads,omitempty"`
 }
 
+// Pos is optional authoring-surface provenance: where in the source file a
+// node was defined. Parsers fill it so validation failures read as pre-run
+// errors with file/line context (PRD 10.5); hand-built IR may leave it nil.
+type Pos struct {
+	File string `json:"file,omitempty"`
+	Line int    `json:"line,omitempty"`
+	Col  int    `json:"col,omitempty"`
+}
+
+// String renders compiler-style "file:line" or "file:line:col".
+func (p *Pos) String() string {
+	s := fmt.Sprintf("%s:%d", p.File, p.Line)
+	if p.Col > 0 {
+		s += fmt.Sprintf(":%d", p.Col)
+	}
+	return s
+}
+
 // Scenario is the runnable unit: one or more flows bound to a profile, a
 // target config (by name, resolved at run time via --target), and data pools.
 type Scenario struct {
@@ -87,6 +108,7 @@ type Flow struct {
 	// (a pool named "user" backs "{{ user.email }}").
 	Data  string `json:"data,omitempty"`
 	Steps []Step `json:"steps"`
+	Pos   *Pos   `json:"pos,omitempty"`
 }
 
 // Step is the atomic unit of a flow: a discriminated union over the v0 step
@@ -109,6 +131,7 @@ type Step struct {
 	Retry     *RetryPolicy  `json:"retry,omitempty"`
 	OnFailure FailureAction `json:"on_failure,omitempty"`
 	Capture   *Capture      `json:"capture,omitempty"`
+	Pos       *Pos          `json:"pos,omitempty"`
 }
 
 // CallSpec is a protocol call, either inline (method + URL) or a reference
