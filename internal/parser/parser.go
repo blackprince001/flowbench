@@ -473,12 +473,20 @@ func (w *walker) intVal(n ast.Node, what string) (int, bool) {
 		w.errAt(n, "%s must be an integer", what)
 		return 0, false
 	}
+	maxInt := int(^uint(0) >> 1)
+	minInt := -maxInt - 1
 	switch v := in.Value.(type) {
 	case int:
 		return v, true
 	case int64:
+		if v > int64(maxInt) || v < int64(minInt) {
+			break
+		}
 		return int(v), true
 	case uint64:
+		if v > uint64(maxInt) {
+			break
+		}
 		return int(v), true
 	}
 	w.errAt(n, "%s is out of range", what)
