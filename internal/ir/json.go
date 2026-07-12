@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 )
 
@@ -42,7 +43,10 @@ func DecodeScenario(data []byte) (*Scenario, error) {
 	if err := dec.Decode(&s); err != nil {
 		return nil, fmt.Errorf("decode scenario: %w", err)
 	}
-	if dec.More() {
+	// Only io.EOF proves the document was the whole input. Decoder.More is
+	// not enough here: it reports false for a peeked "}" or "]", treating
+	// stray closers as end-of-container rather than trailing data.
+	if _, err := dec.Token(); err != io.EOF {
 		return nil, errors.New("decode scenario: trailing data after JSON document")
 	}
 	return &s, nil

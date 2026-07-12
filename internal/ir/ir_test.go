@@ -198,8 +198,24 @@ func TestDecodeScenarioRejectsUnknownFields(t *testing.T) {
 }
 
 func TestDecodeScenarioRejectsTrailingData(t *testing.T) {
-	_, err := ir.DecodeScenario([]byte(`{"name":"x","flows":[],"profile":{"mode":"load"}} {"second":true}`))
-	if err == nil {
-		t.Fatal("trailing data should fail decoding")
+	const doc = `{"name":"x","flows":[],"profile":{"mode":"load"}}`
+	// The brace/bracket cases are json.Decoder.More()'s blind spot: More()
+	// treats a peeked "}" or "]" as end-of-container, so only an explicit
+	// EOF check catches them.
+	for name, trailing := range map[string]string{
+		"second document": ` {"second":true}`,
+		"stray brace":     `}`,
+		"stray bracket":   `]`,
+		"garbage":         `garbage`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ir.DecodeScenario([]byte(doc + trailing)); err == nil {
+				t.Fatalf("trailing %s should fail decoding", name)
+			}
+		})
+	}
+
+	if _, err := ir.DecodeScenario([]byte(doc + "\n  \n")); err != nil {
+		t.Errorf("trailing whitespace should be fine, got: %v", err)
 	}
 }
