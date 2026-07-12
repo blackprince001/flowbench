@@ -24,19 +24,23 @@ An ordered, optionally branching sequence of Steps; the unit of authorship. Writ
 _Avoid_: test case, collection, journey
 
 **Step**:
-The atomic unit of a flow. Types: `call` (HTTP/GraphQL/gRPC), `prompt` (LLM call), `ws`, `logic` (Python hook), `wait`/`poll-until`, `verify` (database check). Can extract values, assert conditions, and carry a retry/backoff policy.
+The atomic unit of a flow. Types: `call` (HTTP/GraphQL/gRPC), `ws`, `logic` (Python hook), `wait`/`poll-until`, `verify` (database check). Can extract values, assert conditions, and carry a retry/backoff policy.
 _Avoid_: request, task
 
-**Prompt step**:
-A step calling an LLM provider with templated messages (system/user), a model, and generation parameters. Its completion chains into later steps like any extraction; the resolved prompt and completion are always captured for diffing.
-_Avoid_: eval, LLM test
+**Prompt observation**:
+An LLM call made by the flow's own SDK code inside a `logic` step, wrapped by the Python SDK's prompt-observation API (`ctx.prompt(...)` … `p.record(...)`). FlowBench never makes the call or sets model behavior; it captures the prompt and completion (always), hashes the prompt's identity, emits a `prompt` span, and can pace and time-bound repeated calls.
+_Avoid_: prompt step, eval, LLM test
 
 **Prompt variant**:
-A named alternative message set on a prompt step, fanned out per iteration, carrying its own structural span identity (`step@variant`) so folding, metrics, and diffs stay per-variant.
+A label on an observation naming which prompt version the author's code used, giving it its own structural span identity (`name@variant`) so folding, metrics, and diffs stay per-variant. What varies is decided entirely by the author's code.
 _Avoid_: A/B test
 
+**Pace guard**:
+An optional client-side rate ceiling on an observation (e.g. `20/m`, optional burst allowance), coordinated by the engine across VUs and workers, so calls repeated N times don't trip a provider's rate limit. Complements the profile-level arrival cap; throttles that still occur classify as `throttled`.
+_Avoid_: rate limiter (that's the target's)
+
 **Completion**:
-The LLM response body of a prompt step — extracted from, asserted on, captured, and diffed.
+The LLM output recorded by a prompt observation — captured, asserted on in plain Python, and diffed.
 _Avoid_: output, generation
 
 **Extraction**:
@@ -109,7 +113,7 @@ A fold of many traces — spans with the same structural name collapsed and summ
 A causal, per-iteration rendering of one trace's spans in start-offset order, like a browser performance panel. Answers "what exactly happened, in order, in this one iteration."
 
 **Prompt diff**:
-The results-server comparison of captured completions — variant vs variant within a run, or same step/variant against a baseline run — rendered as a text diff (structural for JSON), with the prompt's own diff shown when the prompt hash changed between runs. The v1 answer to "how are my prompts doing"; scoring is deliberately not one.
+The results-server comparison of captured completions — variant vs variant within a run, or same observation/variant against a baseline run — rendered as a text diff (structural for JSON), with the prompt's own diff shown when the prompt hash changed between runs. The v1 answer to "how are my prompts doing"; scoring is deliberately not one.
 _Avoid_: eval score
 
 **Run store**:

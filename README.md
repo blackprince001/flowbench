@@ -2,7 +2,7 @@
 
 **Scripting-first API and flow testing toolkit. One flow, four execution profiles: integration, system, load/stress, soak.**
 
-Status: **scaffolding** — repo, docs, and work breakdown exist; no code yet. PRD is at v0.5 (DRAFT).
+Status: **scaffolding** — repo, docs, and work breakdown exist; no code yet. PRD is at v0.6 (DRAFT).
 
 ## TL;DR
 
@@ -10,7 +10,7 @@ FlowBench is an internal, local-first testing toolkit for API endpoints and mult
 
 Flows chain steps by extracting values from one response and injecting them into later requests (login → take token → act → assert). Every step, protocol phase, extraction, assertion, and retry attempt emits a span; one span model powers both **flame graphs** (where does aggregate time go) and a **waterfall/trace view** (what exactly happened in one iteration). Rate limiting is a first-class signal (`throttled` is its own outcome class, never folded into `failed`), and a lightweight **agent** on the system under test streams CPU/memory into the run so target saturation, generator saturation, and knee points are never confused.
 
-Flows can also include **prompt steps** — LLM calls with templated messages whose completions chain into later steps like any other extraction. Every resolved prompt and completion is captured, prompt steps can declare named variants, and the results server **diffs completions** across variants and against baseline runs — so prompt changes are reviewed like code changes, not eyeballed in a playground (diff-and-assert; no LLM-as-judge scoring in v1).
+Flows can also **observe prompt calls**: your own code calls whatever LLM SDK or framework it already uses inside a scripted step, and FlowBench wraps the call — never making it or setting model behavior. Every prompt and completion is captured, variant labels keep prompt versions separately comparable, pace/timeout guards keep repeated calls under provider rate limits, and the results server **diffs completions** across variants and against baseline runs — so prompt changes are reviewed like code changes, not eyeballed in a playground (diff-and-assert; no LLM-as-judge scoring in v1).
 
 This is a set of tooling packages, not a hosted platform: Go engine + CLI, Python SDK, YAML DSL, embedded results server, target-metrics agent. Teams, notifications, CI gating, and hosting are explicitly v2.
 

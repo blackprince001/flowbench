@@ -6,7 +6,7 @@ Entry point for the FlowBench knowledge bundle. Read this index first; open docu
 
 ## Product
 
-* [PRD](prd.md) - Full product requirements document (v0.5 DRAFT); the source of truth for v1 scope.
+* [PRD](prd.md) - Full product requirements document (v0.6 DRAFT); the source of truth for v1 scope.
 * [CONTEXT.md](CONTEXT.md) - Ubiquitous-language glossary: Endpoint, Flow, Step, Profile, Scenario, Span, Run, Agent, and friends.
 
 ## Decisions
@@ -20,7 +20,7 @@ Entry point for the FlowBench knowledge bundle. Read this index first; open docu
   * [0006 Rate limiting as a first-class signal](decisions/0006-rate-limiting-first-class-signal.md) - `throttled` is its own outcome class with mode-aware semantics.
   * [0007 Span model as single source of truth](decisions/0007-span-model-single-source-of-truth.md) - One span model feeds both flame graphs and the waterfall view; two storage tiers.
   * [0008 Python logic steps via bridged worker pool](decisions/0008-python-bridge-worker-pool.md) - Pure-declarative fast path vs bridged Python path, honestly reported.
-  * [0009 Prompt testing as diff-first prompt steps](decisions/0009-prompt-testing-diff-first.md) - LLM prompts are a step type in the same flows; completions always captured; diff, don't score.
+  * [0009 Prompt testing by observation](decisions/0009-prompt-testing-diff-first.md) - The flow's own SDK code makes LLM calls; FlowBench captures, hashes, paces, and diffs — no provider adapters, no scoring.
 
 ## Planning
 
