@@ -1,0 +1,4 @@
+email,password,cart
+ada@example.test,correct-horse-1,"[""sku-100"",""sku-204""]"
+grace@example.test,correct-horse-2,"[""sku-311""]"
+edsger@example.test,correct-horse-3,"[""sku-100"",""sku-577"",""sku-808""]"

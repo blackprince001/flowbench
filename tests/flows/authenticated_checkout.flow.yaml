@@ -1,0 +1,33 @@
+# The PRD section 11 sample flow, verbatim: the chained login → extract →
+# act → assert path that M1's parser and integration mode must run end to end.
+flow: authenticated_checkout
+data: fixtures/users.csv        # unique-per-vu by default
+steps:
+  - id: login
+    call: POST /auth/login
+    body: { email: "{{ user.email }}", password: "{{ user.password }}" }
+    extract: { token: $.data.access_token }
+    assert: [ status == 200, token != null ]
+
+  - id: create_order
+    call: POST /orders
+    headers: { Authorization: "Bearer {{ token }}" }
+    body: { items: "{{ user.cart }}" }
+    extract: { order_id: $.data.id }
+    retry:
+      on_status: [429, 503]
+      backoff: honor_retry_after
+      max_attempts: 5
+
+  - id: pay
+    call: POST /orders/{{ order_id }}/pay
+    headers: { Authorization: "Bearer {{ token }}" }
+    assert: [ status == 202 ]
+
+profile:
+  mode: stress
+  vus: { ramp: "0 -> 500 over 5m", hold: 10m }
+  arrival_cap: 300/s   # optional; test at a known ceiling instead of only discovering one
+  thresholds:
+    - p95(latency) < 800ms
+    - error_rate < 1%     # throttled responses do not count against this in stress mode
