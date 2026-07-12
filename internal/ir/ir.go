@@ -83,11 +83,16 @@ type Pos struct {
 
 // String renders compiler-style "file:line" or "file:line:col".
 func (p *Pos) String() string {
-	s := fmt.Sprintf("%s:%d", p.File, p.Line)
-	if p.Col > 0 {
-		s += fmt.Sprintf(":%d", p.Col)
+	if p == nil || p.File == "" {
+		return "<unknown>"
 	}
-	return s
+	if p.Line <= 0 {
+		return p.File
+	}
+	if p.Col > 0 {
+		return fmt.Sprintf("%s:%d:%d", p.File, p.Line, p.Col)
+	}
+	return fmt.Sprintf("%s:%d", p.File, p.Line)
 }
 
 // Scenario is the runnable unit: one or more flows bound to a profile, a
