@@ -42,7 +42,14 @@ func NewSession(opts SessionOptions) *Session {
 		opts.Timeout = defaultTimeout
 	}
 	jar, _ := cookiejar.New(nil) // no PublicSuffixList: internal tool, per-VU jar
-	return &Session{client: &http.Client{Jar: jar, Timeout: opts.Timeout}}
+
+	// Use a dedicated transport per session so connection reuse is isolated per VU.
+	var transport http.RoundTripper = http.DefaultTransport
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = dt.Clone()
+	}
+
+	return &Session{client: &http.Client{Jar: jar, Timeout: opts.Timeout, Transport: transport}}
 }
 
 // Resolver resolves a template reference ("token", "user.email",
