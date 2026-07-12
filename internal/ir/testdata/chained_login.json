@@ -1,0 +1,106 @@
+{
+  "name": "checkout_stress",
+  "flows": [
+    {
+      "name": "authenticated_checkout",
+      "data": "user",
+      "steps": [
+        {
+          "id": "login",
+          "type": "call",
+          "call": {
+            "method": "POST",
+            "url": "/auth/login",
+            "body": {
+              "email": "{{ user.email }}",
+              "password": "{{ user.password }}"
+            }
+          },
+          "extract": [
+            {
+              "var": "token",
+              "path": "$.data.access_token"
+            }
+          ],
+          "assert": [
+            {
+              "source": "status",
+              "op": "eq",
+              "value": 200
+            },
+            {
+              "source": "var",
+              "key": "token",
+              "op": "exists"
+            }
+          ]
+        },
+        {
+          "id": "create_order",
+          "type": "call",
+          "call": {
+            "method": "POST",
+            "url": "/orders",
+            "headers": {
+              "Authorization": "Bearer {{ token }}"
+            },
+            "body": {
+              "items": "{{ user.cart }}"
+            }
+          },
+          "extract": [
+            {
+              "var": "order_id",
+              "path": "$.data.id"
+            }
+          ],
+          "retry": {
+            "on_status": [
+              429,
+              503
+            ],
+            "backoff": "honor_retry_after",
+            "max_attempts": 5
+          }
+        },
+        {
+          "id": "pay",
+          "type": "call",
+          "call": {
+            "method": "POST",
+            "url": "/orders/{{ order_id }}/pay",
+            "headers": {
+              "Authorization": "Bearer {{ token }}"
+            }
+          },
+          "assert": [
+            {
+              "source": "status",
+              "op": "eq",
+              "value": 202
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "profile": {
+    "mode": "stress",
+    "ramp": "0 -\u003e 500 over 5m",
+    "hold": "10m0s",
+    "arrival_cap": "300/s",
+    "thresholds": [
+      "p95(latency) \u003c 800ms",
+      "error_rate \u003c 1%"
+    ]
+  },
+  "target": "local",
+  "data_pools": [
+    {
+      "name": "user",
+      "source": "fixtures/users.csv",
+      "format": "csv",
+      "distribution": "unique-per-vu"
+    }
+  ]
+}
