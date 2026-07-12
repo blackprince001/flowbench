@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: FlowBench PRD
-description: Full product requirements document (v0.4 DRAFT) for FlowBench; the source of truth for v1 scope.
+description: Full product requirements document (v0.5 DRAFT) for FlowBench; the source of truth for v1 scope.
 tags:
   - product
   - prd
@@ -14,15 +14,15 @@ timestamp: 2026-07-08
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
 | **Author**         | Prince Kwabena Appiah Boadu                                                                                            |
 | **Status**         | `DRAFT`                                                                                                                |
-| **Version**        | v0.4                                                                                                                   |
-| **Last updated**   | 2026.07.08                                                                                                             |
+| **Version**        | v0.5                                                                                                                   |
+| **Last updated**   | 2026.07.12                                                                                                             |
 | **Target release** | v1, timeline TBD (see Milestones for relative sequencing)                                                              |
 | **Shape**          | Tooling packages, not a platform: Go engine + CLI, Python SDK, YAML DSL, embedded results server, target-metrics agent |
 | **Audience**       | Internal engineering teams; local-first developer tool                                                                 |
 
 ## 1. TL;DR
 
-An internal, scripting-first testing toolkit for API endpoints and multi-step flows. One canonical flow representation is authored either in a declarative YAML DSL or in Python (the engine shipped as an importable package, giving granular programmatic control), and executed by one Go engine built on goroutine-per-VU concurrency, targeting 10k concurrent virtual users on a single node. The four test categories — integration, system, load/stress, and soak — are four **execution profiles** applied to the same flow. Flows chain steps by extracting values from one response and injecting them into later requests (login → take token → act → assert), and a profile decides whether that flow runs once with assertions or ten thousand times under ramped concurrency. Flows live as files in git — with no bespoke secrets mechanism, since credentials are handled the way any script handles them (environment variables, an existing vault). Every step, protocol phase, extraction, assertion, and poll attempt emits a span, and one span model powers two views: **flame graphs** that fold many traces together to show where aggregate time goes (per run or cumulative across runs), and a **waterfall/trace view** that renders one iteration's spans in causal order for debugging exactly how a specific run or failure moved through the flow. Rate limiting is treated as a first-class signal rather than an undifferentiated failure: flows can retry/back off on `429`s, profiles can self-impose an arrival ceiling, and the collector classifies throttled outcomes separately from real failures so thresholds and knee-point findings stay meaningful against rate-limited targets. A lightweight **agent** on the system under test streams CPU/memory/resource metrics into the run, so target saturation, generator saturation, and knee points are never confused. Runs are triggered from the CLI, on demand, on a developer's machine or a beefy node, and inspected through a small embedded results server. This is a set of tooling packages, not a hosted platform; teams, notifications, CI gating, and any product ambitions are explicitly v2.
+An internal, scripting-first testing toolkit for API endpoints and multi-step flows. One canonical flow representation is authored either in a declarative YAML DSL or in Python (the engine shipped as an importable package, giving granular programmatic control), and executed by one Go engine built on goroutine-per-VU concurrency, targeting 10k concurrent virtual users on a single node. The four test categories — integration, system, load/stress, and soak — are four **execution profiles** applied to the same flow. Flows chain steps by extracting values from one response and injecting them into later requests (login → take token → act → assert), and a profile decides whether that flow runs once with assertions or ten thousand times under ramped concurrency. Flows live as files in git — with no bespoke secrets mechanism, since credentials are handled the way any script handles them (environment variables, an existing vault). Every step, protocol phase, extraction, assertion, and poll attempt emits a span, and one span model powers two views: **flame graphs** that fold many traces together to show where aggregate time goes (per run or cumulative across runs), and a **waterfall/trace view** that renders one iteration's spans in causal order for debugging exactly how a specific run or failure moved through the flow. Rate limiting is treated as a first-class signal rather than an undifferentiated failure: flows can retry/back off on `429`s, profiles can self-impose an arrival ceiling, and the collector classifies throttled outcomes separately from real failures so thresholds and knee-point findings stay meaningful against rate-limited targets. Flows can also include **prompt steps** — LLM calls with templated messages whose completions chain into later steps like any other extraction; every resolved prompt and completion is captured, and the results server **diffs completions** across prompt variants and against baseline runs, so a prompt change is reviewed like a code change rather than eyeballed in a playground. A lightweight **agent** on the system under test streams CPU/memory/resource metrics into the run, so target saturation, generator saturation, and knee points are never confused. Runs are triggered from the CLI, on demand, on a developer's machine or a beefy node, and inspected through a small embedded results server. This is a set of tooling packages, not a hosted platform; teams, notifications, CI gating, and any product ambitions are explicitly v2.
 
 ## 2. Problem
 
@@ -33,6 +33,7 @@ Testing endpoints and cross-module flows today is fragmented across tools that e
 - Repeating a flow N times under concurrency to find failure patterns requires switching tools entirely, and the failure output rarely shows _which iteration failed on which step with what payload_.
 - Performance results are presented as averages and charts, not as a decomposition of _where time actually goes inside the flow_ — there is no flame-graph view of a request chain.
 - When a stress run degrades, it is genuinely unclear whether the target broke, the load generator saturated, the network did, or the target's own rate limiter simply did its job — because nobody is watching the target's resources, or classifying throttled responses separately from real errors, in the same pane as the run.
+- Prompt iteration happens by eyeballing outputs in a playground: change a word, rerun, squint. Nothing captures which prompt produced which completion, nothing diffs outputs across prompt versions, and nothing tests a prompt inside the real flow it belongs to (fetch context → prompt → parse → act) — so prompt changes ship on vibes while every other kind of change ships with a diff.
 
 ## 3. Vision
 
@@ -58,6 +59,7 @@ One flow definition, four kinds of truth. Write a flow once — in YAML for the 
 6. As an investigator, I want the target's CPU and memory streamed into the run via an agent, so a stress knee or a soak drift is attributable to the right cause.
 7. As an engineer testing a rate-limited endpoint, I want the flow to retry with backoff where that's the right behavior, and I want a stress run's knee point to tell me whether I hit a real capacity ceiling or just the target's documented rate limit.
 8. As an engineer, I want to compare this run against a baseline run and see regressions highlighted.
+9. As an engineer building an LLM-backed feature, I want to script a prompt — or a chain of prompts feeding each other and ordinary API calls — declare variants of it, and see exactly how the completions differ across variants and against the last accepted run, so I know how my prompts are doing without eyeballing a playground.
 
 ## 5. Landscape
 
@@ -67,6 +69,7 @@ Why not adopt an existing tool outright:
 - **Postman / Newman / Insomnia:** good single-request ergonomics, but chained-flow logic is clunky, load testing is shallow, and collections-as-JSON-blobs fight git-based review.
 - **pytest + requests + Locust glued together:** the realistic status quo, and the thing this toolkit replaces — the glue is the product. Locust gives Python load testing but no declarative layer, no unified functional mode, weak result inspection, and a Python-bound VU ceiling.
 - **pprof / flame-graph tooling:** the inspiration for the results experience — a small local server over profile data — but it profiles a process, not a distributed flow. This toolkit brings that idiom to the request chain.
+- **promptfoo / LangSmith / Braintrust-style eval harnesses:** prompt-centric and scoring-centric, but they live outside the API-flow world — a prompt is tested in isolation, not as a step inside a chained flow with credentials, extractions, and span-level forensics; and none double as the load/soak engine for the surrounding service. FlowBench deliberately takes the smaller slice: capture and diff, inside real flows, with the same run store and comparison surface as everything else.
 
 The differentiator is deliberate: **one canonical flow, two authoring surfaces (YAML and Python), four execution profiles, one Go engine, one result store, one perf-first inspection surface with flow flame graphs and target-side correlation.**
 
@@ -80,6 +83,7 @@ The differentiator is deliberate: **one canonical flow, two authoring surfaces (
 - Give first-class failure forensics: per-iteration span traces with request/response capture for failures, grouped by step and cause.
 - Ship a perf-first results experience built on one span model: flame graphs of the flow (single-run and cumulative) for aggregate bottlenecks, and a waterfall/trace view for debugging exactly how one iteration moved through the flow — plus latency distributions and run-versus-baseline regression comparison.
 - Treat rate limiting as a first-class, mode-aware signal rather than an undifferentiated error, both in how flows respond to it and in how runs report it.
+- Make LLM calls first-class steps: templated prompts whose completions chain like any extraction, prompt/completion pairs always captured, named prompt variants, and diff-first comparison of completions across variants and against baseline runs.
 - Ship a lightweight target-metrics agent so target-side resource behavior is part of every run's story.
 - Keep everything local-first: flows in git, runs on demand, results on disk, no hosted dependency.
 
@@ -95,6 +99,7 @@ The differentiator is deliberate: **one canonical flow, two authoring surfaces (
 - No dedicated setup/teardown subsystem. Seeding and cleanup are handled through the Python surface or through test data design — deliberately, to keep the engine lean.
 - No OAuth2 authorization-code flow (requires browser interaction). All other common auth schemes are in scope.
 - No mocking or service virtualization.
+- No LLM-as-judge, semantic-similarity scoring, or eval-dataset management. Prompt testing in v1 is **diff-and-assert**: the toolkit shows exactly what changed in completions and lets assertions gate hard requirements; judging what a difference _means_ stays with the engineer. No prompt registry or versioning service either — prompts live in flow files in git like everything else.
 - No distributed rate-limit coordination across multiple generator nodes in v1 (moot at single-node scale, but noted since it would matter if distribution is ever pursued in v2).
 - No monetization, packaging, or product positioning. All business questions are v2.
 
@@ -108,6 +113,7 @@ The differentiator is deliberate: **one canonical flow, two authoring surfaces (
 |Forensics work|Failures get diagnosed in-tool|% of failed runs where an iteration trace is opened|> [X]%|
 |Perf value|Bottlenecks found before prod does|# of findings attributed to flame graphs / agent overlays|> [X]/quarter|
 |Rate-limit clarity|Stress findings aren't confused with throttling|% of stress runs where the report distinguishes throttled from degraded knee points|> [X]%|
+|Prompt clarity|Prompt changes reviewed with diffs, not vibes|% of runs containing prompt steps where a prompt diff is opened|> [X]%|
 |Engine honesty|10k VUs without lying|Sustained VUs on reference hardware with generator CPU < [X]%|10,000|
 
 **Guardrail metrics:** engine overhead per VU (memory, CPU), metric accuracy versus a reference generator, accidental-target incidents (must be zero), agent overhead on the target (< [X]% CPU).
@@ -123,12 +129,14 @@ A single Go engine executes a canonical flow representation. Authoring happens i
 3. **See where the time goes.** Flame graphs decompose the flow into steps and phases, per run or cumulatively across runs, with target-side resource overlays — a profiler's view of a distributed request chain.
 4. **Forensics, not just graphs.** Every failure is traceable to an iteration, a step, a request, and a response — captured for all failures, sampled for successes, grouped by step and cause.
 5. **Throttling is data, not noise.** A `429` is either a bug or the finding, depending on what you're testing for, and the toolkit keeps those readings separate instead of collapsing them into one error count.
+6. **Prompts reviewed like code.** A prompt is a step; a chain of prompts is a flow. Every resolved prompt and completion is captured, and the results server shows the actual difference — across variants in one run, or against a baseline run — not a score.
 
 ## 9. Conceptual Model
 
 - **Endpoint:** a declared, reusable target — protocol, method/operation, URL or address template, default headers, auth requirement.
 - **Flow:** an ordered, optionally branching sequence of **Steps**. Each step calls an endpoint (or runs logic), can **extract** values into flow variables, and can **assert** conditions.
-- **Step:** the atomic unit. Types: `call` (HTTP/GraphQL/gRPC), `ws` (WebSocket session operation), `logic` (Python hook), `wait`/`poll-until`, `verify` (database check). `call` steps may carry an optional retry/backoff policy for rate-limited responses (see 10.1).
+- **Step:** the atomic unit. Types: `call` (HTTP/GraphQL/gRPC), `prompt` (LLM call), `ws` (WebSocket session operation), `logic` (Python hook), `wait`/`poll-until`, `verify` (database check). `call` and `prompt` steps may carry an optional retry/backoff policy for rate-limited responses (see 10.1).
+- **Prompt Step:** a step calling an LLM provider with templated messages (system/user), model, and generation parameters. Its completion is extractable into flow variables like any response, and the resolved prompt plus full completion are always captured for diffing. May declare **Variants** — named alternative message sets fanned out per iteration, each with its own structural span identity (see 10.9).
 - **Profile:** the execution contract — mode (`integration | system | load | stress | soak`), VUs, ramp shape, duration or iteration count, thresholds, and an optional arrival-rate cap (see 10.3).
 - **Scenario:** one or more flows bound to a profile, a target config, and data pools. The runnable unit.
 - **Target Config:** a lightweight named config (local/dev/staging) carrying base URLs, ceilings, and optionally an agent address. Config files, not platform objects. Credentials are not part of it (see Secrets, below).
@@ -149,6 +157,7 @@ erDiagram
     STEP ||--o{ EXTRACTION : captures
     STEP ||--o{ ASSERTION : checks
     STEP ||--o| RETRY_POLICY : "may back off under"
+    STEP ||--o{ PROMPT_VARIANT : "may fan out over"
     SCENARIO ||--o{ RUN : produces
     RUN ||--|{ ITERATION : contains
     ITERATION ||--|| TRACE : "recorded as"
@@ -165,7 +174,11 @@ erDiagram
         string arrival_cap "optional self-imposed req/s ceiling"
     }
     STEP {
-        enum type "call, ws, logic, wait, poll, verify"
+        enum type "call, prompt, ws, logic, wait, poll, verify"
+    }
+    PROMPT_VARIANT {
+        string name "structural span suffix, e.g. summarize@concise"
+        string prompt_hash "identity of the resolved message template"
     }
     RETRY_POLICY {
         int max_attempts
@@ -233,6 +246,7 @@ graph LR
 - `[P1]` `(E)` WebSockets: open a session as a step, send/receive/match messages, hold sessions across steps within an iteration, assert on received frames.
 - `[P1]` `(E)` gRPC: unary calls from `.proto` definitions; streaming scoped later. [Open question on streaming.] gRPC's `RESOURCE_EXHAUSTED` status maps to the same `throttled` outcome class as HTTP `429`.
 - `[P2]` `(E)` SOAP/XML: XML body templating and XPath extraction.
+- `[P0]` `(E)` LLM providers: OpenAI-compatible chat-completions APIs, exercised through the `prompt` step type (see 10.9); provider rate-limit responses map to the `throttled` outcome class like any other adapter.
 - `[P0]` `(E)` Auth schemes: bearer/JWT (static or extracted at runtime), session cookies, basic auth, API keys (header/query), OAuth2 client-credentials, HMAC request signing. Explicitly excluded: OAuth2 authorization-code.
 
 ### 10.3 Configure (profiles, targets, data)
@@ -285,7 +299,7 @@ graph LR
 
 - `[P0]` `(E)` Run artifacts persist on disk: aggregate metrics (latency percentiles, throughput, error rate, throttle rate, per-step breakdowns), threshold outcomes, per-iteration trace trees (spans), folded flame data, and agent series. No retention machinery; the store is a directory the user owns.
 - `[P0]` `(E)` Two storage tiers, so the tool scales to 10k VUs without either losing debuggability or drowning in raw spans: **(1) folded/aggregated data** — counts and duration sums per structural span-path, updated incrementally as spans stream in, unbounded-VU-safe, and the sole input to flame graphs; **(2) raw trace trees** — kept per the existing capture policy (all failures, plus a configurable sample of successes and throttled responses), and the sole input to the waterfall/debug view.
-- `[P0]` `(E)` Capture policy that survives scale: full request/response capture for **all failures** plus a configurable sample of successes and throttled responses; bodies truncated at a size cap; sensitive values redacted per section 10.3.
+- `[P0]` `(E)` Capture policy that survives scale: full request/response capture for **all failures** plus a configurable sample of successes and throttled responses; bodies truncated at a size cap; sensitive values redacted per section 10.3. One carve-out: `prompt` steps always capture their resolved prompt and completion regardless of outcome, because diffing requires both sides (see 10.9).
 - `[P0]` `(E)` Step names carry structural identity: folding across iterations and across runs only works if the same step name means the same thing every time. The parser warns when a flow file renames a step that a prior run's data references, since that silently breaks cross-run folding rather than erroring loudly.
 - `[P0]` `(R)` A small embedded results server (`serve` command, in the spirit of `go tool pprof -http`) reads the run store and serves the inspection views locally. Not a web app: no accounts, no persistence of its own, no write path beyond triggering abort.
 - `[P0]` `(R)` **Flame graphs of the flow** — the headline view, built entirely from folded data. A single iteration renders as flow → steps → phases (dns/connect/tls/ttfb/transfer/logic), unfolded; a single run folds across that run's iterations, width proportional to aggregate time, so the dominant step and phase are visually obvious; a cumulative view folds across multiple selected runs. Clicking a bar jumps to a representative trace's waterfall view for that span.
@@ -305,6 +319,23 @@ graph LR
 - `[P0]` `(E)(C)` Every run records who ran it, the target, and the git commit of the flow files — the run store is its own audit trail.
 - `[P1]` `(E)` Engine self-observability beyond the resource series: structured logs and artifact integrity checks.
 - `[Future]` Notifications, teams/permissions, hosted anything: v2.
+
+### 10.9 AI prompt testing
+
+Prompt behavior is tested with the same machinery as everything else: a prompt is a step, a chain of prompts is a flow, and a prompt change is reviewed by diffing captured completions — not by eyeballing a playground. Nothing here is a separate subsystem; the prompt step rides the HTTP adapter, the chaining mechanic, the capture pipeline, and the baseline-comparison surface that already exist.
+
+- `[P0]` `(E)(Y)(P)` A `prompt` step type calls an LLM provider with templated messages (system/user, `{{ var }}` templating like any other step), a model, and generation parameters (temperature, max tokens, seed where the provider supports it). OpenAI-compatible chat-completions APIs first; other providers by demand. Provider base URLs live in target configs; API keys are `{{ env.* }}` like every other credential, redacted as usual.
+- `[P0]` `(E)` The completion is extractable into flow variables — whole text, or JSONPath when the completion is JSON — so prompts chain: prompt → extract → next prompt or ordinary `call` step. A chain of prompts is just a flow, and mixed prompt+API flows (fetch context → prompt → parse → act) are the expected shape, not a special case.
+- `[P0]` `(E)` Prompt steps assert like any step — status and latency, plus completion-shape assertions: `contains`, regex match, valid-JSON / JSON-schema conformance — with the same mode-aware failure semantics as everything else.
+- `[P0]` `(E)` **Completions are always captured.** For `prompt` steps the resolved prompt and full completion are captured on every iteration, success or not, overriding the failures-plus-sample default (10.7) — a diff needs both sides to exist. Size caps and redaction still apply.
+- `[P0]` `(E)` **Prompt identity:** the engine hashes each prompt step's resolved message template (static text and structure, before per-iteration variable values) and stores hash and template per step per run, so the diff view can distinguish "the prompt changed" from "the output changed under the same prompt."
+- `[P0]` `(E)(Y)(P)` **Variants:** a prompt step may declare N named variants of its messages (model/params overridable per variant). The engine fans each iteration out over the variants, and each variant carries its own structural span identity (`summarize@concise`, `summarize@detailed`), so folding, per-step metrics, and diffs stay per-variant.
+- `[P0]` `(R)` **Prompt diff view:** side-by-side and inline diffs of completions — variant vs variant within a run, and same step (and same variant) against a baseline run. Text diff by default; structural diff when both completions are JSON. When the prompt hash differs between the compared runs, the prompt's own diff is shown alongside the output diff. Extends the regression-comparison surface (10.7).
+- `[P1]` `(E)(R)` Token usage (prompt and completion tokens) recorded as span attributes and surfaced in the per-step table and the diff view; provider `429`s classify as `throttled`, and retry/backoff policies (10.1) apply to prompt steps unchanged.
+- `[P1]` `(E)` Streamed completions are assembled into the captured completion; time-to-first-token is simply the step's `ttfb` phase span, visible in flame graphs and waterfalls like any other phase.
+- `[P2]` `(E)(R)` Repeat sampling: run the same variant K times per iteration and render the spread, so an engineer can see output variance before trusting a single diff. [Open question whether this earns v1 complexity.]
+
+Determinism guidance, stated in the docs rather than enforced: for regression-style prompt testing, pin `temperature: 0` (and `seed` where honored) and run in integration mode — the diff is then meaningful run over run. The toolkit reports differences honestly rather than smoothing them; scoring what a difference _means_ (LLM-as-judge, semantic similarity, eval datasets) is explicitly a non-goal (section 6).
 
 ## 11. Authoring Surfaces
 
@@ -390,6 +421,35 @@ if __name__ == "__main__":
 
 The Python surface can go beyond what YAML expresses — conditionals, loops, computed payloads, seeding and cleanup as ordinary code, custom protocols via extension points — while remaining schedulable by the same executor.
 
+**Prompt steps (both surfaces, same mechanics):** a `prompt` step templates messages, extracts from the completion, asserts on its shape, and may declare variants that fan out per iteration:
+
+```yaml
+flow: ticket_triage
+steps:
+  - id: fetch_ticket
+    call: GET /tickets/{{ ticket_id }}
+    extract: { body: $.data.description }
+
+  - id: classify
+    prompt:
+      model: gpt-4o-mini
+      params: { temperature: 0 }
+      system: "You are a support triage assistant. Reply with JSON: {category, urgency}."
+      user: "Classify this ticket: {{ body }}"
+    variants:
+      concise:  { system: "Triage assistant. JSON only: {category, urgency}." }
+      detailed: { system: "You are a senior support engineer. Think carefully, then reply with JSON: {category, urgency}." }
+    extract: { category: $.category }
+    assert: [ status == 200, valid_json, category != null ]
+
+  - id: route
+    call: POST /tickets/{{ ticket_id }}/route
+    body: { category: "{{ category }}" }
+    assert: [ status == 202 ]
+```
+
+Run it twice around a prompt edit (or once with variants) and `serve` shows what actually changed in the completions — per variant, per step, against the baseline.
+
 **The Go/Python boundary (the one hard engineering problem here):** the executor, scheduler, protocol adapters, and collector are Go; Python enters in two ways. Purely declarative flows (whether authored in YAML or in Python code that only _constructs_ steps) execute entirely on the Go fast path at full VU scale. Flows containing `logic` steps execute those steps in a pool of Python worker processes bridged to the Go engine, which caps their practical VU ceiling below the pure-Go path. The engine reports which path a scenario is on, and the design doc owns the bridge mechanics (IPC protocol, worker pool sizing, backpressure).
 
 ## 12. Execution Profiles (the four categories, one mechanism)
@@ -417,10 +477,10 @@ Implementation detail belongs in the engine design doc. This is the shape. Deliv
 - **Authoring inputs:** YAML files; Python scripts importing the SDK. Both yield the canonical flow IR.
 - **Parser + validator:** schema validation, variable-graph resolution (every `{{ var }}` must have an upstream extractor or pool), endpoint reference checks, profile sanity, retry-policy sanity (bounded `max_attempts`, valid backoff strategy).
 - **Planner:** converts a profile into a VU schedule (arrival model, ramp segments, stop conditions, optional arrival-rate cap enforced ahead of the target).
-- **Executor:** goroutine-per-VU pool; each VU runs iterations with its own cookie jar, data row, and variable scope. Protocol adapters (HTTP, GraphQL, WS, gRPC, later SOAP) behind a common step interface, each call emitting spans for its phases and classifying outcome as `ok | failed | throttled | skipped`. Retry/backoff policies execute within the adapter, honoring `Retry-After` where present. Python `logic` steps route to a bridged worker pool and auto-instrument nested HTTP calls as child spans.
-- **Collector:** streams spans into two tiers — folded aggregates (HDR-style latency histograms plus per-span-path duration sums and throttle-rate series, feeding flame graphs) and raw trace trees (kept per capture policy, feeding the waterfall view) — ingests agent series and the engine's own resource series, applies redaction, evaluates thresholds/trends, and classifies stress-mode knee points as degraded versus throttled.
+- **Executor:** goroutine-per-VU pool; each VU runs iterations with its own cookie jar, data row, and variable scope. Protocol adapters (HTTP, GraphQL, WS, gRPC, LLM providers, later SOAP) behind a common step interface, each call emitting spans for its phases and classifying outcome as `ok | failed | throttled | skipped`. Retry/backoff policies execute within the adapter, honoring `Retry-After` where present. The LLM adapter (OpenAI-compatible HTTP first) resolves prompt templates, fans out variants, assembles streamed completions, and records token usage as span attributes. Python `logic` steps route to a bridged worker pool and auto-instrument nested HTTP calls as child spans.
+- **Collector:** streams spans into two tiers — folded aggregates (HDR-style latency histograms plus per-span-path duration sums and throttle-rate series, feeding flame graphs) and raw trace trees (kept per capture policy, feeding the waterfall view; prompt/completion pairs always kept) — ingests agent series and the engine's own resource series, applies redaction, evaluates thresholds/trends, and classifies stress-mode knee points as degraded versus throttled.
 - **Run store:** a directory of run artifacts with an index; everything the results server shows lives here.
-- **Results server:** `serve` reads the store and renders flame graphs, dashboards, drill-downs, and comparisons locally. It never talks to the executor except to signal abort during a live run.
+- **Results server:** `serve` reads the store and renders flame graphs, dashboards, drill-downs, comparisons, and prompt diffs locally. It never talks to the executor except to signal abort during a live run.
 - **Agent:** standalone binary on target hosts; streams labeled resource metrics to the collector for the run's duration.
 
 ```mermaid
@@ -434,7 +494,7 @@ graph TD
         IR --> V["Parser + validator<br/>vars, refs, schema,<br/>retry-policy sanity"]
         V --> PL["Planner<br/>profile → VU schedule<br/>+ optional arrival cap"]
         PL --> EX["Executor<br/>goroutine-per-VU pool<br/>10k VUs / node"]
-        EX --> AD["Protocol adapters<br/>HTTP · GraphQL · WS · gRPC<br/>emit spans per phase,<br/>run retry/backoff,<br/>classify ok/failed/throttled"]
+        EX --> AD["Protocol adapters<br/>HTTP · GraphQL · WS · gRPC · LLM<br/>emit spans per phase,<br/>run retry/backoff,<br/>classify ok/failed/throttled,<br/>capture prompt/completion pairs"]
         EX --> BR["Python bridge<br/>worker pool for logic steps<br/>(auto-instrumented)"]
         EX --> VF["DB verifier<br/>read-only adapters"]
         AD --> COL["Collector<br/>fold spans → flame data;<br/>keep raw traces → waterfall;<br/>redact; thresholds + trends;<br/>knee: degraded vs throttled"]
@@ -452,7 +512,7 @@ graph TD
 
     subgraph Results
         COL --> ST[("Run store<br/>folded flame data +<br/>raw trace trees on disk")]
-        ST --> RS["Results server (serve)<br/>flame graphs · waterfall traces ·<br/>dashboards · drill-down · comparisons<br/>· throttle vs degraded knee"]
+        ST --> RS["Results server (serve)<br/>flame graphs · waterfall traces ·<br/>dashboards · drill-down · comparisons<br/>· prompt diffs · throttle vs degraded knee"]
         ST --> CLI["CLI summary<br/>+ exit codes"]
     end
 
@@ -542,6 +602,7 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 |flame_viewed|a flame graph is opened|single vs cumulative|perf-value signal|
 |failure_trace_opened|a user drills into a failing or throttled iteration|run, step, cause group|forensics value|
 |comparison_viewed|baseline comparison opened|runs compared|regression-detection value|
+|prompt_diff_viewed|a prompt diff opened|run(s), step, variant pair, prompt-hash changed (y/n)|prompt-testing value|
 |safety_block|a run refused by target-config rules|rule|guardrail (should be rare but nonzero)|
 |bridge_engaged|a run used the Python logic path|worker count|informs bridge investment|
 
@@ -553,6 +614,7 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 - The Go↔Python bridge design (owned by the engine design doc) — the SDK's ergonomics depend on it.
 - A span/trace storage format (an OTel-shaped span is the working model; whether to store it in an OTel-compatible encoding or a bespoke compact format is an engine design decision) and a matching flame-graph rendering approach for the results server (build on an existing renderer versus in-house).
 - A waterfall/trace-view rendering approach for the results server, ideally sharing a component library with the flame graph since both read the same span data.
+- A text/structural diff rendering approach for the prompt diff view (adopt a diff component versus build), ideally sharing the comparison surface with regression comparison.
 
 **Assumptions**
 
@@ -560,6 +622,7 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 - Single-node generation at 10k VUs covers v1; distribution is v2 at the earliest.
 - Fixture-driven seeding plus Python-side setup code covers lifecycle needs without engine machinery.
 - Rate limiting encountered in practice is expressible as status-code-triggered backoff (429/503, gRPC RESOURCE_EXHAUSTED); more exotic signaling (custom headers requiring bespoke parsing beyond `Retry-After`) is handled via the Python surface if it comes up.
+- An OpenAI-compatible chat-completions API covers the org's LLM providers for v1; bespoke provider protocols route through the Python surface if they appear.
 
 **Risks and mitigations**
 
@@ -574,6 +637,8 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 |Retry/backoff loops mask a real capacity problem behind apparent success|M|M|Retry attempts are spanned individually and visible in the waterfall; aggregate time-to-success (including backoff) is reported alongside raw success rate so masked latency isn't invisible|
 |Accidental internal DoS|L|H|Host allow-lists, ceilings, kill switch (section 15), optional arrival cap|
 |Agent skews the measurement it exists to provide|L|M|Overhead budget, sampling backoff, fail-open design|
+|Nondeterministic completions make prompt diffs noisy|H|M|Temperature-0 + seed guidance for regression-style prompt tests; structural diff for JSON completions; per-variant span identity keeps comparisons apples-to-apples; repeat sampling flagged P2 to expose spread|
+|Prompt testing creeps toward an eval platform|M|M|v1 is diff-and-assert only; judges, scoring, and eval datasets are explicit non-goals enforced at review|
 |Scope creep toward platform features|M|M|Non-goals enforced at review; v2 list is where those conversations go|
 
 **Open questions**
@@ -588,6 +653,9 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 - [ ] Lua as a third surface, or Python-only. Owner: [name]. By: [date].
 - [ ] gRPC streaming scope in v1. Owner: [name]. By: [date].
 - [ ] Demo/disposable DB feature — worth the complexity? Owner: [name]. By: [date].
+- [ ] Prompt variant mechanics: inline `variants:` block only, or also data-pool-driven prompt matrices? Owner: [name]. By: [date].
+- [ ] Prompt repeat-sampling (K runs per variant to expose nondeterminism spread) — v1 or defer? Owner: [name]. By: [date].
+- [ ] Non-OpenAI-compatible providers (Anthropic-native, Bedrock): adapter in v1 or Python-surface escape hatch? Owner: [name]. By: [date].
 - [ ] Team size and timeline, so Milestones become dated. Owner: [name]. By: [date].
 
 **Deferred to v2 (decided, not open):** CI integration and gating recipes; scheduling and recurring runs; notifications; teams, permissions, and any hosted/platform posture; retention policies; distribution across load-generator nodes (and any resulting need for distributed rate-limit coordination); productization and all business questions.
@@ -597,7 +665,7 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 - **Phasing:** engine + CLI dogfooded by the authoring team on one real service → two pilot teams write flows for their own services → org-wide availability of the toolkit packages.
 - **Entry criteria per phase:** conformance suite green across both surfaces; 10k-VU benchmark met on the reference node; a stress-run finding reproduced against a known bottleneck with the flame graph pointing at the right step, including at least one reproduced case of a stress run correctly identifying a throttled (not degraded) knee point.
 - **Distribution:** the engine/CLI and agent as versioned binaries; the SDK as an internal Python package. Install-to-first-run under [X] minutes.
-- **Docs:** a quickstart (one YAML flow to first stress run and flame graph in under ten minutes), the DSL/SDK reference, and a cookbook of login-chained and retry/backoff patterns.
+- **Docs:** a quickstart (one YAML flow to first stress run and flame graph in under ten minutes), the DSL/SDK reference, and a cookbook of login-chained, retry/backoff, and prompt-diff patterns (including the temperature-0 regression recipe).
 
 ## 19. Milestones (relative; dated once team size lands)
 
@@ -605,10 +673,10 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 |---|---|
 |M1: Engine core|Canonical IR, parser/validator, HTTP adapter emitting spans per phase, extract/assert/template chaining, YAML surface with `{{ env.* }}` resolution, data pools, target configs, CLI with integration mode (local dev loop), Go↔Python bridge prototype|
 |M2: The four modes|Planner + goroutine VU executor toward the 10k benchmark, load/stress/soak profiles, arrival-cap enforcement, retry/backoff policy execution and outcome classification (ok/failed/throttled), thresholds and trend evaluation, two-tier span storage (folded + raw trace trees), capture policy and redaction, run store, safety rails|
-|M3: Python SDK + protocols + agent|Engine as importable package with granular hooks and HTTP auto-instrumentation, GraphQL, WebSockets, gRPC unary (with RESOURCE_EXHAUSTED mapped to throttled), auth scheme coverage, DB verifier (read-only, Postgres), agent v1 with run-store correlation|
-|M4: Results server|Flame graphs (single + cumulative) and the waterfall/trace debug view over the same span data, dashboards with agent overlays and throttle-rate charting, failure drill-down grouped by step/cause with throttled as its own group, degraded-vs-throttled knee-point reporting, regression comparison, soak trend view, live view, hardening and dogfood exit|
+|M3: Python SDK + protocols + agent|Engine as importable package with granular hooks and HTTP auto-instrumentation, GraphQL, WebSockets, gRPC unary (with RESOURCE_EXHAUSTED mapped to throttled), `prompt` step type with LLM provider adapter (OpenAI-compatible), prompt-identity hashing and always-on completion capture, prompt variants with per-variant span identity, auth scheme coverage, DB verifier (read-only, Postgres), agent v1 with run-store correlation|
+|M4: Results server|Flame graphs (single + cumulative) and the waterfall/trace debug view over the same span data, dashboards with agent overlays and throttle-rate charting, failure drill-down grouped by step/cause with throttled as its own group, degraded-vs-throttled knee-point reporting, regression comparison, prompt diff view (variant vs variant, run vs baseline), soak trend view, live view, hardening and dogfood exit|
 
-> _M1+M2 alone already replace the pytest-plus-Locust glue for HTTP services; M3 and M4 are where the differentiation compounds — the agent, the flame graphs, the waterfall trace view, and honest throttle-aware stress reporting are what no off-the-shelf combination gives you. If scope pressure hits, SOAP, Lua, and the demo DB are the first deferrals; the IR, chaining, profile mechanics, span emission, outcome classification, and the results server are the protected core._
+> _M1+M2 alone already replace the pytest-plus-Locust glue for HTTP services; M3 and M4 are where the differentiation compounds — the agent, the flame graphs, the waterfall trace view, honest throttle-aware stress reporting, and prompt diffing are what no off-the-shelf combination gives you. Prompt testing (10.9) is deliberately a thin layer over the protected mechanics — HTTP adapter, chaining, capture, baseline comparison — so its marginal cost is small. If scope pressure hits, SOAP, Lua, and the demo DB are the first deferrals, then prompt variants and repeat sampling (the prompt step and its diff survive longer); the IR, chaining, profile mechanics, span emission, outcome classification, and the results server are the protected core._
 
 ## Appendix
 
@@ -624,6 +692,10 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 - **Flame graph (of a flow):** a fold of many traces — spans with the same structural name collapsed and summed — rendered as width-proportional time, for one iteration (unfolded), one run, or cumulatively across runs. Answers "where does aggregate time go."
 - **Waterfall / trace view:** a causal, per-iteration rendering of one trace's spans in start-offset order, like a browser performance panel. Answers "what exactly happened, in order, in this one run."
 - **Throttled:** the outcome class for rate-limit responses (HTTP `429`, gRPC `RESOURCE_EXHAUSTED`, or an author-mapped status), tracked separately from `failed` so thresholds and knee-point findings aren't skewed by a rate limiter doing its job.
+- **Prompt step:** a step calling an LLM provider with templated messages; its completion chains into later steps like any extraction, and the resolved prompt plus completion are always captured.
+- **Prompt variant:** a named alternative message set on a prompt step, fanned out per iteration, carrying its own structural span identity (`step@variant`).
+- **Completion:** the LLM response body of a prompt step — the thing extracted from, asserted on, captured, and diffed.
+- **Prompt diff:** the results-server comparison of captured completions — variant vs variant within a run, or same step/variant against a baseline run — as text or structural (JSON) diff, with the prompt's own diff shown when the prompt hash changed.
 - **Arrival cap:** an optional, self-imposed request-rate ceiling set on a profile, enforced by the planner ahead of the target, for testing behavior at a known rate rather than only discovering a limit by flooding.
 - **Agent:** the small binary on target hosts streaming resource metrics into a run.
 - **Knee point:** the concurrency level at which thresholds begin to fail during a stress ramp, classified as **degraded** (real capacity limit) or **throttled** (rate limiter engaging).

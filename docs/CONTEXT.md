@@ -5,7 +5,7 @@ description: Glossary of FlowBench's domain terms, extracted from the PRD's conc
 tags:
   - glossary
   - domain-model
-timestamp: 2026-07-10
+timestamp: 2026-07-12
 ---
 # CONTEXT.md
 
@@ -24,8 +24,20 @@ An ordered, optionally branching sequence of Steps; the unit of authorship. Writ
 _Avoid_: test case, collection, journey
 
 **Step**:
-The atomic unit of a flow. Types: `call` (HTTP/GraphQL/gRPC), `ws`, `logic` (Python hook), `wait`/`poll-until`, `verify` (database check). Can extract values, assert conditions, and carry a retry/backoff policy.
+The atomic unit of a flow. Types: `call` (HTTP/GraphQL/gRPC), `prompt` (LLM call), `ws`, `logic` (Python hook), `wait`/`poll-until`, `verify` (database check). Can extract values, assert conditions, and carry a retry/backoff policy.
 _Avoid_: request, task
+
+**Prompt step**:
+A step calling an LLM provider with templated messages (system/user), a model, and generation parameters. Its completion chains into later steps like any extraction; the resolved prompt and completion are always captured for diffing.
+_Avoid_: eval, LLM test
+
+**Prompt variant**:
+A named alternative message set on a prompt step, fanned out per iteration, carrying its own structural span identity (`step@variant`) so folding, metrics, and diffs stay per-variant.
+_Avoid_: A/B test
+
+**Completion**:
+The LLM response body of a prompt step — extracted from, asserted on, captured, and diffed.
+_Avoid_: output, generation
 
 **Extraction**:
 Capturing a value from a step's response (JSONPath; later XPath) into a flow variable for injection into later steps.
@@ -95,6 +107,10 @@ A fold of many traces — spans with the same structural name collapsed and summ
 
 **Waterfall / trace view**:
 A causal, per-iteration rendering of one trace's spans in start-offset order, like a browser performance panel. Answers "what exactly happened, in order, in this one iteration."
+
+**Prompt diff**:
+The results-server comparison of captured completions — variant vs variant within a run, or same step/variant against a baseline run — rendered as a text diff (structural for JSON), with the prompt's own diff shown when the prompt hash changed between runs. The v1 answer to "how are my prompts doing"; scoring is deliberately not one.
+_Avoid_: eval score
 
 **Run store**:
 The on-disk directory of run artifacts (folded flame data, raw trace trees, agent series, aggregates) that the results server and CLI read. No retention machinery; the user owns it.

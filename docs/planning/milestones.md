@@ -4,7 +4,7 @@ title: Milestone plan
 description: The M1–M4 milestone plan from the PRD, mirrored as GitHub milestones and tracer-bullet issues.
 tags:
   - planning
-timestamp: 2026-07-10
+timestamp: 2026-07-12
 ---
 # Milestone plan
 
@@ -24,12 +24,12 @@ Exit: the same flow runs under all five modes; a stress run against a rate-limit
 
 ## M3: Python SDK + protocols + agent
 
-Engine as importable Python package (declarative fast path plus bridged `logic` steps), SDK HTTP auto-instrumentation, flows runnable via CLI and `python file.py`, GraphQL, WebSockets, gRPC unary (`RESOURCE_EXHAUSTED` → `throttled`), auth scheme coverage, DB verifier (read-only, Postgres), agent v1 with collector time-alignment and engine self-metrics.
+Engine as importable Python package (declarative fast path plus bridged `logic` steps), SDK HTTP auto-instrumentation, flows runnable via CLI and `python file.py`, GraphQL, WebSockets, gRPC unary (`RESOURCE_EXHAUSTED` → `throttled`), `prompt` step type with LLM provider adapter (OpenAI-compatible; always-on prompt/completion capture, prompt-identity hashing, token-usage spans — ADR 0009), prompt variants with per-variant span identity, auth scheme coverage, DB verifier (read-only, Postgres), agent v1 with collector time-alignment and engine self-metrics.
 
-Exit: a Python-authored flow with a logic step renders fully resolved spans; an agent-attached run overlays target CPU/memory.
+Exit: a Python-authored flow with a logic step renders fully resolved spans; an agent-attached run overlays target CPU/memory; a chained prompt flow records per-variant completions in the run store.
 
 ## M4: Results server
 
-`serve` command over the run store, flame graphs (single + cumulative) and the waterfall/trace view over the same span data, dashboards with agent overlays and throttle-rate charting, failure drill-down grouped by step/cause with `throttled` as its own group, degraded-vs-throttled knee-point reporting, regression comparison, soak trend view, live view, hardening, quickstart docs, dogfood exit.
+`serve` command over the run store, flame graphs (single + cumulative) and the waterfall/trace view over the same span data, dashboards with agent overlays and throttle-rate charting, failure drill-down grouped by step/cause with `throttled` as its own group, degraded-vs-throttled knee-point reporting, regression comparison, prompt diff view (variant vs variant within a run, run vs baseline; text and structural JSON diffs, prompt-hash change surfaced — ADR 0009), soak trend view, live view, hardening, quickstart docs, dogfood exit.
 
 Exit: rollout entry criteria — conformance suite green across both surfaces, 10k-VU benchmark met, a stress finding reproduced with the flame graph pointing at the right step including one correctly-identified throttled knee.
