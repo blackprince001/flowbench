@@ -1,0 +1,9 @@
+# Target config: hosts, ceilings, optionally an agent address — never credentials.
+# `--target local` is the zero-config local dev loop (PRD 10.5).
+name: local
+base_urls:
+  - http://localhost:8080
+max_vus: 200
+max_rps: 500
+# High-load modes can be refused per target (PRD section 15):
+# disallowed_modes: [stress, soak]
