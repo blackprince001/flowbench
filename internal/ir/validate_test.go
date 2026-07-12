@@ -237,6 +237,21 @@ func TestValidateRejects(t *testing.T) {
 	}
 }
 
+func TestValidateReportsSourcePositions(t *testing.T) {
+	s := chainedLoginScenario()
+	s.Flows[0].Pos = &ir.Pos{File: "tests/flows/checkout.flow.yaml", Line: 1}
+	s.Flows[0].Steps[2].Pos = &ir.Pos{File: "tests/flows/checkout.flow.yaml", Line: 18}
+	s.Flows[0].Steps[2].Call.URL = "/orders/{{ missing_var }}/pay"
+
+	err := s.Validate()
+	if err == nil {
+		t.Fatal("expected a validation error")
+	}
+	if !strings.Contains(err.Error(), "tests/flows/checkout.flow.yaml:18") {
+		t.Errorf("error should carry the step's file:line, got:\n%v", err)
+	}
+}
+
 func TestValidateAllowsSameStepVarAssertion(t *testing.T) {
 	// The PRD's login step asserts on the token it extracts in that same
 	// step; that must stay legal even though injection may not use it until
