@@ -1,0 +1,4 @@
+# --target example -> hit https://example.com; the host allow-list is this list.
+name: example
+base_urls:
+  - https://example.com

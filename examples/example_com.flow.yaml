@@ -1,0 +1,9 @@
+# A tiny M1 smoke flow against example.com (IANA's designated example host).
+flow: example_smoke
+steps:
+  - id: fetch_home
+    call: GET /
+    assert:
+      - status == 200
+      - latency < 2000ms
+      - header.Content-Type contains "text/html"

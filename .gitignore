@@ -1,6 +1,7 @@
 # Go
 /bin/
 /dist/
+/flowbench
 *.exe
 *.test
 *.out
