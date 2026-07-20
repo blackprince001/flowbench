@@ -6,21 +6,28 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/blackprince001/flowbench/internal/secret"
 )
 
 // Scope holds one iteration's variable roots: the process environment, the
 // flow's bound data-pool row (addressed as <pool>.<field>), and values
 // extracted from earlier steps (addressed by flat name).
 type Scope struct {
-	pool string
-	row  map[string]string
-	vars map[string]any
-	env  func(string) (string, bool)
+	pool    string
+	row     map[string]string
+	vars    map[string]any
+	env     func(string) (string, bool)
+	secrets *secret.Set
 }
 
 func NewScope(pool string, row map[string]string) *Scope {
-	return &Scope{pool: pool, row: row, vars: map[string]any{}, env: os.LookupEnv}
+	return &Scope{pool: pool, row: row, vars: map[string]any{}, env: os.LookupEnv, secrets: secret.NewSet()}
 }
+
+// Secrets is the set of env-sourced values that must be scrubbed from any
+// captured artifact before it reaches storage.
+func (s *Scope) Secrets() *secret.Set { return s.secrets }
 
 // Set records a value extracted from a step's response.
 func (s *Scope) Set(name string, v any) { s.vars[name] = v }
@@ -43,6 +50,7 @@ func (s *Scope) Resolve(ref string) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("environment variable %q is not set", rest)
 		}
+		s.secrets.Add(v)
 		return v, nil
 	case s.pool != "" && root == s.pool:
 		v, ok := s.row[rest]
