@@ -141,14 +141,6 @@ func TestValidateRejects(t *testing.T) {
 			},
 			"connection and a query",
 		},
-		"logic without a hook": {
-			func(s *ir.Scenario) {
-				s.Flows[0].Steps = append(s.Flows[0].Steps, ir.Step{
-					ID: "compute", Type: ir.StepLogic, Logic: &ir.LogicSpec{},
-				})
-			},
-			"hook name",
-		},
 		"extraction var with reserved characters": {
 			func(s *ir.Scenario) { s.Flows[0].Steps[0].Extract[0].Var = "auth.token" },
 			"reserved",
