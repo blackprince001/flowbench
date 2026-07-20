@@ -82,7 +82,7 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 
 	resp, sp, err := r.Session.Do(ctx, st.ID, req, anchor)
 	if err != nil {
-		cont := r.record(it, sp, st, fmt.Sprintf("call failed: %v", err))
+		cont := r.record(it, sp, st, scope, fmt.Sprintf("call failed: %v", err))
 		return sp, cont, nil
 	}
 
@@ -97,7 +97,7 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 			if err != nil {
 				detail = fmt.Sprintf("extract %q: %v", ex.Var, err)
 			}
-			return sp, r.record(it, sp, st, detail), nil
+			return sp, r.record(it, sp, st, scope, detail), nil
 		}
 		scope.Set(ex.Var, v)
 	}
@@ -108,12 +108,12 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 		child := sp.Child(assertName(a), time.Since(anchor))
 		if err != nil {
 			child.Outcome = span.OutcomeFailed
-			cont = r.record(it, sp, st, fmt.Sprintf("assert %s: %v", assertName(a), err))
+			cont = r.record(it, sp, st, scope, fmt.Sprintf("assert %s: %v", assertName(a), err))
 			break
 		}
 		if !res.Pass {
 			child.Outcome = span.OutcomeFailed
-			cont = r.record(it, sp, st, res.Detail)
+			cont = r.record(it, sp, st, scope, res.Detail)
 			if !cont {
 				break
 			}
@@ -129,11 +129,13 @@ func (r *Runner) resolveURL(u string) string {
 	return strings.TrimRight(r.BaseURL, "/") + "/" + strings.TrimLeft(u, "/")
 }
 
-// record marks the step failed, appends the failure, and returns whether the
-// flow should continue given the step's effective on_failure action.
-func (r *Runner) record(it *Iteration, sp *span.Span, st *ir.Step, detail string) bool {
+// record marks the step failed, appends the (redacted) failure, and returns
+// whether the flow should continue given the step's effective on_failure
+// action. Details pass through the scope's secrets so an env-sourced value
+// echoed into a response can never reach a stored failure.
+func (r *Runner) record(it *Iteration, sp *span.Span, st *ir.Step, sc *Scope, detail string) bool {
 	sp.Outcome = span.OutcomeFailed
-	it.Failures = append(it.Failures, Failure{StepID: st.ID, Detail: detail})
+	it.Failures = append(it.Failures, Failure{StepID: st.ID, Detail: sc.Secrets().Redact(detail)})
 	switch effectiveAction(st.OnFailure, r.Mode) {
 	case ir.FailureAbortRun:
 		it.Aborted = true
