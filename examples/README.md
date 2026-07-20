@@ -1,17 +1,21 @@
 # Examples
 
-Worked examples for `flowbench run`. A run is always a **flow** (what to test)
-paired with a **target** (where to run it, and the safety limits):
+Worked examples for `flowbench run`. Each folder is one self-contained example —
+a **flow** (what to test) paired with a **target** (where to run it, and the
+safety limits):
 
 ```
 flowbench run <flow.yaml> --target <target>
 ```
 
-The smoke check in this folder hits example.com (IANA's designated example
-host):
+Not built yet? Use `go run ./cmd/flowbench run …` with the same arguments.
+
+## `example-com/` — the smallest thing that works
+
+One `GET /` against example.com, asserting status, latency, and content type.
 
 ```
-flowbench run examples/example_com.flow.yaml --target examples/example.target.yaml
+flowbench run examples/example-com/smoke.flow.yaml --target examples/example-com/target.yaml
 ```
 
 ```
@@ -20,43 +24,48 @@ running "example_smoke" against example (https://example.com)
 1 iteration(s): 1 passed, 0 failed  (79ms)
 ```
 
-Not built yet? Use `go run ./cmd/flowbench run …` with the same arguments.
+## `bored-api/` — chaining and a data-driven sweep
+
+Against the [Bored API](https://bored-api.appbrewery.com):
+
+- [`smoke.flow.yaml`](bored-api/smoke.flow.yaml) — three chained steps: grab a
+  random activity, filter to an education activity, then extract that result's
+  `key` and look it up directly (the login → take token → act pattern, minus
+  the auth).
+
+  ```
+  flowbench run examples/bored-api/smoke.flow.yaml --target examples/bored-api/target.yaml
+  ```
+
+- [`sweep.flow.yaml`](bored-api/sweep.flow.yaml) — the same `/filter` call run
+  once per row of [`filters.csv`](bored-api/filters.csv), each row injected as
+  `{{ user.* }}`. This is the data-pool mechanic: a 1000-row file is 1000
+  iterations.
+
+  > The public API is rate-limited (100 requests / 15 min), so the full sweep
+  > gets `429`-throttled partway. Point it at an unrated target for the whole run.
 
 ## Two files, two jobs
 
-The flow says *what* to do; the target says *where* to do it. Notice the flow
-calls `GET /` — a relative path, with no host. At run time the target's base
-URL fills that in: `/` + `https://example.com` → `GET https://example.com/`.
+The flow says *what* to do; the target says *where*. Notice the flows call
+`GET /...` — relative paths, with no host. At run time the target's base URL
+fills that in: `/random` + `https://bored-api.appbrewery.com` →
+`GET https://bored-api.appbrewery.com/random`.
 
 | | Flow (`*.flow.yaml`) | Target (`--target`) |
 |---|---|---|
 | Answers | *What* to test — steps, chaining, extractions, assertions | *Where* to run it, and the limits |
-| Holds | relative URLs (`/orders`), `{{ variables }}` | base URLs, VU/RPS ceilings, disallowed modes |
+| Holds | relative URLs (`/filter`), `{{ variables }}` | base URLs, VU/RPS ceilings, disallowed modes |
 | Credentials | none — read from `{{ env.* }}` at run time | **never** — safe to commit |
 | Changes when | the test logic changes | you switch environment |
 
 Splitting them means **one flow runs against many environments** without edits —
-you just change `--target`:
+you just change `--target`. The target's `base_urls` double as a **host
+allow-list**: a call to any host not listed is refused before a single request
+is sent.
 
-```
-flowbench run checkout.flow.yaml --target local      # localhost dev loop
-flowbench run checkout.flow.yaml --target staging    # staging host, VUs capped
-flowbench run checkout.flow.yaml --target prod        # prod host, stress disallowed
-```
-
-The target's `base_urls` double as a **host allow-list**: a call to any host
-not listed is refused before a single request is sent. That is why the third
-demo below exits non-zero without touching the network.
-
-## Files here
-
-- [`example_com.flow.yaml`](example_com.flow.yaml) — one `GET /` asserting the
-  status, latency, and content type.
-- [`example.target.yaml`](example.target.yaml) — points at `https://example.com`
-  and allows only that host.
-
-For a multi-step flow — login, extract a token, carry it forward, assert —
-see [`tests/flows/authenticated_checkout.flow.yaml`](../tests/flows/authenticated_checkout.flow.yaml).
+For a multi-step flow with auth — login, extract a token, carry it forward,
+assert — see [`tests/flows/authenticated_checkout.flow.yaml`](../tests/flows/authenticated_checkout.flow.yaml).
 
 ## Exit codes
 
@@ -67,9 +76,6 @@ see [`tests/flows/authenticated_checkout.flow.yaml`](../tests/flows/authenticate
 | `0` | every iteration passed |
 | `1` | ran, but assertions failed |
 | `2` | pre-run error — bad arguments, a parse/validation failure, or the host allow-list gate |
-
-Try it: change an assertion to `status == 301` and the run exits `1`; point a
-step at another host and it exits `2`.
 
 ## Good to know
 

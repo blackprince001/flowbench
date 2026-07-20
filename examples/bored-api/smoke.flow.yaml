@@ -1,0 +1,44 @@
+# Bored API (https://bored-api.appbrewery.com) — a three-step integration flow
+# exercising every documented endpoint and chaining a value from one step to the
+# next (the login -> take token -> act pattern, minus the auth):
+#   1. GET /random          — grab any activity
+#   2. GET /filter          — narrow to education activities for a single person,
+#                             then take the first result's key
+#   3. GET /activity/{key}  — look that key up and confirm it round-trips
+#
+# The public API is rate-limited to 100 requests / 15 min, so this is an
+# integration smoke (one iteration), not something to point a load profile at.
+flow: bored_api_smoke
+steps:
+  # 1. Any random activity. Assert the envelope, not the (random) contents.
+  - id: random_activity
+    call: GET /random
+    assert:
+      - status == 200
+      - latency < 3000ms
+      - header.Content-Type contains "application/json"
+      - $.key != null
+      - $.participants >= 1
+
+  # 2. Filter to education activities for one participant, then carry the first
+  #    result's key forward as {{ key }}.
+  - id: filter_education
+    call: GET /filter
+    query:
+      type: education
+      participants: "1"
+    extract:
+      key: $[0].key
+    assert:
+      - status == 200
+      - $[0].type == "education"
+      - $[0].participants == 1
+
+  # 3. Look the extracted key up directly and confirm it matches the filter.
+  - id: fetch_by_key
+    call: GET /activity/{{ key }}
+    assert:
+      - status == 200
+      - $.type == "education"
+      - $.participants == 1
+      - $.activity != null

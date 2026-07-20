@@ -1,0 +1,4 @@
+# --target bored -> hit https://bored-api.appbrewery.com; the host allow-list is this list.
+name: bored
+base_urls:
+  - https://bored-api.appbrewery.com
