@@ -20,6 +20,7 @@ type Runner struct {
 	Session *adapters.Session
 	BaseURL string // prepended to relative call URLs
 	Mode    ir.Mode
+	Allow   func(rawURL string) (bool, error)
 }
 
 // Failure is one recorded assertion or extraction failure within an iteration.
@@ -79,6 +80,18 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 		return nil, false, fmt.Errorf("step %q: %w", st.ID, err)
 	}
 	req.URL = r.resolveURL(req.URL)
+
+	if r.Allow != nil {
+		ok, err := r.Allow(req.URL)
+		if err != nil || !ok {
+			sp := span.New(st.ID, time.Since(anchor))
+			detail := fmt.Sprintf("host allow-list: %s is not an allowed target", req.URL)
+			if err != nil {
+				detail = fmt.Sprintf("host allow-list check failed for %s: %v", req.URL, err)
+			}
+			return sp, r.record(it, sp, st, scope, detail), nil
+		}
+	}
 
 	resp, sp, err := r.Session.Do(ctx, st.ID, req, anchor)
 	if err != nil {
