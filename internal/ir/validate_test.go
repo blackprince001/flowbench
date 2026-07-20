@@ -9,8 +9,6 @@ import (
 	"github.com/blackprince001/flowbench/internal/ir"
 )
 
-// TestValidateRejects mutates a fresh valid chained-login scenario per case
-// and expects Validate to name the problem.
 func TestValidateRejects(t *testing.T) {
 	cases := map[string]struct {
 		mutate  func(s *ir.Scenario)
@@ -253,9 +251,7 @@ func TestValidateReportsSourcePositions(t *testing.T) {
 }
 
 func TestValidateAllowsSameStepVarAssertion(t *testing.T) {
-	// The PRD's login step asserts on the token it extracts in that same
-	// step; that must stay legal even though injection may not use it until
-	// the next step.
+	// a step asserting on a var it extracts in that same step must stay legal
 	if err := chainedLoginScenario().Validate(); err != nil {
 		t.Fatalf("same-step var assertion should validate, got:\n%v", err)
 	}
