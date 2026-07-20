@@ -2,12 +2,15 @@
 type: Decision
 title: "ADR 0008: Python logic steps run in a bridged worker pool"
 description: Declarative flows execute on the pure-Go fast path; flows with Python logic steps route through a worker-pool bridge with an honestly lower VU ceiling.
-status: Accepted
+status: Superseded
 timestamp: 2026-07-10
 ---
 # ADR 0008: Python logic steps run in a bridged worker pool
 
-Status: Accepted (per PRD v0.4, section 11 — the Go/Python boundary)
+Status: Superseded by [ADR 0012](0012-no-runtime-bridge-shared-run-store.md)
+(2026-07-20) — the runtime Go↔Python bridge and the general `logic` step are
+dropped; declarative flows run on the Go engine and Python-driven flows write
+to the same run store. The rest of this record is retained for history.
 
 ## Context
 
