@@ -3,7 +3,6 @@ package ir
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -31,16 +30,31 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 }
 
 func DecodeScenario(data []byte) (*Scenario, error) {
+	var s Scenario
+	if err := decodeStrict(data, &s, "scenario"); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+func DecodeTargetConfig(data []byte) (*TargetConfig, error) {
+	var t TargetConfig
+	if err := decodeStrict(data, &t, "target"); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func decodeStrict(data []byte, v any, what string) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
-	var s Scenario
-	if err := dec.Decode(&s); err != nil {
-		return nil, fmt.Errorf("decode scenario: %w", err)
+	if err := dec.Decode(v); err != nil {
+		return fmt.Errorf("decode %s: %w", what, err)
 	}
 	// only io.EOF proves the whole input was consumed; Decoder.More reports
 	// false for a peeked "}" or "]", missing stray trailing closers
 	if _, err := dec.Token(); err != io.EOF {
-		return nil, errors.New("decode scenario: trailing data after JSON document")
+		return fmt.Errorf("decode %s: trailing data after JSON document", what)
 	}
-	return &s, nil
+	return nil
 }
