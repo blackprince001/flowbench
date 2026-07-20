@@ -161,7 +161,7 @@ func (st *Step) validate(path string) []error {
 	}
 
 	specs := 0
-	for _, set := range []bool{st.Call != nil, st.Logic != nil, st.Wait != nil, st.Poll != nil, st.Verify != nil} {
+	for _, set := range []bool{st.Call != nil, st.Wait != nil, st.Poll != nil, st.Verify != nil} {
 		if set {
 			specs++
 		}
@@ -172,7 +172,6 @@ func (st *Step) validate(path string) []error {
 
 	specFor := map[StepType]bool{
 		StepCall:   st.Call != nil,
-		StepLogic:  st.Logic != nil,
 		StepWait:   st.Wait != nil,
 		StepPoll:   st.Poll != nil,
 		StepVerify: st.Verify != nil,
@@ -180,7 +179,7 @@ func (st *Step) validate(path string) []error {
 	matches, known := specFor[st.Type]
 	switch {
 	case !known:
-		errs = append(errs, errf(path, "unknown step type %q (v0 executes call, logic, wait, poll, verify)", st.Type))
+		errs = append(errs, errf(path, "unknown step type %q (v0 executes call, wait, poll, verify)", st.Type))
 	case !matches:
 		errs = append(errs, errf(path, "type is %q but the %q spec is not set", st.Type, st.Type))
 	}
@@ -188,8 +187,6 @@ func (st *Step) validate(path string) []error {
 	switch {
 	case st.Call != nil:
 		errs = append(errs, st.Call.validate(path)...)
-	case st.Logic != nil && st.Logic.Hook == "":
-		errs = append(errs, errf(path, "logic step needs a hook name"))
 	case st.Wait != nil && st.Wait.Duration <= 0:
 		errs = append(errs, errf(path, "wait duration must be positive"))
 	case st.Poll != nil:

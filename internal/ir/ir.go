@@ -11,7 +11,6 @@ type StepType string
 
 const (
 	StepCall   StepType = "call"
-	StepLogic  StepType = "logic"
 	StepWait   StepType = "wait"
 	StepPoll   StepType = "poll"
 	StepVerify StepType = "verify"
@@ -85,7 +84,6 @@ type Step struct {
 	Type StepType `json:"type"`
 
 	Call   *CallSpec   `json:"call,omitempty"`
-	Logic  *LogicSpec  `json:"logic,omitempty"`
 	Wait   *WaitSpec   `json:"wait,omitempty"`
 	Poll   *PollSpec   `json:"poll,omitempty"`
 	Verify *VerifySpec `json:"verify,omitempty"`
@@ -105,10 +103,6 @@ type CallSpec struct {
 	Headers  map[string]string `json:"headers,omitempty"`
 	Query    map[string]string `json:"query,omitempty"`
 	Body     json.RawMessage   `json:"body,omitempty"`
-}
-
-type LogicSpec struct {
-	Hook string `json:"hook"`
 }
 
 type WaitSpec struct {
