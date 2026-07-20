@@ -9,33 +9,14 @@ import (
 	"strings"
 )
 
-// identRe restricts flow names, step IDs, variable names, pool names, and
-// endpoint references. Dots and "@" are excluded because the span-naming
-// scheme reserves them: spans address steps as dot-paths
-// ("login.http_call.tls") and variants as "name@variant" (ADRs 0007, 0009),
-// so an ID containing either would corrupt structural span identity.
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*$`)
 
-// templateRe matches "{{ ref }}" placeholders; refs are dotted paths whose
-// first segment is the variable root ("user.email" → "user").
 var templateRe = regexp.MustCompile(`\{\{\s*([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*)\s*\}\}`)
 
-// openBraceRe finds anything that looks like a template opener, so malformed
-// placeholders fail validation instead of going to the target verbatim.
 var openBraceRe = regexp.MustCompile(`\{\{`)
 
-// envRoot is the template root always available: "{{ env.VAR }}" resolves
-// against the process environment at run time (ADR 0005).
 const envRoot = "env"
 
-// Validate checks the scenario is structurally sound and internally
-// consistent: discriminated unions carry exactly the spec their type names,
-// identifiers are span-safe, bounds are set where unbounded execution could
-// hang a run, and every template reference resolves to the env, the flow's
-// data pool, or an upstream extraction. All problems are reported at once
-// via errors.Join; each error is prefixed with the path to the offending
-// node. Cross-file concerns (target existence, endpoint catalog, pool file
-// shape) belong to the parser and run-time binding, not here.
 func (s *Scenario) Validate() error {
 	var errs []error
 	if !identRe.MatchString(s.Name) {
@@ -72,8 +53,6 @@ func (s *Scenario) Validate() error {
 	return errors.Join(errs...)
 }
 
-// Validate checks a target config in isolation; run-time binding checks the
-// scenario against it (host allow-list, ceilings, disallowed modes).
 func (t *TargetConfig) Validate() error {
 	var errs []error
 	if !identRe.MatchString(t.Name) {
@@ -137,10 +116,6 @@ func (f *Flow) validate(path string, pools map[string]bool) []error {
 		errs = append(errs, errf(path, "must contain at least one step"))
 	}
 
-	// Variable graph: template injection sees roots from the env, the bound
-	// pool, and extractions of strictly earlier steps; var assertions also
-	// see the current step's extractions (extraction precedes assertion
-	// within a step — the PRD's login step asserts the token it extracted).
 	available := map[string]bool{envRoot: true}
 	if f.Data != "" {
 		available[f.Data] = true
@@ -398,9 +373,6 @@ func validMode(m Mode) bool {
 	return false
 }
 
-// templateRefs collects every well-formed "{{ ref }}" in the fields the
-// engine templates when building this step's work: URL, headers, query,
-// body, and verify args.
 func (st *Step) templateRefs() []string {
 	var refs []string
 	for _, field := range st.templatedFields() {
@@ -411,9 +383,6 @@ func (st *Step) templateRefs() []string {
 	return refs
 }
 
-// malformedTemplates reports "{{" openers that templateRe cannot parse, so
-// a typo like "{{ user..email }}" fails validation rather than being sent
-// to the target as a literal.
 func (st *Step) malformedTemplates(path string) []error {
 	var errs []error
 	for _, field := range st.templatedFields() {
@@ -465,8 +434,6 @@ func errf(path, format string, args ...any) error {
 	return fmt.Errorf("%s: %s", path, fmt.Sprintf(format, args...))
 }
 
-// posPrefix renders "file:line: " when provenance is present, so validation
-// failures on parsed flows read as compiler-style pre-run errors.
 func posPrefix(p *Pos) string {
 	if p == nil {
 		return ""

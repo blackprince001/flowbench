@@ -15,24 +15,16 @@ import (
 	"github.com/blackprince001/flowbench/internal/ir"
 )
 
-// dataPoolVar is the variable root the YAML `data:` shorthand binds fixture
-// rows to: `data: fixtures/users.csv` exposes each row as {{ user.* }},
-// matching the PRD section 11 sample. A named-pool form can be added to the
-// DSL additively if flows ever need more than one pool.
+// dataPoolVar is the variable root the YAML `data:` shorthand binds rows to.
 const dataPoolVar = "user"
 
-// Options tunes a parse.
 type Options struct {
-	// PriorStepIDs maps flow name → step IDs that earlier runs recorded.
-	// Parse warns when a prior ID is missing from the parsed flow, because
-	// step names carry structural identity and a rename silently breaks
-	// cross-run folding (PRD 10.7). The run store feeds this once it exists;
-	// callers without history leave it nil.
+	// PriorStepIDs maps flow name → step IDs earlier runs recorded; Parse
+	// warns when one is missing, since a rename silently breaks cross-run
+	// folding.
 	PriorStepIDs map[string][]string
 }
 
-// Warning is a non-fatal finding the author should see but that does not
-// block the run.
 type Warning struct {
 	Pos *ir.Pos
 	Msg string
@@ -45,14 +37,11 @@ func (w Warning) String() string {
 	return "warning: " + w.Msg
 }
 
-// Result is a successful parse: a validated single-flow scenario plus any
-// warnings.
 type Result struct {
 	Scenario *ir.Scenario
 	Warnings []Warning
 }
 
-// ParseFlowFile parses one *.flow.yaml file into the canonical IR.
 func ParseFlowFile(path string, opts *Options) (*Result, error) {
 	src, err := os.ReadFile(path)
 	if err != nil {
@@ -61,11 +50,6 @@ func ParseFlowFile(path string, opts *Options) (*Result, error) {
 	return ParseFlow(src, path, opts)
 }
 
-// ParseFlow parses a flow document into a validated single-flow scenario:
-// the flow's name becomes the scenario name, `data:` becomes a data pool
-// bound as {{ user.* }}, and a missing profile defaults to integration mode
-// (the local dev loop). All schema and semantic problems are reported
-// together as pre-run errors carrying file/line context.
 func ParseFlow(src []byte, filename string, opts *Options) (*Result, error) {
 	file, err := parser.ParseBytes(src, 0)
 	if err != nil {
@@ -110,8 +94,7 @@ func renameWarnings(sc *ir.Scenario, prior map[string][]string) []Warning {
 	return ws
 }
 
-// walker maps the YAML AST to IR, collecting every error with its source
-// position instead of stopping at the first.
+// walker maps the YAML AST to IR, collecting every error with its position.
 type walker struct {
 	file string
 	errs []error
@@ -168,7 +151,7 @@ func (w *walker) step(n ast.Node) ir.Step {
 	var callNode, waitNode, pollNode ast.Node
 	var headers, query map[string]string
 	var body json.RawMessage
-	var callOnlyNodes []ast.Node // where headers/query/body appeared, for errors
+	var callOnlyNodes []ast.Node
 
 	for _, e := range entries {
 		key, keyNode := w.key(e)
@@ -240,7 +223,6 @@ func (w *walker) rejectCallOnly(nodes []ast.Node, kind string) {
 	}
 }
 
-// callShorthand parses `call: POST /auth/login` into method and URL.
 func (w *walker) callShorthand(n ast.Node) *ir.CallSpec {
 	s, ok := w.str(n, "call")
 	if !ok {
@@ -405,8 +387,7 @@ func (w *walker) profile(n ast.Node) ir.Profile {
 	return p
 }
 
-// vus accepts the two profile forms: a plain VU count, or the PRD sample's
-// mapping form `vus: { ramp: "0 -> 500 over 5m", hold: 10m }`.
+// vus accepts a plain VU count or the mapping form { ramp:, hold: }.
 func (w *walker) vus(n ast.Node, p *ir.Profile, holdNodes *[]ast.Node) {
 	if count, ok := n.(*ast.IntegerNode); ok {
 		p.VUs, _ = w.intVal(count, "vus")
@@ -430,8 +411,6 @@ func (w *walker) vus(n ast.Node, p *ir.Profile, holdNodes *[]ast.Node) {
 		}
 	}
 }
-
-// --- node helpers ---
 
 func mapEntries(n ast.Node) ([]*ast.MappingValueNode, bool) {
 	switch m := n.(type) {
@@ -506,8 +485,8 @@ func (w *walker) duration(n ast.Node, what string) (ir.Duration, bool) {
 	return ir.Duration(d), true
 }
 
-// strMap reads a mapping of string keys to scalar values, keeping the
-// scalar's source text (so `X-Retry: 3` stays "3").
+// strMap reads a mapping of string keys to scalars, keeping source text
+// (so `X-Retry: 3` stays "3").
 func (w *walker) strMap(n ast.Node, what string) map[string]string {
 	entries, ok := mapEntries(n)
 	if !ok {
@@ -529,7 +508,6 @@ func (w *walker) strMap(n ast.Node, what string) map[string]string {
 	return m
 }
 
-// bodyJSON converts an arbitrary YAML body node into canonical JSON.
 func (w *walker) bodyJSON(n ast.Node) json.RawMessage {
 	var v any
 	if err := yaml.NodeToValue(n, &v); err != nil {

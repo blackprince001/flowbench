@@ -34,8 +34,7 @@ func TestExpandTemplates(t *testing.T) {
 		t.Errorf("unresolved ref should error naming the ref, got: %v", err)
 	}
 
-	// Malformed placeholders pass through untouched; validation catches them
-	// before a run, and expansion must not corrupt them silently.
+	// malformed placeholders pass through untouched; validation catches them pre-run
 	got, err = ir.ExpandTemplates("keep {{ user..email }} verbatim", resolve)
 	if err != nil || got != "keep {{ user..email }} verbatim" {
 		t.Errorf("malformed placeholder should pass through, got %q, %v", got, err)

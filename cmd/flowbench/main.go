@@ -1,6 +1,5 @@
 // Command flowbench is the engine+CLI binary: it runs scenarios on demand and
-// serves results locally. Run-now only, local-first, clean exit codes so CI
-// integration stays possible later (PRD sections 10.5, 13).
+// serves results locally.
 package main
 
 import (
