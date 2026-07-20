@@ -12,7 +12,7 @@ Relative sequencing per the PRD (section 19); no dates until team size lands. Ea
 
 ## M1: Engine core
 
-Canonical IR, YAML parser/validator with file/line errors, HTTP adapter emitting per-phase spans, extract/assert/template chaining, `{{ env.* }}` resolution with redaction, data pools, target configs with the host-allow-list safety gate, CLI with integration mode (the local dev loop), and a Go↔Python bridge prototype (spike, must land before the SDK surface freezes — ADR 0008).
+Canonical IR, YAML parser/validator with file/line errors, HTTP adapter emitting per-phase spans, extract/assert/template chaining, `{{ env.* }}` resolution with redaction, data pools, target configs with the host-allow-list safety gate, and the CLI with integration mode (the local dev loop).
 
 Exit: a chained YAML flow (login → extract token → act → assert) runs in integration mode against a local server with a per-phase span tree recorded.
 
@@ -24,9 +24,9 @@ Exit: the same flow runs under all five modes; a stress run against a rate-limit
 
 ## M3: Python SDK + protocols + agent
 
-Engine as importable Python package (declarative fast path plus bridged `logic` steps), SDK HTTP auto-instrumentation, flows runnable via CLI and `python file.py`, GraphQL, WebSockets, gRPC unary (`RESOURCE_EXHAUSTED` → `throttled`), prompt-observation API (wrap the team's own LLM SDK calls inside logic steps: always-on prompt/completion capture, identity hashing, variant labels, pace/timeout guards — ADR 0009), auth scheme coverage, DB verifier (read-only, Postgres), agent v1 with collector time-alignment and engine self-metrics.
+Engine as importable Python package (declarative flows compiling to the IR, plus a Python-driven execution path that writes runs — ADR 0012), SDK-side HTTP auto-instrumentation, flows runnable via CLI and `python file.py`, GraphQL, WebSockets, gRPC unary (`RESOURCE_EXHAUSTED` → `throttled`), prompt-observation API (wrap the team's own LLM SDK calls in Python-driven flows: always-on prompt/completion capture, identity hashing, variant labels, in-process pace/timeout guards — ADR 0009), auth scheme coverage, DB verifier (read-only, Postgres), agent v1 with collector time-alignment and engine self-metrics.
 
-Exit: a Python-authored flow with a logic step renders fully resolved spans; an agent-attached run overlays target CPU/memory; a flow wrapping its own SDK call records per-variant prompt/completion pairs in the run store, paced under a declared ceiling.
+Exit: a Python-driven flow renders fully resolved spans in the run store; an agent-attached run overlays target CPU/memory; a flow wrapping its own SDK call records per-variant prompt/completion pairs, paced under a declared ceiling.
 
 ## M4: Results server
 

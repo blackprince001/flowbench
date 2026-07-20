@@ -134,9 +134,9 @@ A single Go engine executes a canonical flow representation. Authoring happens i
 ## 9. Conceptual Model
 
 - **Endpoint:** a declared, reusable target — protocol, method/operation, URL or address template, default headers, auth requirement.
-- **Flow:** an ordered, optionally branching sequence of **Steps**. Each step calls an endpoint (or runs logic), can **extract** values into flow variables, and can **assert** conditions.
-- **Step:** the atomic unit. Types: `call` (HTTP/GraphQL/gRPC), `ws` (WebSocket session operation), `logic` (Python hook), `wait`/`poll-until`, `verify` (database check). `call` steps may carry an optional retry/backoff policy for rate-limited responses (see 10.1).
-- **Prompt Observation:** an LLM invocation made by the flow's own code inside a `logic` step — any SDK or framework — wrapped by the Python SDK's prompt-observation API. The wrapper captures the prompt and completion (always), hashes the prompt's identity, emits a `prompt` span (the SDK's HTTP round-trip resolves as child spans via auto-instrumentation), and can pace and time-bound repeated calls. A **variant** label gives each named prompt version its own structural span identity (see 10.9).
+- **Flow:** an ordered, optionally branching sequence of **Steps**. Each step calls an endpoint, can **extract** values into flow variables, and can **assert** conditions.
+- **Step:** the atomic unit. Types: `call` (HTTP/GraphQL/gRPC), `ws` (WebSocket session operation), `wait`/`poll-until`, `verify` (database check). `call` steps may carry an optional retry/backoff policy for rate-limited responses (see 10.1). Runtime Python is not a step type — flows that need it run Python-driven (ADR 0012).
+- **Prompt Observation:** an LLM invocation made by the flow's own code in a Python-driven flow — any SDK or framework — wrapped by the Python SDK's prompt-observation API. The wrapper captures the prompt and completion (always), hashes the prompt's identity, emits a `prompt` span (the SDK's HTTP round-trip resolves as child spans via auto-instrumentation), and can pace and time-bound repeated calls. A **variant** label gives each named prompt version its own structural span identity (see 10.9).
 - **Profile:** the execution contract — mode (`integration | system | load | stress | soak`), VUs, ramp shape, duration or iteration count, thresholds, and an optional arrival-rate cap (see 10.3).
 - **Scenario:** one or more flows bound to a profile, a target config, and data pools. The runnable unit.
 - **Target Config:** a lightweight named config (local/dev/staging) carrying base URLs, ceilings, and optionally an agent address. Config files, not platform objects. Credentials are not part of it (see Secrets, below).
@@ -157,7 +157,7 @@ erDiagram
     STEP ||--o{ EXTRACTION : captures
     STEP ||--o{ ASSERTION : checks
     STEP ||--o| RETRY_POLICY : "may back off under"
-    STEP ||--o{ PROMPT_OBSERVATION : "logic step may wrap"
+    STEP ||--o{ PROMPT_OBSERVATION : "Python flow may wrap"
     SCENARIO ||--o{ RUN : produces
     RUN ||--|{ ITERATION : contains
     ITERATION ||--|| TRACE : "recorded as"
@@ -174,7 +174,7 @@ erDiagram
         string arrival_cap "optional self-imposed req/s ceiling"
     }
     STEP {
-        enum type "call, ws, logic, wait, poll, verify"
+        enum type "call, ws, wait, poll, verify"
     }
     PROMPT_OBSERVATION {
         string name "structural span identity, e.g. classify@concise"
@@ -236,7 +236,7 @@ graph LR
 - `[P0]` `(E)` Steps can assert on status, latency, headers, and body content; assertion failures are recorded per iteration without necessarily aborting the run (configurable: `abort_flow | abort_run | record`).
 - `[P0]` `(E)` A `call` step can declare a retry/backoff policy for rate-limited or transiently unavailable responses: `on_status: [429, 503] -> backoff(strategy, max_attempts)`, where `strategy` is `fixed`, `exponential`, or `honor_retry_after` (respecting a `Retry-After` header when the target sends one). Expressed identically in YAML and Python. Absent a policy, a `429`/`503` is just another response the flow's assertions judge.
 - `[P0]` `(E)` Each retry attempt emits its own span nested under the step (reusing the poll-attempt pattern), so a flow that spent most of its time backing off is visible in the waterfall view rather than looking like one slow call.
-- `[P0]` `(P)` The Python SDK exposes granular hooks: per-step logic, custom extraction, computed request bodies, conditional branching, loops within a flow, and `poll-until` patterns — so a flow file reads like a normal high-level test file. Seeding and cleanup, where needed, are written as ordinary steps or plain Python around the flow; the engine adds no lifecycle machinery.
+- `[P0]` `(P)` The Python SDK is programmable: loops and conditionals to build flows, computed request bodies, custom extraction, and `poll-until` patterns — so a flow file reads like a normal high-level test file. Purely declarative Python compiles to the IR and runs on the Go engine at full scale; a flow that needs logic at run time (branch on a response, compute from a prior result, wrap an LLM call) runs **Python-driven**, executed in Python (ADR 0012). Seeding and cleanup, where needed, are written as ordinary steps or plain Python around the flow; the engine adds no lifecycle machinery.
 - `[P0]` `(Y)` The YAML DSL covers the common path without code: call, extract, assert, template, data-pool reference, simple retry/poll, retry/backoff policy.
 - `[P1]` `(E)` Reusable endpoint catalog: declare endpoints once, reference them across flows.
 - `[P1]` `(E)` Flow composition: a scenario can run multiple flows in parallel with distinct personas and VU allocations (system testing).
@@ -249,7 +249,7 @@ graph LR
 - `[P1]` `(E)` WebSockets: open a session as a step, send/receive/match messages, hold sessions across steps within an iteration, assert on received frames.
 - `[P1]` `(E)` gRPC: unary calls from `.proto` definitions; streaming scoped later. [Open question on streaming.] gRPC's `RESOURCE_EXHAUSTED` status maps to the same `throttled` outcome class as HTTP `429`.
 - `[P2]` `(E)` SOAP/XML: XML body templating and XPath extraction.
-- LLM providers are deliberately **not** a protocol adapter: the flow's own SDK code makes LLM calls inside `logic` steps, and FlowBench observes them (see 10.9).
+- LLM providers are deliberately **not** a protocol adapter: the flow's own SDK code makes LLM calls in Python-driven flows, and FlowBench observes them (see 10.9).
 - `[P0]` `(E)` Auth schemes: bearer/JWT (static or extracted at runtime), session cookies, basic auth, API keys (header/query), OAuth2 client-credentials, HMAC request signing. Explicitly excluded: OAuth2 authorization-code.
 
 ### 10.3 Configure (profiles, targets, data)
@@ -284,7 +284,7 @@ graph LR
 - `[P0]` `(E)` Deterministic, honest load generation: open-model or closed-model arrival configurable; latency recording avoids coordinated omission.
 - `[P0]` `(E)` Every step, protocol phase (DNS, connect, TLS, time-to-first-byte, transfer), extraction, assertion, and poll/retry attempt emits a span (name, parent, start offset, duration, self-time, outcome). Each iteration's spans form a trace tree — the single data source behind both the waterfall/debug view and flame graphs (10.7).
 - `[P0]` `(E)` A response's outcome is classified into one of `ok | failed | throttled | skipped` at the point of assertion, using a per-mode default (see section 12) that is overridable per step. `throttled` covers HTTP `429`, gRPC `RESOURCE_EXHAUSTED`, and any status the flow author explicitly maps to it.
-- `[P0]` `(P)` The Python SDK's HTTP client auto-instruments: any call made inside a `logic` step emits child spans under that step, so a Python step with three nested HTTP calls resolves in the flame graph and trace view exactly like a native `call` step — Python is never an opaque blob in the graph.
+- `[P0]` `(P)` The Python SDK's HTTP client auto-instruments: HTTP calls the SDK makes in a Python-driven flow emit spans in the same shape as the Go engine's, so a Python step with three nested HTTP calls resolves in the flame graph and trace view exactly like a native `call` step — Python is never an opaque blob in the graph.
 - `[P1]` `(E)` `poll-until` and retries emit one span per attempt, nested under the step, so "spent 40% of the flow polling or backing off" is visible rather than looking like one slow call.
 - `[P1]` `(E)` Graceful stop and abort: a run can be cancelled cleanly (Ctrl-C or via the results server), flushing partial results.
 - `[Future]` CI integration: the exit-code and JSON-summary design must not preclude it, but recipes, gating semantics, and pipeline ergonomics are explicitly post-v1.
@@ -327,16 +327,16 @@ graph LR
 
 FlowBench deliberately does **not** make the LLM call. Teams already have SDKs, frameworks, model settings, and prompt templates; setting model behavior is their code's job. FlowBench's job is observation: wrap the call, capture the exchange, pace the repetition, and diff the results — a prompt change is reviewed by diffing captured completions, not by eyeballing a playground.
 
-- `[P0]` `(P)` A **prompt-observation API** on the Python SDK wraps any LLM invocation made inside a `logic` step — OpenAI SDK, Anthropic SDK, LangChain chain, an internal client, anything callable: `with ctx.prompt("classify") as p:` … `p.record(prompt, completion, usage=...)`. The wrapper emits a `prompt` span carrying the captured pair; HTTP calls the SDK makes inside it resolve as child spans via the existing auto-instrumentation (10.5), so the provider round-trip is never opaque in the flame graph or waterfall.
+- `[P0]` `(P)` A **prompt-observation API** on the Python SDK wraps any LLM invocation made by the flow's own code in a Python-driven flow — OpenAI SDK, Anthropic SDK, LangChain chain, an internal client, anything callable: `with ctx.prompt("classify") as p:` … `p.record(prompt, completion, usage=...)`. The wrapper emits a `prompt` span carrying the captured pair; HTTP calls the SDK makes inside it resolve as child spans via the existing auto-instrumentation (10.5), so the provider round-trip is never opaque in the flame graph or waterfall.
 - `[P0]` `(E)` **Completions are always captured.** Prompt observations keep the recorded prompt and completion on every iteration, success or not, overriding the failures-plus-sample default (10.7) — a diff needs both sides to exist. Size caps and redaction still apply.
 - `[P0]` `(E)(P)` **Prompt identity:** each observation gets a hash — of the author-supplied `template=` when one is passed (stable across iterations whose variable values differ), otherwise of the recorded prompt content — stored per observation per run, so the diff view can distinguish "the prompt changed" from "the output changed under the same prompt."
 - `[P0]` `(P)` **Variants are labels, not engine machinery.** The author's code decides what varies — a different system prompt, template, model, or chain; passing `variant="concise"` gives the observation its own structural span identity (`classify@concise`), so folding, metrics, and diffs stay per-variant. Chains of prompts need nothing special: each wrapped call is one observation, and values flow between them as ordinary Python.
-- `[P0]` `(E)(P)` **Pacing and timeouts, so repetition doesn't get you throttled.** An observation may declare a `timeout` (exceeded → the call is marked failed-by-timeout) and a `pace` — a client-side rate ceiling (e.g. `pace="20/m"`, with an optional burst allowance so the first N calls run unspaced). The engine coordinates pacing across VUs and Python workers, keyed to the observation name, so an integration run over 500 fixture rows — or a load profile — doesn't trip the provider's rate limit in the first place. Provider throttles that do occur classify as `throttled` (10.5); the profile-level arrival cap (10.3) remains the scenario-wide lever.
+- `[P0]` `(E)(P)` **Pacing and timeouts, so repetition doesn't get you throttled.** An observation may declare a `timeout` (exceeded → the call is marked failed-by-timeout) and a `pace` — a client-side rate ceiling (e.g. `pace="20/m"`, with an optional burst allowance so the first N calls run unspaced). The Python SDK coordinates pacing in-process, keyed to the observation name, so an integration run over 500 fixture rows doesn't trip the provider's rate limit in the first place. Provider throttles that do occur classify as `throttled` (10.5); the profile-level arrival cap (10.3) remains the scenario-wide lever.
 - `[P0]` `(R)` **Prompt diff view:** side-by-side and inline diffs of completions — variant vs variant within a run, and same observation (and same variant) against a baseline run. Text diff by default; structural diff when both completions are JSON. When the prompt hash differs between the compared runs, the prompt's own diff is shown alongside the output diff. Extends the regression-comparison surface (10.7).
 - `[P1]` `(E)(R)` Token usage passed to `record(usage=...)` is stored as span attributes and surfaced in the per-observation table and the diff view. Assertions on completions are ordinary `expect(...)` calls in the surrounding Python — no special assertion machinery.
 - `[P2]` `(R)` Spread rendering: when a script records the same observation K times in one iteration, render the output spread so an engineer sees variance before trusting a single diff.
 
-Determinism guidance, stated in the docs rather than enforced: pin model parameters (temperature, seed) in your own SDK call for regression-style prompt tests and run in integration mode — the diff is then meaningful run over run. The toolkit reports differences honestly rather than smoothing them; scoring what a difference _means_ (LLM-as-judge, semantic similarity, eval datasets) is explicitly a non-goal (section 6). Prompt observation is Python-surface-only in v1; whether a YAML `call` step can opt in as an observed prompt is an open question (section 17).
+Determinism guidance, stated in the docs rather than enforced: pin model parameters (temperature, seed) in your own SDK call for regression-style prompt tests and run in integration mode — the diff is then meaningful run over run. The toolkit reports differences honestly rather than smoothing them; scoring what a difference _means_ (LLM-as-judge, semantic similarity, eval datasets) is explicitly a non-goal (section 6). Prompt observation is Python-surface-only: it lives in Python-driven flows where the team's code runs, and the YAML/Go path executes no Python (ADR 0012).
 
 ## 11. Authoring Surfaces
 
@@ -461,7 +461,7 @@ def route(ctx):
 
 Run it twice around a prompt edit (or with two variant labels) and `serve` diffs the completions — per variant, per observation, against the baseline. The OpenAI SDK's HTTP round-trip appears as child spans of the `classify@concise` prompt span via auto-instrumentation.
 
-**The Go/Python boundary (the one hard engineering problem here):** the executor, scheduler, protocol adapters, and collector are Go; Python enters in two ways. Purely declarative flows (whether authored in YAML or in Python code that only _constructs_ steps) execute entirely on the Go fast path at full VU scale. Flows containing `logic` steps execute those steps in a pool of Python worker processes bridged to the Go engine, which caps their practical VU ceiling below the pure-Go path. The engine reports which path a scenario is on, and the design doc owns the bridge mechanics (IPC protocol, worker pool sizing, backpressure).
+**The Go/Python boundary (ADR 0012):** the executor, scheduler, protocol adapters, and collector are Go, and there is no runtime bridge into Python. Two independent producers write the same run store. The **Go engine** (`flowbench run`) executes YAML flows and Python that only _constructs_ the IR, at full VU scale, running no Python at execution time. The **Python SDK** (`python file.py`) drives its own flow — making protocol calls with SDK-side auto-instrumentation and, where present, the team's LLM call wrapped for observation — and writes a run to the store; it runs at Python concurrency, not the engine's ceiling. The two paths never call into each other; their only contract is the span model and run-store format, and the results server reads both uniformly.
 
 ## 12. Execution Profiles (the four categories, one mechanism)
 
@@ -488,7 +488,7 @@ Implementation detail belongs in the engine design doc. This is the shape. Deliv
 - **Authoring inputs:** YAML files; Python scripts importing the SDK. Both yield the canonical flow IR.
 - **Parser + validator:** schema validation, variable-graph resolution (every `{{ var }}` must have an upstream extractor or pool), endpoint reference checks, profile sanity, retry-policy sanity (bounded `max_attempts`, valid backoff strategy).
 - **Planner:** converts a profile into a VU schedule (arrival model, ramp segments, stop conditions, optional arrival-rate cap enforced ahead of the target).
-- **Executor:** goroutine-per-VU pool; each VU runs iterations with its own cookie jar, data row, and variable scope. Protocol adapters (HTTP, GraphQL, WS, gRPC, later SOAP) behind a common step interface, each call emitting spans for its phases and classifying outcome as `ok | failed | throttled | skipped`. Retry/backoff policies execute within the adapter, honoring `Retry-After` where present. Python `logic` steps route to a bridged worker pool and auto-instrument nested HTTP calls as child spans; the prompt-observation API rides this path, emitting `prompt` spans with captured prompt/completion pairs, while the engine coordinates pace/timeout guards across VUs and workers.
+- **Executor:** goroutine-per-VU pool; each VU runs iterations with its own cookie jar, data row, and variable scope. Protocol adapters (HTTP, GraphQL, WS, gRPC, later SOAP) behind a common step interface, each call emitting spans for its phases and classifying outcome as `ok | failed | throttled | skipped`. Retry/backoff policies execute within the adapter, honoring `Retry-After` where present. The executor runs no Python; flows needing runtime Python — including prompt observation — run on the Python-driven SDK path (ADR 0012), which emits the same span shape into the run store.
 - **Collector:** streams spans into two tiers — folded aggregates (HDR-style latency histograms plus per-span-path duration sums and throttle-rate series, feeding flame graphs) and raw trace trees (kept per capture policy, feeding the waterfall view; prompt/completion pairs always kept) — ingests agent series and the engine's own resource series, applies redaction, evaluates thresholds/trends, and classifies stress-mode knee points as degraded versus throttled.
 - **Run store:** a directory of run artifacts with an index; everything the results server shows lives here.
 - **Results server:** `serve` reads the store and renders flame graphs, dashboards, drill-downs, comparisons, and prompt diffs locally. It never talks to the executor except to signal abort during a live run.
@@ -506,10 +506,8 @@ graph TD
         V --> PL["Planner<br/>profile → VU schedule<br/>+ optional arrival cap"]
         PL --> EX["Executor<br/>goroutine-per-VU pool<br/>10k VUs / node"]
         EX --> AD["Protocol adapters<br/>HTTP · GraphQL · WS · gRPC<br/>emit spans per phase,<br/>run retry/backoff,<br/>classify ok/failed/throttled"]
-        EX --> BR["Python bridge<br/>worker pool for logic steps<br/>(auto-instrumented; prompt<br/>observation + pace/timeout guards)"]
         EX --> VF["DB verifier<br/>read-only adapters"]
         AD --> COL["Collector<br/>fold spans → flame data;<br/>keep raw traces → waterfall;<br/>redact; thresholds + trends;<br/>knee: degraded vs throttled"]
-        BR --> COL
         VF --> COL
         SELF["Engine self-metrics"] --> COL
     end
@@ -527,6 +525,7 @@ graph TD
         ST --> CLI["CLI summary<br/>+ exit codes"]
     end
 
+    PY -. "Python-driven run<br/>spans + prompt obs (ADR 0012)" .-> ST
     ENV["{{ env.* }} at run time<br/>(no secrets file)"] -. redacted before storage .-> EX
     TC["Target configs<br/>hosts, ceilings, agent addr"] --> PL
     GIT[("Git repo:<br/>flows, scenarios, configs")] --> Y
@@ -584,7 +583,7 @@ sequenceDiagram
 
 ## 14. Non-Functional Requirements
 
-- **Performance and honesty:** 10,000 concurrent VUs sustained on a single reference node for pure-declarative flows, with the engine's own resource series proving headroom; latency measured with coordinated-omission awareness; the Python-bridge path documents its lower ceiling rather than hiding it. Retry/backoff loops count toward VU occupancy honestly rather than being hidden as free time.
+- **Performance and honesty:** 10,000 concurrent VUs sustained on a single reference node for pure-declarative flows, with the engine's own resource series proving headroom; latency measured with coordinated-omission awareness; the Python-driven SDK path documents its lower ceiling rather than hiding it. Retry/backoff loops count toward VU occupancy honestly rather than being hidden as free time.
 - **Footprint:** per-VU memory overhead low enough that a developer laptop comfortably handles hundreds of VUs; integration mode starts in well under a second for the local dev loop.
 - **Reliability:** runs are crash-tolerant (partial artifacts flushed); aborts are clean and propagate to all VUs within [X]s; poll-until and retry/backoff patterns are timeout- and attempt-bounded so a persistently rate-limited target cannot hang a run indefinitely.
 - **Determinism where it matters:** integration/system modes produce reproducible orderings; data-pool draws are seedable.
@@ -615,14 +614,14 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 |comparison_viewed|baseline comparison opened|runs compared|regression-detection value|
 |prompt_diff_viewed|a prompt diff opened|run(s), observation, variant pair, prompt-hash changed (y/n)|prompt-testing value|
 |safety_block|a run refused by target-config rules|rule|guardrail (should be rare but nonzero)|
-|bridge_engaged|a run used the Python logic path|worker count|informs bridge investment|
+|python_run|a run executed on the Python-driven SDK path|# observations|informs SDK-path investment|
 
 ## 17. Dependencies, Risks, and Open Questions
 
 **Dependencies**
 
 - Go toolchain and a reference load-generation node for the 10k-VU benchmark.
-- The Go↔Python bridge design (owned by the engine design doc) — the SDK's ergonomics depend on it.
+- The run-store format as a versioned contract between the Go engine and the Python SDK — both write it, the results server reads it — owned by the engine design doc.
 - A span/trace storage format (an OTel-shaped span is the working model; whether to store it in an OTel-compatible encoding or a bespoke compact format is an engine design decision) and a matching flame-graph rendering approach for the results server (build on an existing renderer versus in-house).
 - A waterfall/trace-view rendering approach for the results server, ideally sharing a component library with the flame graph since both read the same span data.
 - A text/structural diff rendering approach for the prompt diff view (adopt a diff component versus build), ideally sharing the comparison surface with regression comparison.
@@ -640,7 +639,7 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 |Risk|Likelihood|Impact|Mitigation|
 |---|---|---|---|
 |Two authoring surfaces drift from one IR|M|H|IR is the only executor input; conformance test suite runs every DSL feature through both surfaces|
-|Go↔Python bridge underdelivers (latency, complexity)|M|H|Pure-declarative fast path is bridge-free and covers most stress cases; bridge prototyped in M1 before the SDK surface freezes|
+|Two run producers (Go engine, Python SDK) drift on the run-store format|M|H|The format is versioned and validated on read; a conformance suite writes runs from both producers and reads them back through the results server|
 |Span volume at 10k VUs overwhelms storage|H|M|Two-tier model: folding happens incrementally in the collector and is the only path to flame graphs; raw trace trees are kept only for failures/throttled plus a sample|
 |Capture volume explodes at high VUs|H|M|Failures-plus-sample policy by default, size caps, redaction|
 |Step renames silently break cross-run folding|M|L|Parser warns when a step name a prior run's flame data depends on disappears from the flow file|
@@ -649,14 +648,13 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 |Accidental internal DoS|L|H|Host allow-lists, ceilings, kill switch (section 15), optional arrival cap|
 |Agent skews the measurement it exists to provide|L|M|Overhead budget, sampling backoff, fail-open design|
 |Nondeterministic completions make prompt diffs noisy|H|M|Guidance to pin model params in the author's own SDK call; structural diff for JSON completions; per-variant span identity keeps comparisons apples-to-apples; spread rendering flagged P2|
-|High-iteration runs trip provider rate limits and pollute results|H|M|Pace/timeout guards on observations (engine-coordinated across VUs/workers); profile-level arrival cap; provider throttles classify as `throttled`, never as generic errors|
+|High-iteration runs trip provider rate limits and pollute results|H|M|Pace/timeout guards on observations (coordinated in-process in the Python driver); provider throttles classify as `throttled`, never as generic errors|
 |Prompt testing creeps toward an eval platform|M|M|v1 is diff-and-assert only; judges, scoring, and eval datasets are explicit non-goals enforced at review|
 |Scope creep toward platform features|M|M|Non-goals enforced at review; v2 list is where those conversations go|
 
 **Open questions**
 
 - [ ] Name. Owner: [name]. By: [date].
-- [ ] Go↔Python bridge mechanism (subprocess pool over gRPC/stdin, versus embedded interpreter). Owner: [name]. By: [date].
 - [ ] Flame-graph and waterfall renderer: adopt existing components (e.g. speedscope-style for flame, a Chrome-DevTools-panel-style component for waterfall) versus build. Owner: [name]. By: [date].
 - [ ] Span storage encoding: OTel-compatible (interoperates with existing tracing tools if the org has them) versus a bespoke compact format optimized for the fold operation. Owner: [name]. By: [date].
 - [ ] Agent transport and format (push to collector over gRPC? scrape?). Owner: [name]. By: [date].
@@ -665,8 +663,6 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 - [ ] Lua as a third surface, or Python-only. Owner: [name]. By: [date].
 - [ ] gRPC streaming scope in v1. Owner: [name]. By: [date].
 - [ ] Demo/disposable DB feature — worth the complexity? Owner: [name]. By: [date].
-- [ ] Prompt observation in YAML: allow marking a `call` step as an observed prompt, or Python-surface-only in v1? Owner: [name]. By: [date].
-- [ ] Pace-guard coordination mechanism across VUs and Python workers (engine-side token bucket keyed by observation name): precision and bridge cost. Owner: [name]. By: [date].
 - [ ] Team size and timeline, so Milestones become dated. Owner: [name]. By: [date].
 
 **Deferred to v2 (decided, not open):** CI integration and gating recipes; scheduling and recurring runs; notifications; teams, permissions, and any hosted/platform posture; retention policies; distribution across load-generator nodes (and any resulting need for distributed rate-limit coordination); productization and all business questions.
@@ -682,12 +678,12 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 
 |Milestone|Scope|
 |---|---|
-|M1: Engine core|Canonical IR, parser/validator, HTTP adapter emitting spans per phase, extract/assert/template chaining, YAML surface with `{{ env.* }}` resolution, data pools, target configs, CLI with integration mode (local dev loop), Go↔Python bridge prototype|
+|M1: Engine core|Canonical IR, parser/validator, HTTP adapter emitting spans per phase, extract/assert/template chaining, YAML surface with `{{ env.* }}` resolution, data pools, target configs, CLI with integration mode (local dev loop)|
 |M2: The four modes|Planner + goroutine VU executor toward the 10k benchmark, load/stress/soak profiles, arrival-cap enforcement, retry/backoff policy execution and outcome classification (ok/failed/throttled), thresholds and trend evaluation, two-tier span storage (folded + raw trace trees), capture policy and redaction, run store, safety rails|
-|M3: Python SDK + protocols + agent|Engine as importable package with granular hooks and HTTP auto-instrumentation, GraphQL, WebSockets, gRPC unary (with RESOURCE_EXHAUSTED mapped to throttled), prompt-observation API (wrap the team's own LLM SDK calls: always-on prompt/completion capture, identity hashing, variant labels, pace/timeout guards), auth scheme coverage, DB verifier (read-only, Postgres), agent v1 with run-store correlation|
+|M3: Python SDK + protocols + agent|Python SDK — declarative flows compiling to the IR plus a Python-driven execution path that writes runs — with SDK-side HTTP auto-instrumentation, GraphQL, WebSockets, gRPC unary (with RESOURCE_EXHAUSTED mapped to throttled), prompt-observation API (Python-driven: always-on prompt/completion capture, identity hashing, variant labels, in-process pace/timeout guards), auth scheme coverage, DB verifier (read-only, Postgres), agent v1 with run-store correlation|
 |M4: Results server|Flame graphs (single + cumulative) and the waterfall/trace debug view over the same span data, dashboards with agent overlays and throttle-rate charting, failure drill-down grouped by step/cause with throttled as its own group, degraded-vs-throttled knee-point reporting, regression comparison, prompt diff view (variant vs variant, run vs baseline), soak trend view, live view, hardening and dogfood exit|
 
-> _M1+M2 alone already replace the pytest-plus-Locust glue for HTTP services; M3 and M4 are where the differentiation compounds — the agent, the flame graphs, the waterfall trace view, honest throttle-aware stress reporting, and prompt diffing are what no off-the-shelf combination gives you. Prompt testing (10.9) is deliberately a thin layer over the protected mechanics — the Python bridge, auto-instrumentation, capture, baseline comparison — so its marginal cost is small. If scope pressure hits, SOAP, Lua, and the demo DB are the first deferrals, then pace-guard coordination and spread rendering (the observation API and its diff survive longer); the IR, chaining, profile mechanics, span emission, outcome classification, and the results server are the protected core._
+> _M1+M2 alone already replace the pytest-plus-Locust glue for HTTP services; M3 and M4 are where the differentiation compounds — the agent, the flame graphs, the waterfall trace view, honest throttle-aware stress reporting, and prompt diffing are what no off-the-shelf combination gives you. Prompt testing (10.9) is deliberately a thin layer over the protected mechanics — the Python-driven SDK path, auto-instrumentation, capture, baseline comparison — so its marginal cost is small. If scope pressure hits, SOAP, Lua, and the demo DB are the first deferrals, then pace-guard coordination and spread rendering (the observation API and its diff survive longer); the IR, chaining, profile mechanics, span emission, outcome classification, and the results server are the protected core._
 
 ## Appendix
 
@@ -703,7 +699,7 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 - **Flame graph (of a flow):** a fold of many traces — spans with the same structural name collapsed and summed — rendered as width-proportional time, for one iteration (unfolded), one run, or cumulatively across runs. Answers "where does aggregate time go."
 - **Waterfall / trace view:** a causal, per-iteration rendering of one trace's spans in start-offset order, like a browser performance panel. Answers "what exactly happened, in order, in this one run."
 - **Throttled:** the outcome class for rate-limit responses (HTTP `429`, gRPC `RESOURCE_EXHAUSTED`, or an author-mapped status), tracked separately from `failed` so thresholds and knee-point findings aren't skewed by a rate limiter doing its job.
-- **Prompt observation:** an LLM call made by the flow's own SDK code inside a `logic` step, wrapped by the SDK's prompt-observation API — prompt and completion always captured, prompt identity hashed, emitted as a `prompt` span, optionally paced and time-bounded.
+- **Prompt observation:** an LLM call made by the flow's own SDK code in a Python-driven flow, wrapped by the SDK's prompt-observation API — prompt and completion always captured, prompt identity hashed, emitted as a `prompt` span, optionally paced and time-bounded.
 - **Variant (prompt):** a label on an observation naming which prompt version the author's code used, giving it its own structural span identity (`name@variant`); what varies is decided entirely by the author's code.
 - **Pace guard:** an optional client-side rate ceiling on an observation (e.g. `20/m`, with a burst allowance), coordinated by the engine across VUs and workers so repeated calls don't trip a provider's rate limit.
 - **Completion:** the LLM output recorded by an observation — the thing captured, asserted on in plain Python, and diffed.
