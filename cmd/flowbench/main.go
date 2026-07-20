@@ -16,10 +16,19 @@ Usage:
   flowbench <command> [arguments]
 
 Commands:
+  run        run a scenario against a target (integration mode)
   version    print the flowbench build identity
 
 Run 'flowbench help' to show this message.
 `
+
+// Exit codes: the run loop distinguishes a clean pass, recorded test
+// failures, and a pre-run error (bad args, parse/validate, or the safety gate).
+const (
+	exitOK     = 0
+	exitFail   = 1
+	exitPreRun = 2
+)
 
 func main() {
 	os.Exit(run(os.Stdout, os.Stderr, os.Args[1:]))
@@ -28,18 +37,20 @@ func main() {
 func run(stdout, stderr io.Writer, args []string) int {
 	if len(args) == 0 {
 		io.WriteString(stderr, usage)
-		return 2
+		return exitPreRun
 	}
 	switch args[0] {
+	case "run":
+		return runScenario(stdout, stderr, args[1:])
 	case "version", "--version":
 		fmt.Fprintln(stdout, version.String())
-		return 0
+		return exitOK
 	case "help", "-h", "--help":
 		io.WriteString(stdout, usage)
-		return 0
+		return exitOK
 	default:
 		fmt.Fprintf(stderr, "flowbench: unknown command %q\n\n", args[0])
 		io.WriteString(stderr, usage)
-		return 2
+		return exitPreRun
 	}
 }
