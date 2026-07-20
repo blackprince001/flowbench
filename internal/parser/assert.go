@@ -9,15 +9,7 @@ import (
 	"github.com/blackprince001/flowbench/internal/ir"
 )
 
-// The assertion expression grammar of the YAML surface:
-//
-//	<subject> <op> <value>
-//
-// subject: "status" | "latency" | "$<jsonpath>" (body) | "header.<Name>" |
-// a variable name. op: == != < <= > >= contains matches. value: null, true,
-// false, a number, a quoted string, or a bare word (kept as a string, so
-// `latency < 800ms` works). "<var> != null" / "== null" compile to the IR's
-// exists / not_exists.
+// grammar: <subject> <op> <value>, e.g. "status == 200", "latency < 800ms".
 var exprRe = regexp.MustCompile(`^(\S+)\s+(==|!=|<=|>=|<|>|contains|matches)\s+(.+)$`)
 
 var numberRe = regexp.MustCompile(`^-?\d+(\.\d+)?([eE][+-]?\d+)?$`)
@@ -66,8 +58,6 @@ func parseAssertion(expr string) (ir.Assertion, error) {
 	return a, nil
 }
 
-// encodeScalar turns an expression's value token into canonical JSON:
-// booleans and numbers stay typed; quoted and bare tokens become strings.
 func encodeScalar(raw string) json.RawMessage {
 	if raw == "true" || raw == "false" || numberRe.MatchString(raw) {
 		return json.RawMessage(raw)

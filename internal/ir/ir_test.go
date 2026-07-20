@@ -15,10 +15,7 @@ import (
 
 var update = flag.Bool("update", false, "rewrite golden files")
 
-// chainedLoginScenario hand-builds the PRD section 11 sample as IR: the
-// chained login → extract token → act (with retry/backoff) → assert path
-// under a stress profile. Every test that needs a valid scenario starts
-// from a fresh copy of this.
+// chainedLoginScenario is a fresh valid scenario tests mutate per case.
 func chainedLoginScenario() *ir.Scenario {
 	return &ir.Scenario{
 		Name:   "checkout_stress",
@@ -117,9 +114,7 @@ func TestScenarioRoundTripsThroughJSON(t *testing.T) {
 	}
 }
 
-// TestGoldenChainedLoginWireFormat locks the canonical wire shape: if a type
-// change alters the encoding, this fails until the golden file is
-// deliberately regenerated with `go test ./internal/ir -run Golden -update`.
+// regenerate the golden file with `go test ./internal/ir -run Golden -update`.
 func TestGoldenChainedLoginWireFormat(t *testing.T) {
 	fx := chainedLoginScenario()
 	got, err := json.MarshalIndent(fx, "", "  ")
@@ -199,9 +194,7 @@ func TestDecodeScenarioRejectsUnknownFields(t *testing.T) {
 
 func TestDecodeScenarioRejectsTrailingData(t *testing.T) {
 	const doc = `{"name":"x","flows":[],"profile":{"mode":"load"}}`
-	// The brace/bracket cases are json.Decoder.More()'s blind spot: More()
-	// treats a peeked "}" or "]" as end-of-container, so only an explicit
-	// EOF check catches them.
+	// the stray-brace cases are Decoder.More's blind spot; only the EOF check catches them
 	for name, trailing := range map[string]string{
 		"second document": ` {"second":true}`,
 		"stray brace":     `}`,

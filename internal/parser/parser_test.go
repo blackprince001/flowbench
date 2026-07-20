@@ -9,8 +9,6 @@ import (
 	"github.com/blackprince001/flowbench/internal/parser"
 )
 
-// TestParsesPRDSampleFlow is the issue #3 acceptance: the PRD section 11
-// YAML example (checked in as the conventional-layout example) parses to IR.
 func TestParsesPRDSampleFlow(t *testing.T) {
 	res, err := parser.ParseFlowFile("../../tests/flows/authenticated_checkout.flow.yaml", nil)
 	if err != nil {
@@ -78,8 +76,6 @@ func TestParsesPRDSampleFlow(t *testing.T) {
 	}
 }
 
-// TestUndefinedVariableFailsWithFileLine is the issue #3 acceptance: a flow
-// referencing an undefined variable fails with file/line context.
 func TestUndefinedVariableFailsWithFileLine(t *testing.T) {
 	src := []byte(`flow: broken
 steps:
@@ -211,8 +207,6 @@ profile:
 	}
 }
 
-// TestStepRenameWarningHook covers the PRD 10.7 hook point: prior runs know
-// step IDs; a parse that drops one warns instead of failing.
 func TestStepRenameWarningHook(t *testing.T) {
 	src := []byte(`flow: authenticated_checkout
 steps:

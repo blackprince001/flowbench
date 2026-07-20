@@ -21,29 +21,23 @@ import (
 
 const defaultTimeout = 30 * time.Second
 
-// maxRedirects mirrors net/http's default so the limit is explicit here.
 const maxRedirects = 10
 
-// Session is one VU's HTTP identity: its own cookie jar and connection
-// reuse, per ADR 0001's isolated-VU model.
 type Session struct {
 	client *http.Client
 }
 
-// SessionOptions tunes a session; the zero value is a sensible default.
 type SessionOptions struct {
-	// Timeout bounds one call end to end (connect through body read).
 	Timeout time.Duration
 }
 
-// NewSession builds a session with a fresh cookie jar.
 func NewSession(opts SessionOptions) *Session {
 	if opts.Timeout <= 0 {
 		opts.Timeout = defaultTimeout
 	}
-	jar, _ := cookiejar.New(nil) // no PublicSuffixList: internal tool, per-VU jar
+	jar, _ := cookiejar.New(nil)
 
-	// Use a dedicated transport per session so connection reuse is isolated per VU.
+	// dedicated transport per session so connection reuse is isolated per VU
 	var transport http.RoundTripper = http.DefaultTransport
 	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
 		transport = dt.Clone()
@@ -52,13 +46,8 @@ func NewSession(opts SessionOptions) *Session {
 	return &Session{client: &http.Client{Jar: jar, Timeout: opts.Timeout, Transport: transport}}
 }
 
-// Resolver resolves a template reference ("token", "user.email",
-// "env.API_HOST") to its value. It is the templating hook the executor
-// supplies; adapters never know where variables come from.
 type Resolver func(ref string) (string, error)
 
-// Request is a fully resolved HTTP call: templates already expanded,
-// ready to send.
 type Request struct {
 	Method  string
 	URL     string
@@ -67,17 +56,14 @@ type Request struct {
 	Body    []byte
 }
 
-// Response carries what extraction and assertion need from a call.
 type Response struct {
 	Status  int
 	Headers http.Header
 	Body    []byte
 }
 
-// BuildRequest expands an ir.CallSpec's templates into a concrete Request.
-// URL, header, and query values expand verbatim; values injected into the
-// JSON body are JSON-escaped so a quote in fixture data cannot corrupt the
-// document.
+// BuildRequest expands templates; body values are JSON-escaped so a quote in
+// fixture data cannot corrupt the document.
 func BuildRequest(spec *ir.CallSpec, resolve Resolver) (*Request, error) {
 	req := &Request{Method: spec.Method}
 
@@ -113,8 +99,6 @@ func BuildRequest(spec *ir.CallSpec, resolve Resolver) (*Request, error) {
 	return req, nil
 }
 
-// jsonEscaped wraps a resolver so resolved values are safe inside JSON
-// string literals.
 func jsonEscaped(resolve Resolver) Resolver {
 	return func(ref string) (string, error) {
 		v, err := resolve(ref)
@@ -129,13 +113,8 @@ func jsonEscaped(resolve Resolver) Resolver {
 	}
 }
 
-// Do executes one call step and returns the response plus the step's span
-// tree: the step span with one "http_call" child per request leg (redirects
-// are separate legs), each leg carrying the protocol phases that actually
-// occurred — dns, connect, tls, ttfb (request written to first response
-// byte), transfer (first byte to body read) — per ADR 0007. anchor is the
-// iteration's start time; all span offsets are relative to it. The span
-// tree is returned even on failure, with outcomes marking what broke.
+// Do executes one call step. anchor is the iteration start; all span offsets
+// are relative to it. The span tree is returned even on failure.
 func (s *Session) Do(ctx context.Context, stepID string, req *Request, anchor time.Time) (*Response, *span.Span, error) {
 	step := span.New(stepID, time.Since(anchor))
 
@@ -149,8 +128,8 @@ func (s *Session) Do(ctx context.Context, stepID string, req *Request, anchor ti
 	rec := &legRecorder{anchor: anchor, step: step}
 	httpReq = httpReq.WithContext(httptrace.WithClientTrace(httpReq.Context(), rec.trace()))
 
-	// Shallow copy: shares jar and transport, but this call gets its own
-	// redirect hook so legs close at hop boundaries.
+	// shallow copy: shares jar and transport, but this call gets its own
+	// redirect hook so legs close at hop boundaries
 	client := *s.client
 	client.CheckRedirect = func(r *http.Request, via []*http.Request) error {
 		rec.closeLeg(span.OutcomeOK)
@@ -214,9 +193,7 @@ func (s *Session) newHTTPRequest(ctx context.Context, req *Request) (*http.Reque
 }
 
 // legRecorder turns httptrace callbacks into per-leg phase spans. Callbacks
-// can arrive on other goroutines, so every mutation holds the mutex. A leg
-// opens lazily on the first event after the previous leg closed, which is
-// how redirect hops become separate "http_call" spans.
+// arrive on other goroutines, so every mutation holds the mutex.
 type legRecorder struct {
 	mu     sync.Mutex
 	anchor time.Time
@@ -254,9 +231,7 @@ func (r *legRecorder) closeLeg(outcome span.Outcome) {
 	r.leg = nil
 }
 
-// endTransfer closes the final leg's transfer phase once the body is read;
-// redirect legs get no transfer span because the client discards their
-// bodies.
+// endTransfer closes the final leg's transfer phase once the body is read.
 func (r *legRecorder) endTransfer(at time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

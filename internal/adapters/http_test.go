@@ -23,8 +23,6 @@ func phases(leg *span.Span) map[string]*span.Span {
 	return m
 }
 
-// TestCallEmitsPerPhaseSpanTree is the issue #4 acceptance: one call against
-// a local test server yields a correct span tree with per-phase timings.
 func TestCallEmitsPerPhaseSpanTree(t *testing.T) {
 	const serverDelay = 30 * time.Millisecond
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -188,7 +186,7 @@ func TestBuildRequestExpandsTemplates(t *testing.T) {
 		"order_id": "ord-1",
 		"token":    "tok-9",
 		"flag":     "on",
-		"note":     `say "hi"`, // must be JSON-escaped inside the body
+		"note":     `say "hi"`, // JSON-escaped inside the body
 	}
 	resolve := func(ref string) (string, error) {
 		if v, ok := vals[ref]; ok {
