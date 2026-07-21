@@ -1,0 +1,20 @@
+# SOAK — trend evaluation, not point thresholds. The target's /slow endpoint
+# gets slower the longer it runs, so the run's second half is measurably slower
+# than its first. Soak posture splits the run at its midpoint and flags the
+# p95 latency creep (also error-rate and throttle-rate drift), exiting nonzero.
+# A real soak runs for hours; this one is compressed to seconds.
+#
+# Start the stub fresh so the creep begins from zero, then:
+#   flowbench run examples/load-local/soak.flow.yaml --target examples/load-local/target.yaml ; echo "exit $?"
+flow: endurance
+steps:
+  - id: ping
+    call: GET /slow
+    assert:
+      - status == 200
+profile:
+  mode: soak
+  vus: 10
+  hold: 12s
+  thresholds:
+    - error_rate < 1%

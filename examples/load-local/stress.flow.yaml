@@ -1,0 +1,26 @@
+# A stress run against a rate-limited local target (examples/load-local/stub).
+# The profile pushes a steady 400 req/s at a target that admits only ~200/s, so
+# the report separates throttle_rate (the limiter doing its job) from error_rate
+# (the target's own ~0.5% failures) — the M2 headline. It runs under the
+# goroutine-per-VU pool, evaluates thresholds (nonzero exit on breach), and
+# saves a run artifact to runs/.
+#
+#   go run ./examples/load-local/stub                                              # terminal 1
+#   flowbench run examples/load-local/stress.flow.yaml --target examples/load-local/target.yaml
+flow: checkout_pressure
+steps:
+  - id: checkout
+    call: POST /checkout
+    assert:
+      # In stress mode a 429 is classified `throttled` and never reaches this
+      # assertion; only a real non-200 (the ~0.5% of 500s) fails it and counts
+      # against error_rate.
+      - status == 200
+profile:
+  mode: stress
+  vus: 40
+  arrival_cap: 400/s # hold a known rate above the 200/s limit, rather than flooding
+  hold: 5s
+  thresholds:
+    - p95(latency) < 300ms
+    - error_rate < 2% # throttled responses do NOT count against this

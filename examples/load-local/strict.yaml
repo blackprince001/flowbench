@@ -1,0 +1,12 @@
+# A stricter target: same host, but high-load modes are forbidden entirely.
+# Running any stress or soak flow against it is refused before a single request
+# — the safety rail:
+#
+#   flowbench run examples/load-local/stress.flow.yaml --target examples/load-local/strict.yaml ; echo "exit $?"
+#   # flowbench: target "strict" disallows "stress" mode     (exit 2)
+name: strict
+base_urls:
+  - http://localhost:8080
+max_vus: 500
+max_rps: 1000
+disallowed_modes: [stress, soak]

@@ -45,6 +45,158 @@ Against the [Bored API](https://bored-api.appbrewery.com):
   > The public API is rate-limited (100 requests / 15 min), so the full sweep
   > gets `429`-throttled partway. Point it at an unrated target for the whole run.
 
+## `load-local/` — the load engine, end to end
+
+The others run once at 1 VU. This folder exercises everything the load engine
+does — the goroutine-per-VU pool, arrival caps, throttle-vs-error
+classification, retry/backoff, threshold gating, soak trends, payload capture +
+redaction, the run store, and safety rails — against one small **local** target,
+so nothing real gets hammered.
+
+Start the target in one terminal:
+
+```
+go run ./examples/load-local/stub
+```
+
+It has three endpoints: `/checkout` admits ~200 req/s and `429`s the rest (with
+`Retry-After`, plus ~0.5% genuine `500`s), `/login` echoes its request body, and
+`/slow` gets slower the longer it runs. Then run any flow below. Each drives the
+VU pool, prints an aggregate summary, evaluates thresholds, and saves an
+artifact to `runs/` (override with `--store`).
+
+### stress — throttling is a signal, not a failure
+
+[`stress.flow.yaml`](load-local/stress.flow.yaml) holds a steady 400 req/s
+(`arrival_cap`) against the 200/s limit:
+
+```
+running "checkout_pressure" against local-stub (http://localhost:8080) [stress, 40 VUs]
+  2000 iteration(s), 2000 flow-run(s) in 5.011s
+  error_rate=0.10%  throttle_rate=40.10%  p50=15.462ms p95=15.676ms p99=16.496ms
+  p95(latency) < 300ms: ok  (p95(latency) = 15.676ms, want < 300ms)
+  error_rate < 2%: ok  (error_rate = 0.10%, want < 2.00%)
+```
+
+**`throttle_rate` (40%) is reported separately from `error_rate` (0.1%)** — the
+milestone headline. A `429` classifies as `throttled`, not an error, so the rate
+limiter doing its job doesn't fail the run. Exit `0`.
+
+### load — capacity validation, with a ramp
+
+[`load.flow.yaml`](load-local/load.flow.yaml) ramps `0 -> 30` VUs then holds, at
+150 req/s (under the limit), to confirm the target holds up at expected load:
+
+```
+running "checkout_capacity" against local-stub (http://localhost:8080) [load, 30 VUs]
+  1051 iteration(s), 1051 flow-run(s) in 7.017s
+  error_rate=0.67%  throttle_rate=0.00%  p50=15.972ms p95=16.249ms p99=16.653ms
+  p95(latency) < 100ms: ok   error_rate < 1%: ok
+```
+
+Under the limit → no throttling; the thresholds hold. Exit `0`.
+
+### breach — thresholds gate the exit
+
+[`breach.flow.yaml`](load-local/breach.flow.yaml) demands p95 under 5 ms from a
+~15 ms target, so the CI gate fires:
+
+```
+  p95(latency) < 5ms: BREACH  (p95(latency) = 16.404ms, want < 5ms)
+  error_rate < 1%: ok
+```
+
+Exit `1`, breach named. (The run is still saved.)
+
+### retry — recover throttled calls, one span per attempt
+
+[`retry.flow.yaml`](load-local/retry.flow.yaml) pushes 250 req/s past the limit
+but retries `429`s with a short backoff, so most recover and `throttle_rate`
+drops toward zero (`3.28%` here, vs `40%` unretried); p95 rises with the backoff
+waits. Every attempt and wait is its own span in the trace — here a call that
+kept getting throttled and stopped at `max_attempts: 4`:
+
+```
+step 'checkout'  (151ms total, incl. backoff)
+   attempt 1      0.1ms      # 429
+   backoff       50.3ms      # fixed 50ms wait
+   attempt 2      0.2ms      # 429
+   backoff       50.1ms
+   attempt 3      0.1ms
+   backoff       50.4ms
+   attempt 4      0.2ms      # still 429 → classified throttled
+```
+
+`grep -o '"attempt [0-9]*"' runs/*/traces.json | sort | uniq -c` shows the spread.
+
+### soak — trend detection, not point thresholds
+
+[`soak.flow.yaml`](load-local/soak.flow.yaml) hits `/slow`, which degrades over
+time. Soak posture splits the run at its midpoint and flags the creep (also
+error-rate and throttle-rate drift) — a leak a point threshold would miss:
+
+```
+running "endurance" against local-stub (http://localhost:8080) [soak, 10 VUs]
+  350 iteration(s), 350 flow-run(s) in 12.028s
+  error_rate < 1%: ok
+  p95(latency) trend: BREACH  (p95 latency crept 342.526ms → 392.277ms over the run (>10%))
+```
+
+Exit `1`. (A real soak runs for hours; this one is compressed to seconds.)
+
+### login — secrets are captured, then scrubbed
+
+[`login.flow.yaml`](load-local/login.flow.yaml) injects an env-sourced secret
+into a request body; `/login` echoes it back, so it lands in the request *and*
+the response. Captured traces keep those bodies for debugging — but the secret
+is replaced with `[redacted]` before anything is stored:
+
+```
+DEMO_SECRET=hunter2-do-not-leak flowbench run examples/load-local/login.flow.yaml \
+  --target examples/load-local/target.yaml
+
+grep -rc 'hunter2-do-not-leak' runs/     # → 0, never stored
+```
+
+A captured payload in `traces.json`, request and echoed response both scrubbed:
+
+```
+"request":  {"password":"[redacted]","username":"ada"}
+"response": {"password":"[redacted]","username":"ada"}
+```
+
+### safety rails — refuse dangerous runs before they start
+
+[`strict.yaml`](load-local/strict.yaml) forbids high-load modes. The same stress
+flow, pointed at it, never sends a request:
+
+```
+flowbench run examples/load-local/stress.flow.yaml --target examples/load-local/strict.yaml
+flowbench: target "strict" disallows "stress" mode        # exit 2
+```
+
+The default [`target.yaml`](load-local/target.yaml) also sets `max_vus` / `max_rps`
+ceilings; a profile that would peak higher is refused pre-run the same way.
+
+### the run store
+
+Every load/stress/soak run above wrote a directory under `runs/`:
+
+```
+cat runs/*/meta.json
+```
+
+```json
+{ "scenario": "stress.flow.yaml", "mode": "stress", "initiator": "ada",
+  "target": "local-stub", "commit": "56458d7…", "iterations": 2000,
+  "error_rate": 0.001, "throttle_rate": 0.401, "p95": 15675959, … }
+```
+
+Alongside it: `folded.json` (the flame-graph tier — counts and duration sums per
+span path), `traces.json` (sampled raw traces — all failures plus a sample of
+successes, bodies redacted), and `metrics.json` (the generator's own
+CPU/memory). It's a directory you own — no retention machinery.
+
 ## Two files, two jobs
 
 The flow says *what* to do; the target says *where*. Notice the flows call

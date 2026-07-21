@@ -1,0 +1,19 @@
+# THRESHOLD BREACH → nonzero exit. The target answers in ~15 ms; this profile
+# demands p95 under 5 ms, so the run exits 1 with the breach named — the CI gate
+# firing. Loosen the threshold and it passes. (The run is still saved to runs/.)
+#
+#   flowbench run examples/load-local/breach.flow.yaml --target examples/load-local/target.yaml ; echo "exit $?"
+flow: checkout_tight_slo
+steps:
+  - id: checkout
+    call: POST /checkout
+    assert:
+      - status == 200
+profile:
+  mode: load
+  vus: 20
+  arrival_cap: 150/s
+  hold: 3s
+  thresholds:
+    - p95(latency) < 5ms # target serves in ~15ms → BREACH
+    - error_rate < 1%

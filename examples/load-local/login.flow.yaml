@@ -1,0 +1,23 @@
+# PAYLOAD CAPTURE + REDACTION. The secret comes from the environment, never the
+# file, and is injected into the request body. The /login endpoint echoes it
+# back, so it lands in both the request and the response. Captured traces keep
+# those bodies for debugging — but the secret is scrubbed to [redacted] before
+# anything is stored. Prove it:
+#
+#   DEMO_SECRET=hunter2-do-not-leak \
+#     flowbench run examples/load-local/login.flow.yaml --target examples/load-local/target.yaml
+#   grep -rc "hunter2-do-not-leak" runs/    # 0 — never stored
+#   grep -rl "\[redacted\]" runs/           # the scrubbed bodies
+flow: login_capture
+steps:
+  - id: login
+    call: POST /login
+    body: { username: "ada", password: "{{ env.DEMO_SECRET }}" }
+    assert:
+      - status == 200
+profile:
+  mode: load
+  vus: 5
+  hold: 3s
+  thresholds:
+    - error_rate < 1%
