@@ -30,6 +30,10 @@ Entry point for the FlowBench knowledge bundle. Read this index first; open docu
 
 * [planning/milestones.md](planning/milestones.md) - M1–M4 milestone plan, mirrored as GitHub milestones and issues.
 
+## Benchmarks
+
+* [benchmarks/10k-vu-footprint.md](benchmarks/10k-vu-footprint.md) - Sustained 10k-VU generator CPU headroom and per-VU memory, with a re-runnable harness.
+
 ## History
 
 * [log.md](log.md) - Decision/work log, newest first.
