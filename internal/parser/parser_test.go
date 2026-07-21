@@ -160,6 +160,39 @@ steps:
 	}
 }
 
+func TestThrottleBlockParses(t *testing.T) {
+	src := []byte(`flow: pay
+steps:
+  - id: charge
+    call: POST /charge
+    throttle:
+      statuses: [503, 529]
+      as_error: true
+    assert: [ status == 202 ]
+`)
+	res, err := parser.ParseFlow(src, "pay.flow.yaml", nil)
+	if err != nil {
+		t.Fatalf("throttle block should parse, got:\n%v", err)
+	}
+	th := res.Scenario.Flows[0].Steps[0].Throttle
+	if th == nil {
+		t.Fatal("throttle spec not parsed")
+	}
+	if len(th.Statuses) != 2 || th.Statuses[0] != 503 || th.Statuses[1] != 529 {
+		t.Errorf("statuses = %v, want [503 529]", th.Statuses)
+	}
+	if th.AsError == nil || !*th.AsError {
+		t.Errorf("as_error = %v, want true", th.AsError)
+	}
+}
+
+func TestThrottleUnknownKeyFails(t *testing.T) {
+	src := []byte("flow: pay\nsteps:\n  - id: charge\n    call: POST /charge\n    throttle: { codes: [503] }\n")
+	if _, err := parser.ParseFlow(src, "pay.flow.yaml", nil); err == nil {
+		t.Fatal("unknown throttle key should fail")
+	}
+}
+
 func TestProfileVUCountForm(t *testing.T) {
 	src := []byte(`flow: quick
 steps:

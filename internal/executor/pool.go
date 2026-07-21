@@ -50,8 +50,40 @@ type Result struct {
 	Aborted    bool
 }
 
-// Failed is the count of failed flow-runs (throttled is tracked separately).
+// Failed is the count of flow-runs counted as errors. A throttle counted as an
+// error (integration/system default) is included; a throttle treated as data
+// (load/stress/soak default) is not.
 func (r *Result) Failed() int { return r.Outcomes[span.OutcomeFailed] }
+
+// Throttled is the count of flow-runs that hit a throttle, in every mode —
+// including those that also failed.
+func (r *Result) Throttled() int {
+	n := 0
+	for _, s := range r.Samples {
+		if s.Throttled {
+			n++
+		}
+	}
+	return n
+}
+
+// ErrorRate is the fraction of flow-runs counted as errors. Throttles excluded
+// from error accounting (per mode) do not raise it.
+func (r *Result) ErrorRate() float64 {
+	if len(r.Samples) == 0 {
+		return 0
+	}
+	return float64(r.Failed()) / float64(len(r.Samples))
+}
+
+// ThrottleRate is the fraction of flow-runs that hit a throttle, tracked
+// separately from ErrorRate everywhere.
+func (r *Result) ThrottleRate() float64 {
+	if len(r.Samples) == 0 {
+		return 0
+	}
+	return float64(r.Throttled()) / float64(len(r.Samples))
+}
 
 // Run drives opts.Schedule to completion with one goroutine per virtual user,
 // each isolated in its own session (cookie jar and connection pool), drawing
@@ -284,19 +316,27 @@ func (p *pool) iterate(ctx context.Context, sess *adapters.Session, local *acc, 
 		service := time.Since(began)
 
 		outcome := span.OutcomeOK
+		throttled := false
 		if it != nil {
 			outcome = it.Outcome
+			throttled = it.Throttled
+			// Any recorded failure — a real one or a throttle-as-error whose
+			// span stays throttled — makes the flow-run an error.
+			if len(it.Failures) > 0 {
+				outcome = span.OutcomeFailed
+			}
 		}
 		if err != nil {
 			outcome = span.OutcomeFailed
 		}
 
 		local.samples = append(local.samples, Sample{
-			Flow:     fl.Name,
-			Intended: ref,
-			Actual:   actual,
-			Service:  service,
-			Outcome:  outcome,
+			Flow:      fl.Name,
+			Intended:  ref,
+			Actual:    actual,
+			Service:   service,
+			Outcome:   outcome,
+			Throttled: throttled,
 		})
 		if it != nil {
 			p.retain(local, fl.Name, actual, service, outcome, it.Spans)

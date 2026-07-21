@@ -31,10 +31,11 @@ type Failure struct {
 
 // Iteration is the result of running one flow pass.
 type Iteration struct {
-	Spans    []*span.Span
-	Outcome  span.Outcome
-	Failures []Failure
-	Aborted  bool // an abort_run failure asks the whole run to stop
+	Spans     []*span.Span
+	Outcome   span.Outcome
+	Failures  []Failure
+	Throttled bool // any step saw a throttle (feeds throttle_rate regardless of mode)
+	Aborted   bool // an abort_run failure asks the whole run to stop
 }
 
 // RunFlow runs flow's steps in order against the runner's session, mutating
@@ -99,6 +100,13 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 		return sp, cont, nil
 	}
 
+	// Classify the response before extraction or assertions: a throttle is its
+	// own outcome, not an assertion failure, and there is nothing to extract
+	// from it.
+	if isThrottled(resp.Status, st.Throttle) {
+		return sp, r.recordThrottle(it, sp, st, scope, resp.Status), nil
+	}
+
 	tgt := target{resp: resp, latency: sp.Duration}
 
 	for _, ex := range st.Extract {
@@ -149,6 +157,29 @@ func (r *Runner) resolveURL(u string) string {
 func (r *Runner) record(it *Iteration, sp *span.Span, st *ir.Step, sc *Scope, detail string) bool {
 	sp.Outcome = span.OutcomeFailed
 	it.Failures = append(it.Failures, Failure{StepID: st.ID, Detail: sc.Secrets().Redact(detail)})
+	switch effectiveAction(st.OnFailure, r.Mode) {
+	case ir.FailureAbortRun:
+		it.Aborted = true
+		return false
+	case ir.FailureAbortFlow:
+		return false
+	default:
+		return true
+	}
+}
+
+// recordThrottle classifies a throttled response. The step span is always
+// marked throttled and the iteration flagged so it feeds throttle_rate in every
+// mode. Whether it also counts as a failure — recorded and subject to
+// on_failure — follows the mode default unless the step overrides it.
+func (r *Runner) recordThrottle(it *Iteration, sp *span.Span, st *ir.Step, sc *Scope, status int) bool {
+	it.Throttled = true
+	sp.Outcome = span.OutcomeThrottled
+	if !throttleIsError(st.Throttle, r.Mode) {
+		return true // data: classified, not a failure — keep going
+	}
+	detail := sc.Secrets().Redact(fmt.Sprintf("throttled: HTTP %d", status))
+	it.Failures = append(it.Failures, Failure{StepID: st.ID, Detail: detail})
 	switch effectiveAction(st.OnFailure, r.Mode) {
 	case ir.FailureAbortRun:
 		it.Aborted = true
