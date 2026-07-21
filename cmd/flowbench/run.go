@@ -30,6 +30,7 @@ func runScenario(stdout, stderr io.Writer, args []string) int {
 	targetName := fs.String("target", "local", "target config name or path to a target file")
 	targetsDir := fs.String("targets-dir", "targets", "directory to resolve --target names in")
 	seed := fs.Int64("seed", 1, "seed for random data-pool draws")
+	storeDir := fs.String("store", "runs", "run store directory for load/stress/soak artifacts")
 
 	// Accept the scenario path before or after the flags: the stdlib flag
 	// package stops at the first positional, so pull a leading one out first.
@@ -74,16 +75,16 @@ func runScenario(stdout, stderr io.Writer, args []string) int {
 		return exitPreRun
 	}
 
-	return execute(stdout, stderr, sc, tgt, pools)
+	return execute(stdout, stderr, sc, tgt, pools, *storeDir, scenarioPath)
 }
 
 // execute dispatches on the profile's mode: load/stress/soak run under the
 // goroutine-per-VU pool with threshold evaluation; integration/system run once
 // (or once per fixture row) with loud per-iteration failures.
-func execute(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool) int {
+func execute(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool, storeRoot, scenarioPath string) int {
 	switch sc.Profile.Mode {
 	case ir.ModeLoad, ir.ModeStress, ir.ModeSoak:
-		return executeLoad(stdout, stderr, sc, tgt, pools)
+		return executeLoad(stdout, stderr, sc, tgt, pools, storeRoot, scenarioPath)
 	default:
 		return executeOnce(stdout, stderr, sc, tgt, pools)
 	}
@@ -93,7 +94,7 @@ func execute(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pool
 // prints an aggregate summary, and evaluates thresholds — point-in-time, plus
 // soak trend drift. The run exits nonzero only on a threshold breach or an
 // abort; individual failures are data in these modes, not test failures.
-func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool) int {
+func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool, storeRoot, scenarioPath string) int {
 	sched, err := planner.Plan(sc.Profile)
 	if err != nil {
 		fmt.Fprintf(stderr, "flowbench: %v\n", err)
@@ -108,6 +109,7 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 	fmt.Fprintf(stdout, "running %q against %s (%s) [%s, %d VUs]\n",
 		sc.Name, tgt.Config().Name, tgt.BaseURL(), sc.Profile.Mode, sched.PeakVUs)
 
+	startedAt := time.Now()
 	res, err := executor.Run(context.Background(), executor.Options{
 		Schedule: sched,
 		Flows:    sc.Flows,
@@ -127,6 +129,14 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 		outcomes = append(outcomes, collector.EvaluateTrends(res)...)
 	}
 	breached := printOutcomes(stdout, outcomes)
+
+	// Persist the run artifact regardless of pass/fail — a breaching run is
+	// exactly the one worth keeping. A store failure is a warning, not an exit.
+	if dir, err := saveRun(storeRoot, scenarioPath, sc, tgt, startedAt, res); err != nil {
+		fmt.Fprintf(stderr, "flowbench: could not save run: %v\n", err)
+	} else {
+		fmt.Fprintf(stdout, "run saved to %s\n", dir)
+	}
 
 	if res.Aborted {
 		fmt.Fprintln(stderr, "flowbench: run aborted (kill switch)")

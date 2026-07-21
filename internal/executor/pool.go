@@ -46,6 +46,7 @@ type Result struct {
 	Outcomes   map[span.Outcome]int
 	Samples    []Sample
 	Traces     []*span.Span
+	Folded     *span.Folded
 	Metrics    []MetricSample
 	Aborted    bool
 }
@@ -109,7 +110,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	p := &pool{opts: opts, sched: opts.Schedule, start: time.Now(), cancel: cancel}
+	p := &pool{opts: opts, sched: opts.Schedule, start: time.Now(), cancel: cancel, folded: span.NewFolded()}
 	p.successBudget.Store(int64(maxTraces))
 	p.failBudget.Store(maxFailTraces)
 
@@ -135,6 +136,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		Outcomes:   tally(p.samples),
 		Samples:    p.samples,
 		Traces:     p.traces,
+		Folded:     p.folded,
 		Metrics:    p.metrics,
 		Aborted:    p.aborted.Load(),
 	}
@@ -156,6 +158,7 @@ type pool struct {
 	mu         sync.Mutex
 	samples    []Sample
 	traces     []*span.Span
+	folded     *span.Folded
 	iterations int
 
 	metrics []MetricSample // written by the sampler goroutine, read after it joins
@@ -217,7 +220,7 @@ func (p *pool) runClosed(ctx context.Context) {
 func (p *pool) vu(ctx context.Context, wg *sync.WaitGroup, deadline time.Time, once bool) {
 	defer wg.Done()
 	sess := adapters.NewSession(adapters.SessionOptions{})
-	local := &acc{}
+	local := newAcc()
 	for ctx.Err() == nil {
 		if !once && !time.Now().Before(deadline) {
 			break
@@ -284,7 +287,7 @@ func (p *pool) runOpen(ctx context.Context) {
 func (p *pool) worker(ctx context.Context, jobs <-chan time.Duration, wg *sync.WaitGroup) {
 	defer wg.Done()
 	sess := adapters.NewSession(adapters.SessionOptions{})
-	local := &acc{}
+	local := newAcc()
 	for intended := range jobs {
 		if ctx.Err() != nil {
 			break
@@ -341,7 +344,7 @@ func (p *pool) iterate(ctx context.Context, sess *adapters.Session, local *acc, 
 			Throttled: throttled,
 		})
 		if it != nil {
-			p.retain(local, fl.Name, actual, service, outcome, it.Spans)
+			p.record(local, fl.Name, actual, service, outcome, it.Spans)
 			if it.Aborted {
 				p.aborted.Store(true)
 				p.cancel()
@@ -351,22 +354,25 @@ func (p *pool) iterate(ctx context.Context, sess *adapters.Session, local *acc, 
 	local.iters++
 }
 
-// retain keeps a flow-run's trace tree when the budget allows: failures up to a
-// ceiling, successes up to the configured cap. A synthetic root gathers the
-// step spans so the run reads as one tree in the waterfall view.
-func (p *pool) retain(local *acc, flow string, start, dur time.Duration, outcome span.Outcome, steps []*span.Span) {
-	budget := &p.successBudget
-	if outcome == span.OutcomeFailed {
-		budget = &p.failBudget
-	}
-	if budget.Add(-1) < 0 {
-		return
-	}
+// record assembles a flow-run's trace tree and puts it into both storage tiers:
+// folded into the aggregate on every iteration (unbounded-VU-safe), and kept as
+// a raw tree when the sampling budget allows — failures up to a ceiling,
+// successes up to the configured cap.
+func (p *pool) record(local *acc, flow string, start, dur time.Duration, outcome span.Outcome, steps []*span.Span) {
 	root := span.New("flow:"+flow, start)
 	root.Duration = dur
 	root.Outcome = outcome
 	root.Children = steps
-	local.traces = append(local.traces, root)
+
+	local.folded.Add(root)
+
+	budget := &p.successBudget
+	if outcome == span.OutcomeFailed {
+		budget = &p.failBudget
+	}
+	if budget.Add(-1) >= 0 {
+		local.traces = append(local.traces, root)
+	}
 }
 
 func (p *pool) drawRow(fl ir.Flow) map[string]string {
@@ -389,6 +395,7 @@ func (p *pool) merge(local *acc) {
 	defer p.mu.Unlock()
 	p.samples = append(p.samples, local.samples...)
 	p.traces = append(p.traces, local.traces...)
+	p.folded.Merge(local.folded)
 	p.iterations += local.iters
 }
 
@@ -397,8 +404,11 @@ func (p *pool) merge(local *acc) {
 type acc struct {
 	samples []Sample
 	traces  []*span.Span
+	folded  *span.Folded
 	iters   int
 }
+
+func newAcc() *acc { return &acc{folded: span.NewFolded()} }
 
 // curveAt evaluates the piecewise-linear VU curve at an elapsed offset.
 func curveAt(segs []planner.Segment, elapsed time.Duration) int {
