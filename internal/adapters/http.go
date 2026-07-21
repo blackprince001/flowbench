@@ -38,7 +38,7 @@ func NewSession(opts SessionOptions) *Session {
 	jar, _ := cookiejar.New(nil)
 
 	// dedicated transport per session so connection reuse is isolated per VU
-	var transport http.RoundTripper = http.DefaultTransport
+	transport := http.DefaultTransport
 	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
 		transport = dt.Clone()
 	}

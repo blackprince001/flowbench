@@ -206,7 +206,7 @@ func (w *walker) step(n ast.Node) ir.Step {
 		st.Call = spec
 	case waitNode != nil:
 		st.Type = ir.StepWait
-		d, _ := w.duration(waitNode, "wait")
+		d := w.duration(waitNode, "wait")
 		st.Wait = &ir.WaitSpec{Duration: d}
 		w.rejectCallOnly(callOnlyNodes, "wait")
 	case pollNode != nil:
@@ -257,9 +257,9 @@ func (w *walker) poll(n ast.Node) *ir.PollSpec {
 		case "until":
 			spec.Until = w.assertions(e.Value)
 		case "interval":
-			spec.Interval, _ = w.duration(e.Value, "interval")
+			spec.Interval = w.duration(e.Value, "interval")
 		case "timeout":
-			spec.Timeout, _ = w.duration(e.Value, "timeout")
+			spec.Timeout = w.duration(e.Value, "timeout")
 		case "max_attempts":
 			spec.MaxAttempts, _ = w.intVal(e.Value, "max_attempts")
 		default:
@@ -294,7 +294,7 @@ func (w *walker) retry(n ast.Node) *ir.RetryPolicy {
 		case "max_attempts":
 			pol.MaxAttempts, _ = w.intVal(e.Value, "max_attempts")
 		case "base_delay":
-			pol.BaseDelay, _ = w.duration(e.Value, "base_delay")
+			pol.BaseDelay = w.duration(e.Value, "base_delay")
 		default:
 			w.errAt(keyNode, "unknown retry key %q", key)
 		}
@@ -363,7 +363,7 @@ func (w *walker) profile(n ast.Node) ir.Profile {
 		case "vus":
 			w.vus(e.Value, &p, &holdNodes)
 		case "hold":
-			p.Hold, _ = w.duration(e.Value, "hold")
+			p.Hold = w.duration(e.Value, "hold")
 			holdNodes = append(holdNodes, keyNode)
 		case "iterations":
 			p.Iterations, _ = w.intVal(e.Value, "iterations")
@@ -404,7 +404,7 @@ func (w *walker) vus(n ast.Node, p *ir.Profile, holdNodes *[]ast.Node) {
 		case "ramp":
 			p.Ramp, _ = w.str(e.Value, "ramp")
 		case "hold":
-			p.Hold, _ = w.duration(e.Value, "hold")
+			p.Hold = w.duration(e.Value, "hold")
 			*holdNodes = append(*holdNodes, keyNode)
 		default:
 			w.errAt(keyNode, "unknown vus key %q", key)
@@ -472,17 +472,17 @@ func (w *walker) intVal(n ast.Node, what string) (int, bool) {
 	return 0, false
 }
 
-func (w *walker) duration(n ast.Node, what string) (ir.Duration, bool) {
+func (w *walker) duration(n ast.Node, what string) ir.Duration {
 	s, ok := w.str(n, what)
 	if !ok {
-		return 0, false
+		return 0
 	}
 	d, err := time.ParseDuration(s)
 	if err != nil {
 		w.errAt(n, `%s %q is not a duration (use "500ms", "30s", "10m")`, what, s)
-		return 0, false
+		return 0
 	}
-	return ir.Duration(d), true
+	return ir.Duration(d)
 }
 
 // strMap reads a mapping of string keys to scalars, keeping source text
