@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"github.com/blackprince001/flowbench/internal/adapters"
+	"github.com/blackprince001/flowbench/internal/collector"
 	"github.com/blackprince001/flowbench/internal/data"
 	"github.com/blackprince001/flowbench/internal/executor"
 	"github.com/blackprince001/flowbench/internal/ir"
 	"github.com/blackprince001/flowbench/internal/parser"
+	"github.com/blackprince001/flowbench/internal/planner"
 	"github.com/blackprince001/flowbench/internal/target"
 )
 
@@ -75,9 +77,95 @@ func runScenario(stdout, stderr io.Writer, args []string) int {
 	return execute(stdout, stderr, sc, tgt, pools)
 }
 
-// execute runs each flow at one VU — once per fixture row when the flow binds
-// a pool, otherwise once — and returns the process exit code.
+// execute dispatches on the profile's mode: load/stress/soak run under the
+// goroutine-per-VU pool with threshold evaluation; integration/system run once
+// (or once per fixture row) with loud per-iteration failures.
 func execute(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool) int {
+	switch sc.Profile.Mode {
+	case ir.ModeLoad, ir.ModeStress, ir.ModeSoak:
+		return executeLoad(stdout, stderr, sc, tgt, pools)
+	default:
+		return executeOnce(stdout, stderr, sc, tgt, pools)
+	}
+}
+
+// executeLoad plans the profile into a schedule, drives it under the VU pool,
+// prints an aggregate summary, and evaluates thresholds — point-in-time, plus
+// soak trend drift. The run exits nonzero only on a threshold breach or an
+// abort; individual failures are data in these modes, not test failures.
+func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool) int {
+	sched, err := planner.Plan(sc.Profile)
+	if err != nil {
+		fmt.Fprintf(stderr, "flowbench: %v\n", err)
+		return exitPreRun
+	}
+	thresholds, err := collector.ParseThresholds(sc.Profile.Thresholds)
+	if err != nil {
+		fmt.Fprintf(stderr, "flowbench: %v\n", err)
+		return exitPreRun
+	}
+
+	fmt.Fprintf(stdout, "running %q against %s (%s) [%s, %d VUs]\n",
+		sc.Name, tgt.Config().Name, tgt.BaseURL(), sc.Profile.Mode, sched.PeakVUs)
+
+	res, err := executor.Run(context.Background(), executor.Options{
+		Schedule: sched,
+		Flows:    sc.Flows,
+		Pools:    pools,
+		BaseURL:  tgt.BaseURL(),
+		Allow:    tgt.Allows,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "flowbench: %v\n", err)
+		return exitFail
+	}
+
+	printRunSummary(stdout, res)
+
+	outcomes := collector.Evaluate(thresholds, res)
+	if sc.Profile.Mode == ir.ModeSoak {
+		outcomes = append(outcomes, collector.EvaluateTrends(res)...)
+	}
+	breached := printOutcomes(stdout, outcomes)
+
+	if res.Aborted {
+		fmt.Fprintln(stderr, "flowbench: run aborted (kill switch)")
+		return exitFail
+	}
+	if breached {
+		return exitFail
+	}
+	return exitOK
+}
+
+func printRunSummary(w io.Writer, res *executor.Result) {
+	fmt.Fprintf(w, "  %d iteration(s), %d flow-run(s) in %s\n",
+		res.Iterations, len(res.Samples), time.Duration(res.Duration).Round(time.Millisecond))
+	fmt.Fprintf(w, "  error_rate=%.2f%%  throttle_rate=%.2f%%  p50=%s p95=%s p99=%s\n",
+		res.ErrorRate()*100, res.ThrottleRate()*100,
+		executor.Percentile(res.Samples, 0.50).Round(time.Microsecond),
+		executor.Percentile(res.Samples, 0.95).Round(time.Microsecond),
+		executor.Percentile(res.Samples, 0.99).Round(time.Microsecond))
+}
+
+// printOutcomes prints each threshold/trend result and reports whether any
+// breached.
+func printOutcomes(w io.Writer, outcomes []collector.Outcome) bool {
+	breached := false
+	for _, o := range outcomes {
+		status := "ok"
+		if !o.Pass {
+			status = "BREACH"
+			breached = true
+		}
+		fmt.Fprintf(w, "  %s: %s  (%s)\n", o.Expr, status, o.Detail)
+	}
+	return breached
+}
+
+// executeOnce runs each flow at one VU — once per fixture row when the flow
+// binds a pool, otherwise once — and returns the process exit code.
+func executeOnce(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool) int {
 	start := time.Now()
 	iterations, failed := 0, 0
 
