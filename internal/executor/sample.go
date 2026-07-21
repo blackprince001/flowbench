@@ -17,6 +17,10 @@ type Sample struct {
 	Actual   time.Duration `json:"actual"`
 	Service  time.Duration `json:"service"`
 	Outcome  span.Outcome  `json:"outcome"`
+	// Throttled records that the flow-run hit a throttle, independent of
+	// Outcome: in integration/system a throttle also fails the run (Outcome
+	// failed), yet it still counts toward throttle_rate.
+	Throttled bool `json:"throttled,omitempty"`
 }
 
 // Latency is the coordinated-omission-aware latency: the wait for a free slot

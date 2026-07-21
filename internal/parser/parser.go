@@ -179,6 +179,8 @@ func (w *walker) step(n ast.Node) ir.Step {
 			st.Assert = w.assertions(e.Value)
 		case "retry":
 			st.Retry = w.retry(e.Value)
+		case "throttle":
+			st.Throttle = w.throttle(e.Value)
 		case "on_failure":
 			if s, ok := w.str(e.Value, "on_failure"); ok {
 				st.OnFailure = ir.FailureAction(s)
@@ -300,6 +302,35 @@ func (w *walker) retry(n ast.Node) *ir.RetryPolicy {
 		}
 	}
 	return pol
+}
+
+func (w *walker) throttle(n ast.Node) *ir.ThrottleSpec {
+	spec := &ir.ThrottleSpec{}
+	entries, ok := mapEntries(n)
+	if !ok {
+		w.errAt(n, "throttle is a mapping with statuses, as_error")
+		return spec
+	}
+	for _, e := range entries {
+		key, keyNode := w.key(e)
+		switch key {
+		case "statuses":
+			if seq, ok := w.seq(e.Value, "statuses"); ok {
+				for _, item := range seq.Values {
+					if code, ok := w.intVal(item, "statuses entry"); ok {
+						spec.Statuses = append(spec.Statuses, code)
+					}
+				}
+			}
+		case "as_error":
+			if b, ok := w.boolVal(e.Value, "as_error"); ok {
+				spec.AsError = &b
+			}
+		default:
+			w.errAt(keyNode, "unknown throttle key %q", key)
+		}
+	}
+	return spec
 }
 
 func (w *walker) extractions(n ast.Node) []ir.Extraction {
@@ -444,6 +475,14 @@ func (w *walker) seq(n ast.Node, what string) (*ast.SequenceNode, bool) {
 	}
 	w.errAt(n, "%s must be a list", what)
 	return nil, false
+}
+
+func (w *walker) boolVal(n ast.Node, what string) (bool, bool) {
+	if b, ok := n.(*ast.BoolNode); ok {
+		return b.Value, true
+	}
+	w.errAt(n, "%s must be a boolean", what)
+	return false, false
 }
 
 func (w *walker) intVal(n ast.Node, what string) (int, bool) {
