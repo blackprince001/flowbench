@@ -232,3 +232,19 @@ func cut(s, sep string) (before, after string, ok bool) {
 	}
 	return strings.TrimSpace(s[:i]), strings.TrimSpace(s[i+len(sep):]), true
 }
+
+// CheckCeilings enforces a target's safety ceilings against a planned schedule,
+// ahead of any load. A zero ceiling is unset. The RPS ceiling only binds a
+// declared arrival cap; without one the request rate is emergent and cannot be
+// bounded before the run.
+func CheckCeilings(s *Schedule, maxVUs, maxRPS int) error {
+	if maxVUs > 0 && s.PeakVUs > maxVUs {
+		return fmt.Errorf("planner: schedule peaks at %d VUs, above the target ceiling of %d", s.PeakVUs, maxVUs)
+	}
+	if maxRPS > 0 && s.ArrivalCap != nil {
+		if rps := s.ArrivalCap.PerSecond(); rps > float64(maxRPS) {
+			return fmt.Errorf("planner: arrival cap %s exceeds the target ceiling of %d rps", s.ArrivalCap, maxRPS)
+		}
+	}
+	return nil
+}
