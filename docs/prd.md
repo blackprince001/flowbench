@@ -114,7 +114,7 @@ The differentiator is deliberate: **one canonical flow, two authoring surfaces (
 |Perf value|Bottlenecks found before prod does|# of findings attributed to flame graphs / agent overlays|> [X]/quarter|
 |Rate-limit clarity|Stress findings aren't confused with throttling|% of stress runs where the report distinguishes throttled from degraded knee points|> [X]%|
 |Prompt clarity|Prompt changes reviewed with diffs, not vibes|% of runs containing prompt observations where a prompt diff is opened|> [X]%|
-|Engine honesty|10k VUs without lying|Sustained VUs on reference hardware with generator CPU < [X]%|10,000|
+|Engine honesty|10k VUs without lying|Sustained VUs on reference hardware with generator CPU < 50% (baseline ~30% at 10k, ~69 KiB/VU — see benchmarks/10k-vu-footprint.md)|10,000|
 
 **Guardrail metrics:** engine overhead per VU (memory, CPU), metric accuracy versus a reference generator, accidental-target incidents (must be zero), agent overhead on the target (< [X]% CPU).
 
