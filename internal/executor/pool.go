@@ -230,11 +230,13 @@ func (p *pool) vu(ctx context.Context, wg *sync.WaitGroup, deadline time.Time, o
 	p.merge(local)
 }
 
-// runOpen is the arrival-driven model: a generator issues iterations on a
-// wall-clock schedule at the arrival cap and a bounded worker pool serves them.
-// Intended timestamps are a pure function of the iteration index, so a backed-up
-// pool shows up as latency rather than as omitted requests. Ramped arrival rate
-// is left to the arrival-cap enforcement work (#16); the rate here is constant.
+// runOpen enforces a profile's arrival cap as a hard ceiling (ADR 0013): a
+// generator issues iterations on a fixed 1/N wall-clock schedule and a bounded
+// worker pool serves them, so the target never sees more than N/s regardless of
+// VU count. Intended timestamps are a pure function of the iteration index, so a
+// backed-up pool shows up as latency rather than as omitted requests. The VU
+// curve sizes the worker pool (capacity), not the rate; sustaining the cap needs
+// enough workers (concurrency ≥ N × latency), else the rate honestly undershoots.
 func (p *pool) runOpen(ctx context.Context) {
 	rate := p.sched.ArrivalCap.PerSecond()
 	if rate <= 0 {
