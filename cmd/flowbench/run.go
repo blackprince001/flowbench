@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"time"
@@ -100,6 +101,10 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 		fmt.Fprintf(stderr, "flowbench: %v\n", err)
 		return exitPreRun
 	}
+	if err := planner.CheckCeilings(sched, tgt.Config().MaxVUs, tgt.Config().MaxRPS); err != nil {
+		fmt.Fprintf(stderr, "flowbench: %v\n", err)
+		return exitPreRun
+	}
 	thresholds, err := collector.ParseThresholds(sc.Profile.Thresholds)
 	if err != nil {
 		fmt.Fprintf(stderr, "flowbench: %v\n", err)
@@ -109,8 +114,13 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 	fmt.Fprintf(stdout, "running %q against %s (%s) [%s, %d VUs]\n",
 		sc.Name, tgt.Config().Name, tgt.BaseURL(), sc.Profile.Mode, sched.PeakVUs)
 
+	// Ctrl-C cancels the run context, which unwinds every VU; the partial run is
+	// still summarized and flushed to the store below.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
 	startedAt := time.Now()
-	res, err := executor.Run(context.Background(), executor.Options{
+	res, err := executor.Run(ctx, executor.Options{
 		Schedule: sched,
 		Flows:    sc.Flows,
 		Pools:    pools,
@@ -121,6 +131,7 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 		fmt.Fprintf(stderr, "flowbench: %v\n", err)
 		return exitFail
 	}
+	interrupted := ctx.Err() != nil
 
 	printRunSummary(stdout, res)
 
@@ -138,6 +149,10 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 		fmt.Fprintf(stdout, "run saved to %s\n", dir)
 	}
 
+	if interrupted {
+		fmt.Fprintln(stderr, "flowbench: interrupted; partial run saved")
+		return exitFail
+	}
 	if res.Aborted {
 		fmt.Fprintln(stderr, "flowbench: run aborted (kill switch)")
 		return exitFail

@@ -266,3 +266,30 @@ func assertSchedule(t *testing.T, got, want *Schedule) {
 		t.Fatalf("arrival cap: got %+v, want %+v", *got.ArrivalCap, *want.ArrivalCap)
 	}
 }
+
+func TestCheckCeilings(t *testing.T) {
+	load, err := Plan(ir.Profile{Mode: ir.ModeLoad, VUs: 500, Hold: dur("1m")})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if err := CheckCeilings(load, 1000, 0); err != nil {
+		t.Errorf("500 VUs under a 1000 ceiling should pass: %v", err)
+	}
+	if CheckCeilings(load, 100, 0) == nil {
+		t.Error("500 VUs over a 100 ceiling should be refused")
+	}
+	if CheckCeilings(load, 0, 0) != nil {
+		t.Error("an unset ceiling should pass")
+	}
+
+	capped, err := Plan(ir.Profile{Mode: ir.ModeStress, VUs: 50, Hold: dur("1m"), ArrivalCap: "300/s"})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if CheckCeilings(capped, 100, 500) != nil {
+		t.Error("300 rps under a 500 rps ceiling should pass")
+	}
+	if CheckCeilings(capped, 100, 200) == nil {
+		t.Error("300 rps over a 200 rps ceiling should be refused")
+	}
+}
