@@ -94,7 +94,7 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 		}
 	}
 
-	resp, sp, err := r.Session.Do(ctx, st.ID, req, anchor)
+	resp, sp, err := r.executeCall(ctx, st, req, anchor)
 	if err != nil {
 		cont := r.record(it, sp, st, scope, fmt.Sprintf("call failed: %v", err))
 		return sp, cont, nil
