@@ -66,6 +66,13 @@ func TestPlanByMode(t *testing.T) {
 			want: &Schedule{Mode: ir.ModeSystem, Arrival: Closed, Stop: StopOnce, PeakVUs: 3},
 		},
 		{
+			// a sustained rate cap has no meaning over a single pass, so it is
+			// dropped rather than producing an open schedule with no duration.
+			name: "integration ignores an arrival cap",
+			in:   ir.Profile{Mode: ir.ModeIntegration, ArrivalCap: "300/s"},
+			want: &Schedule{Mode: ir.ModeIntegration, Arrival: Closed, Stop: StopOnce, PeakVUs: 1},
+		},
+		{
 			name: "load ramps then holds, duration-bounded",
 			in:   ir.Profile{Mode: ir.ModeLoad, Ramp: "0 -> 200 over 2m", Hold: dur("10m")},
 			want: &Schedule{

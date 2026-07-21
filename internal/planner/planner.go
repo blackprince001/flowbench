@@ -80,7 +80,7 @@ func Plan(p ir.Profile) (*Schedule, error) {
 
 	switch p.Mode {
 	case ir.ModeIntegration, ir.ModeSystem:
-		return planOnce(p, cap)
+		return planOnce(p)
 	case ir.ModeLoad, ir.ModeSoak:
 		return planSustained(p, cap, StopDuration)
 	case ir.ModeStress:
@@ -91,22 +91,19 @@ func Plan(p ir.Profile) (*Schedule, error) {
 }
 
 // planOnce covers integration and system: a small fixed VU count, run once.
-// Ramp and hold are ignored. Integration defaults to one VU.
-func planOnce(p ir.Profile, cap *Rate) (*Schedule, error) {
+// Ramp and hold are ignored, and so is any arrival cap — a sustained req/s
+// ceiling has no meaning over a single pass, and per-call pacing is the SDK's
+// pace lever (PRD §10.9). Integration defaults to one VU.
+func planOnce(p ir.Profile) (*Schedule, error) {
 	vus := p.VUs
 	if vus == 0 {
 		vus = 1
 	}
-	arrival := Closed
-	if cap != nil {
-		arrival = Open
-	}
 	return &Schedule{
-		Mode:       p.Mode,
-		Arrival:    arrival,
-		Stop:       StopOnce,
-		ArrivalCap: cap,
-		PeakVUs:    vus,
+		Mode:    p.Mode,
+		Arrival: Closed,
+		Stop:    StopOnce,
+		PeakVUs: vus,
 	}, nil
 }
 
