@@ -20,6 +20,13 @@ type Span struct {
 	Duration time.Duration
 	Outcome  Outcome
 	Children []*Span
+	Payload  *Payload `json:"Payload,omitempty"`
+
+	// rawReq/rawResp hold the call's bodies by reference during the run; they
+	// are turned into a stored (redacted, capped) Payload only when the trace is
+	// kept, so sampling costs nothing for dropped traces. See capture.go.
+	rawReq  []byte
+	rawResp []byte
 }
 
 func New(name string, start time.Duration) *Span {

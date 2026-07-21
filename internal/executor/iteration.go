@@ -95,6 +95,13 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 	}
 
 	resp, sp, err := r.executeCall(ctx, st, req, anchor)
+	if !captureDisabled(st) {
+		var respBody []byte
+		if resp != nil {
+			respBody = resp.Body
+		}
+		sp.SetRaw(req.Body, respBody)
+	}
 	if err != nil {
 		cont := r.record(it, sp, st, scope, fmt.Sprintf("call failed: %v", err))
 		return sp, cont, nil
@@ -203,6 +210,11 @@ func effectiveAction(action ir.FailureAction, mode ir.Mode) ir.FailureAction {
 	default:
 		return ir.FailureRecord
 	}
+}
+
+// captureDisabled reports whether a step opts out of payload capture.
+func captureDisabled(st *ir.Step) bool {
+	return st.Capture != nil && st.Capture.Payloads == ir.CaptureNever
 }
 
 func worst(a, b span.Outcome) span.Outcome {

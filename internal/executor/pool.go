@@ -16,8 +16,10 @@ import (
 
 const (
 	defaultMetricInterval = time.Second
-	defaultMaxTraces      = 200   // retained success traces; failures kept up to maxFailTraces
-	maxFailTraces         = 10000 // ceiling on retained failure traces before capture policy (#19)
+	defaultMaxTraces      = 200   // safety cap on retained sampled-success traces
+	maxFailTraces         = 10000 // safety ceiling on retained failure traces
+	defaultSampleEvery    = 100   // keep 1 of every N successful/throttled traces
+	defaultBodyCap        = 2048  // captured request/response body cap, bytes
 )
 
 // Options configures a pool run. BaseURL, Allow, and the schedule's mode mirror
@@ -32,9 +34,20 @@ type Options struct {
 	// Metrics is the self-metric sample interval; 0 uses a default, negative
 	// disables sampling.
 	Metrics time.Duration
-	// MaxTraces caps retained success traces; 0 uses a default. Failure traces
-	// are kept regardless, up to an internal ceiling.
-	MaxTraces int
+
+	// Capture policy (ADR 0007). All failures are kept up to an internal safety
+	// ceiling; successes and throttled responses are sampled.
+	//
+	// SampleEvery keeps 1 of every N successful/throttled traces (0 uses a
+	// default, 1 keeps all). MaxTraces caps how many sampled successes are kept
+	// and MaxFailures how many failures (both 0 use defaults) — safety ceilings
+	// against unbounded memory, not policy. MaxBodyBytes truncates captured
+	// request/response bodies (0 uses a default, negative captures no bodies).
+	// Bodies are always redacted before storage.
+	SampleEvery  int
+	MaxTraces    int
+	MaxFailures  int
+	MaxBodyBytes int
 }
 
 // Result is the raw product of a run: latency samples, retained trace trees,
@@ -102,6 +115,18 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if maxTraces == 0 {
 		maxTraces = defaultMaxTraces
 	}
+	maxFail := opts.MaxFailures
+	if maxFail == 0 {
+		maxFail = maxFailTraces
+	}
+	sampleEvery := opts.SampleEvery
+	if sampleEvery == 0 {
+		sampleEvery = defaultSampleEvery
+	}
+	bodyCap := opts.MaxBodyBytes
+	if bodyCap == 0 {
+		bodyCap = defaultBodyCap
+	}
 	metricInterval := opts.Metrics
 	if metricInterval == 0 {
 		metricInterval = defaultMetricInterval
@@ -110,9 +135,17 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	p := &pool{opts: opts, sched: opts.Schedule, start: time.Now(), cancel: cancel, folded: span.NewFolded()}
+	p := &pool{
+		opts:         opts,
+		sched:        opts.Schedule,
+		start:        time.Now(),
+		cancel:       cancel,
+		folded:       span.NewFolded(),
+		sampleEvery:  sampleEvery,
+		maxBodyBytes: bodyCap,
+	}
 	p.successBudget.Store(int64(maxTraces))
-	p.failBudget.Store(maxFailTraces)
+	p.failBudget.Store(int64(maxFail))
 
 	// Sample the generator's own resource use for the run's lifetime.
 	mctx, mstop := context.WithCancel(context.Background())
@@ -154,6 +187,9 @@ type pool struct {
 
 	successBudget atomic.Int64
 	failBudget    atomic.Int64
+	successSeen   atomic.Int64
+	sampleEvery   int
+	maxBodyBytes  int
 
 	mu         sync.Mutex
 	samples    []Sample
@@ -344,7 +380,7 @@ func (p *pool) iterate(ctx context.Context, sess *adapters.Session, local *acc, 
 			Throttled: throttled,
 		})
 		if it != nil {
-			p.record(local, fl.Name, actual, service, outcome, it.Spans)
+			p.record(local, fl.Name, actual, service, outcome, it.Spans, scope.Secrets().RedactBytes)
 			if it.Aborted {
 				p.aborted.Store(true)
 				p.cancel()
@@ -354,11 +390,12 @@ func (p *pool) iterate(ctx context.Context, sess *adapters.Session, local *acc, 
 	local.iters++
 }
 
-// record assembles a flow-run's trace tree and puts it into both storage tiers:
+// record assembles a flow-run's trace tree and routes it to both storage tiers:
 // folded into the aggregate on every iteration (unbounded-VU-safe), and kept as
-// a raw tree when the sampling budget allows — failures up to a ceiling,
-// successes up to the configured cap.
-func (p *pool) record(local *acc, flow string, start, dur time.Duration, outcome span.Outcome, steps []*span.Span) {
+// a raw tree per the capture policy. A kept trace has its bodies captured —
+// redacted, then size-capped — so sampling and redaction cost nothing for the
+// traces that are dropped.
+func (p *pool) record(local *acc, flow string, start, dur time.Duration, outcome span.Outcome, steps []*span.Span, redact func([]byte) []byte) {
 	root := span.New("flow:"+flow, start)
 	root.Duration = dur
 	root.Outcome = outcome
@@ -366,13 +403,24 @@ func (p *pool) record(local *acc, flow string, start, dur time.Duration, outcome
 
 	local.folded.Add(root)
 
-	budget := &p.successBudget
-	if outcome == span.OutcomeFailed {
-		budget = &p.failBudget
-	}
-	if budget.Add(-1) >= 0 {
+	if p.keepTrace(outcome) {
+		span.Finalize(root, redact, p.maxBodyBytes)
 		local.traces = append(local.traces, root)
 	}
+}
+
+// keepTrace is the capture policy: keep every failure (up to a safety ceiling),
+// and one of every sampleEvery successful/throttled traces (up to the success
+// cap). The counters are shared so the success sample rate holds across VUs.
+func (p *pool) keepTrace(outcome span.Outcome) bool {
+	if outcome == span.OutcomeFailed {
+		return p.failBudget.Add(-1) >= 0
+	}
+	n := p.successSeen.Add(1)
+	if p.sampleEvery > 1 && (n-1)%int64(p.sampleEvery) != 0 {
+		return false
+	}
+	return p.successBudget.Add(-1) >= 0
 }
 
 func (p *pool) drawRow(fl ir.Flow) map[string]string {
