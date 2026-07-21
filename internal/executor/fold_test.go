@@ -27,11 +27,12 @@ func TestFoldedEqualsRawSums(t *testing.T) {
 	}}}
 
 	res, err := executor.Run(context.Background(), executor.Options{
-		Schedule:  holdSchedule(ir.ModeLoad, 16, 250*time.Millisecond),
-		Flows:     []ir.Flow{flow},
-		BaseURL:   srv.URL,
-		Metrics:   -1,
-		MaxTraces: 1_000_000, // retain every trace so the sample is the whole run
+		Schedule:    holdSchedule(ir.ModeLoad, 16, 250*time.Millisecond),
+		Flows:       []ir.Flow{flow},
+		BaseURL:     srv.URL,
+		Metrics:     -1,
+		SampleEvery: 1,         // keep every success...
+		MaxTraces:   1_000_000, // ...so the sample is the whole run
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)

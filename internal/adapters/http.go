@@ -126,6 +126,10 @@ func (s *Session) Do(ctx context.Context, stepID string, req *Request, anchor ti
 	}
 
 	rec := &legRecorder{anchor: anchor, step: step}
+	// Freeze the span tree once Do returns: httptrace callbacks from speculative
+	// dials can fire afterward, and the pool folds/captures/stores the tree
+	// concurrently. finish makes those late callbacks no-ops.
+	defer rec.finish()
 	httpReq = httpReq.WithContext(httptrace.WithClientTrace(httpReq.Context(), rec.trace()))
 
 	// shallow copy: shares jar and transport, but this call gets its own
@@ -206,18 +210,34 @@ type legRecorder struct {
 	wrote     time.Duration
 	firstByte time.Duration
 	hasFirst  bool
+	done      bool // set once Do returns; late callbacks stop touching the tree
 }
 
 func (r *legRecorder) now() time.Duration { return time.Since(r.anchor) }
 
-// ensureLeg must be called with the mutex held.
+// ensureLeg must be called with the mutex held. Once Do has returned it hands
+// back a detached span so a late callback mutates a throwaway, never the tree
+// the pool is reading.
 func (r *legRecorder) ensureLeg() *span.Span {
+	if r.done {
+		return span.New("http_call", r.now())
+	}
 	if r.leg == nil {
 		r.leg = r.step.Child("http_call", r.now())
 		r.dnsStart, r.connStart, r.tlsStart, r.wrote = 0, 0, 0, 0
 		r.firstByte, r.hasFirst = 0, false
 	}
 	return r.leg
+}
+
+// finish freezes the recorder as Do returns. Acquiring the mutex waits out any
+// in-flight callback, and the done flag makes any that follow no-ops, so the
+// span tree is complete and immutable before the pool folds, captures, or
+// stores it.
+func (r *legRecorder) finish() {
+	r.mu.Lock()
+	r.done = true
+	r.mu.Unlock()
 }
 
 func (r *legRecorder) closeLeg(outcome span.Outcome) {
