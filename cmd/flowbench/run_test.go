@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const checkoutFlow = `flow: checkout
@@ -98,6 +99,59 @@ func TestRunFailingAssertionExitsNonzero(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "pay") {
 		t.Errorf("output should name the failing step:\n%s", stdout.String())
+	}
+}
+
+// slowStub answers every request after a fixed delay, to drive latency
+// thresholds.
+func slowStub(t *testing.T, delay time.Duration) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(delay)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+const loadFlow = `flow: slowpoke
+steps:
+  - id: hit
+    call: GET /slow
+profile:
+  mode: load
+  vus: 4
+  hold: 300ms
+  thresholds:
+    - p95(latency) < 20ms
+`
+
+// TestRunLoadThresholdBreachExitsNonzero is the issue #17 acceptance: a load run
+// whose p95 exceeds the threshold exits nonzero and names the breach.
+func TestRunLoadThresholdBreachExitsNonzero(t *testing.T) {
+	srv := slowStub(t, 60*time.Millisecond) // p95 ~60ms, threshold is 20ms
+	scenario, targetPath := writeScenario(t, loadFlow, srv.URL)
+
+	var stdout, stderr strings.Builder
+	code := run(&stdout, &stderr, []string{"run", scenario, "--target", targetPath})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 (p95 breach)\nstdout:\n%s", code, stdout.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "p95(latency) < 20ms") || !strings.Contains(out, "BREACH") {
+		t.Errorf("output should name the breached threshold:\n%s", out)
+	}
+}
+
+func TestRunLoadThresholdPassExitsZero(t *testing.T) {
+	srv := slowStub(t, 2*time.Millisecond)
+	loose := strings.Replace(loadFlow, "p95(latency) < 20ms", "p95(latency) < 500ms", 1)
+	scenario, targetPath := writeScenario(t, loose, srv.URL)
+
+	var stdout, stderr strings.Builder
+	code := run(&stdout, &stderr, []string{"run", scenario, "--target", targetPath})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (threshold met)\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
 }
 
