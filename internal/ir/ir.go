@@ -91,6 +91,7 @@ type Step struct {
 	Extract   []Extraction  `json:"extract,omitempty"`
 	Assert    []Assertion   `json:"assert,omitempty"`
 	Retry     *RetryPolicy  `json:"retry,omitempty"`
+	Throttle  *ThrottleSpec `json:"throttle,omitempty"`
 	OnFailure FailureAction `json:"on_failure,omitempty"`
 	Capture   *Capture      `json:"capture,omitempty"`
 	Pos       *Pos          `json:"pos,omitempty"`
@@ -182,6 +183,15 @@ type RetryPolicy struct {
 	Backoff     BackoffStrategy `json:"backoff"`
 	MaxAttempts int             `json:"max_attempts"`
 	BaseDelay   Duration        `json:"base_delay,omitempty"`
+}
+
+// ThrottleSpec tunes throttle classification for a call step. Statuses lists
+// author-mapped codes treated as throttled on top of the always-on HTTP 429.
+// AsError overrides the mode default for whether a throttle counts as a
+// failure (integration/system: yes; load/stress/soak: no) — nil keeps it.
+type ThrottleSpec struct {
+	Statuses []int `json:"statuses,omitempty"`
+	AsError  *bool `json:"as_error,omitempty"`
 }
 
 type Profile struct {
