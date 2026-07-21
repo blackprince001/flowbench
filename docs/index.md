@@ -21,6 +21,10 @@ Entry point for the FlowBench knowledge bundle. Read this index first; open docu
   * [0007 Span model as single source of truth](decisions/0007-span-model-single-source-of-truth.md) - One span model feeds both flame graphs and the waterfall view; two storage tiers.
   * [0008 Python logic steps via bridged worker pool](decisions/0008-python-bridge-worker-pool.md) - Pure-declarative fast path vs bridged Python path, honestly reported.
   * [0009 Prompt testing by observation](decisions/0009-prompt-testing-diff-first.md) - The flow's own SDK code makes LLM calls; FlowBench captures, hashes, paces, and diffs — no provider adapters, no scoring.
+  * [0010 goccy/go-yaml for the YAML surface](decisions/0010-yaml-library-goccy.md) - The YAML library backing the declarative authoring surface.
+  * [0011 Hand-rolled JSONPath subset](decisions/0011-jsonpath-hand-rolled-subset.md) - A small, dependency-free JSONPath subset for extraction and body assertions.
+  * [0012 No runtime Go↔Python bridge](decisions/0012-no-runtime-bridge-shared-run-store.md) - Two independent producers sharing one run-store contract; no runtime bridge.
+  * [0013 Arrival cap is a hard scheduling constraint](decisions/0013-arrival-cap-hard-scheduling-constraint.md) - The open-loop generator enforces the cap at the rate; the soft self-paced model undershot by ~11%.
 
 ## Planning
 

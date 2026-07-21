@@ -659,7 +659,7 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 - [ ] Span storage encoding: OTel-compatible (interoperates with existing tracing tools if the org has them) versus a bespoke compact format optimized for the fold operation. Owner: [name]. By: [date].
 - [ ] Agent transport and format (push to collector over gRPC? scrape?). Owner: [name]. By: [date].
 - [ ] Default retry/backoff parameters (max attempts, base delay for exponential) when a flow declares `retry` without specifying them fully. Owner: [name]. By: [date].
-- [ ] Whether the arrival cap (10.3) should be a hard scheduling constraint or a soft target the planner approximates under load. Owner: [name]. By: [date].
+- [x] Whether the arrival cap (10.3) should be a hard scheduling constraint or a soft target the planner approximates under load. **Resolved: hard scheduling constraint via the open-loop generator (ADR 0013, spike #15) — the soft self-paced model undershot the cap by ~11% under a realistic latency tail.**
 - [ ] Lua as a third surface, or Python-only. Owner: [name]. By: [date].
 - [ ] gRPC streaming scope in v1. Owner: [name]. By: [date].
 - [ ] Demo/disposable DB feature — worth the complexity? Owner: [name]. By: [date].
