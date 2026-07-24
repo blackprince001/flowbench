@@ -33,6 +33,11 @@
   --tint: 26%;
   --radius: 10px;
 
+  /* A strong ease-out for entrances — the built-in curve is too weak to feel
+     intentional. Motion is opt-in: everything here sits behind a
+     prefers-reduced-motion guard. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
   --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
@@ -871,6 +876,110 @@ a.frame { text-decoration: none; }
   outline: 2px solid var(--failed);
   outline-offset: -2px;
   z-index: 2;
+}
+
+/* Time-series charts --------------------------------------------------- */
+
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+/* Each chart is a three-row subgrid — head, plot, axis — sharing its row tracks
+   with the charts beside it. So the tallest header (a legend that wraps to two
+   lines) sets a common height and every plot and axis lines up, whatever each
+   legend's length. */
+.chart {
+  margin: 0;
+  min-width: 0;
+  display: grid;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+  row-gap: 8px;
+}
+.chart-head {
+  align-self: start;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 14px;
+}
+.chart-title { font-size: 12.5px; font-weight: 600; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font: 11px/1.5 var(--mono); color: var(--ink-3); }
+.chart-key { display: inline-flex; align-items: center; gap: 6px; }
+.chart-key::before { content: ""; width: 11px; height: 2px; border-radius: 1px; background: var(--tone); }
+.chart-key b { color: var(--ink-2); font-weight: 600; }
+
+.chart-plot { position: relative; }
+.chart-ymax {
+  position: absolute;
+  top: 3px;
+  left: 5px;
+  font: 10px/1 var(--mono);
+  color: var(--ink-3);
+  pointer-events: none;
+}
+.chart-svg {
+  display: block;
+  width: 100%;
+  height: 118px;
+  background: var(--ground);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+}
+.chart-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+/* A dithered wash under each line — the line's own tone, shown only through the
+   shared dot mask. Kept low so overlapping series stay legible. */
+.carea { fill: var(--tone, var(--ink-2)); opacity: 0.3; }
+.cline {
+  fill: none;
+  stroke: var(--tone, var(--ink-2));
+  stroke-width: 1.75px;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+/* Reference lines sit behind the data; non-scaling so they stay hairline under
+   the stretched viewBox. */
+.cbase, .cgrid { stroke: var(--hairline); stroke-width: 1px; }
+.cgrid { stroke: var(--hairline-soft); stroke-dasharray: 2 3; }
+.chart-empty {
+  min-height: 118px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-3);
+  font-size: 12px;
+  background: var(--ground);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+}
+
+.drift { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
+.drift li { display: flex; align-items: baseline; gap: 9px; font-size: 12.5px; }
+
+/* Entrance: the charts cascade in on load — an occasional view, so a brief,
+   crisp reveal earns its keep. Just a fade and a small rise (transform/opacity,
+   GPU): fast and reliable, no per-line stroke tricks that render unevenly under
+   the stretched viewBox. --d staggers the cards. */
+.charts .chart { --d: 0ms; }
+.charts .chart:nth-child(2) { --d: 50ms; }
+.charts .chart:nth-child(3) { --d: 100ms; }
+.charts .chart:nth-child(4) { --d: 150ms; }
+
+@keyframes chart-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes chart-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .charts .chart { animation: chart-in 320ms var(--ease-out) var(--d) both; }
+}
+
+/* Reduced motion keeps a gentle fade — comprehension, not movement. */
+@media (prefers-reduced-motion: reduce) {
+  .charts .chart { animation: chart-fade 220ms ease var(--d) both; }
 }
 
 /* Regression comparison ------------------------------------------------ */

@@ -32,6 +32,8 @@ func runScenario(stdout, stderr io.Writer, args []string) int {
 	targetsDir := fs.String("targets-dir", "targets", "directory to resolve --target names in")
 	seed := fs.Int64("seed", 1, "seed for random data-pool draws")
 	storeDir := fs.String("store", "runs", "run store directory for load/stress/soak artifacts")
+	watch := fs.Bool("watch", false, "serve a live view of the run, abortable from the browser (load/stress/soak)")
+	addr := fs.String("addr", defaultAddr, "address for the --watch live server")
 
 	// Accept the scenario path before or after the flags: the stdlib flag
 	// package stops at the first positional, so pull a leading one out first.
@@ -45,7 +47,7 @@ func runScenario(stdout, stderr io.Writer, args []string) int {
 	}
 	positionals := append(lead, fs.Args()...)
 	if len(positionals) != 1 {
-		fmt.Fprintln(stderr, "usage: flowbench run <scenario.yaml> [--target name] [--targets-dir dir] [--seed n]")
+		fmt.Fprintln(stderr, "usage: flowbench run <scenario.yaml> [--target name] [--targets-dir dir] [--seed n] [--watch [--addr host:port]]")
 		return exitPreRun
 	}
 	scenarioPath := positionals[0]
@@ -76,17 +78,24 @@ func runScenario(stdout, stderr io.Writer, args []string) int {
 		return exitPreRun
 	}
 
-	return execute(stdout, stderr, sc, tgt, pools, *storeDir, scenarioPath)
+	watchAddr := ""
+	if *watch {
+		watchAddr = *addr
+	}
+	return execute(stdout, stderr, sc, tgt, pools, *storeDir, scenarioPath, watchAddr)
 }
 
 // execute dispatches on the profile's mode: load/stress/soak run under the
 // goroutine-per-VU pool with threshold evaluation; integration/system run once
 // (or once per fixture row) with loud per-iteration failures.
-func execute(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool, storeRoot, scenarioPath string) int {
+func execute(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool, storeRoot, scenarioPath, watchAddr string) int {
 	switch sc.Profile.Mode {
 	case ir.ModeLoad, ir.ModeStress, ir.ModeSoak:
-		return executeLoad(stdout, stderr, sc, tgt, pools, storeRoot, scenarioPath)
+		return executeLoad(stdout, stderr, sc, tgt, pools, storeRoot, scenarioPath, watchAddr)
 	default:
+		if watchAddr != "" {
+			fmt.Fprintln(stderr, "flowbench: --watch applies to load/stress/soak runs; ignoring")
+		}
 		return executeOnce(stdout, stderr, sc, tgt, pools)
 	}
 }
@@ -95,7 +104,7 @@ func execute(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pool
 // prints an aggregate summary, and evaluates thresholds — point-in-time, plus
 // soak trend drift. The run exits nonzero only on a threshold breach or an
 // abort; individual failures are data in these modes, not test failures.
-func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool, storeRoot, scenarioPath string) int {
+func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool, storeRoot, scenarioPath, watchAddr string) int {
 	sched, err := planner.Plan(sc.Profile)
 	if err != nil {
 		fmt.Fprintf(stderr, "flowbench: %v\n", err)
@@ -109,6 +118,12 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 	if err != nil {
 		fmt.Fprintf(stderr, "flowbench: %v\n", err)
 		return exitPreRun
+	}
+
+	// The live view runs the scenario and serves it from one process, with abort
+	// as its one write path (PRD 10.7).
+	if watchAddr != "" {
+		return runLive(stdout, stderr, sc, tgt, pools, storeRoot, scenarioPath, watchAddr, sched, thresholds)
 	}
 
 	fmt.Fprintf(stdout, "running %q against %s (%s) [%s, %d VUs]\n",

@@ -16,7 +16,7 @@ Usage:
   flowbench <command> [arguments]
 
 Commands:
-  run        run a scenario against a target (integration mode)
+  run        run a scenario against a target (add --watch for a live view)
   serve      browse recorded runs from a run store on localhost
   version    print the flowbench build identity
 

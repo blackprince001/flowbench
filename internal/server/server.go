@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/blackprince001/flowbench/internal/collector"
+	"github.com/blackprince001/flowbench/internal/executor"
 	"github.com/blackprince001/flowbench/internal/report"
 	"github.com/blackprince001/flowbench/internal/span"
 	"github.com/blackprince001/flowbench/internal/store"
@@ -35,6 +36,7 @@ func New(ws *store.Workspace) *Server {
 	s.mux.HandleFunc("GET /{$}", s.index)
 	s.mux.HandleFunc("GET /p/{project}/{$}", s.runs)
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}", s.run)
+	s.mux.HandleFunc("GET /p/{project}/runs/{id}/dashboard", s.dashboard)
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/flame", s.flame)
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/waterfall", s.waterfall)
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/outcomes", s.outcomes)
@@ -287,6 +289,68 @@ func (s *Server) outcomes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// dashboard is the run's time-series view: throughput, latency percentiles, and
+// outcome rates over the run, the per-step table, the thresholds, and — for a
+// soak — the drift trend. The target-resource overlay is an empty slot until an
+// agent is attached (#32).
+func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
+	p, m, index, ok := s.runContext(w, r)
+	if !ok {
+		return
+	}
+	id := m.ID
+
+	folded, _ := p.Store.LoadFolded(id)
+	series, _ := p.Store.LoadSeries(id)
+	traces, _ := p.Store.LoadTraces(id)
+	samples, _ := p.Store.LoadSamples(id)
+	metrics, _ := p.Store.LoadMetrics(id)
+
+	page := report.DashboardPage{
+		Shell:   s.shell(p, m, index, "dashboard", len(report.FlameFrames(folded)), len(traces), samples.Kept),
+		RunHead: head(m),
+		Charts: []report.LineChart{
+			report.ThroughputChart(series),
+			report.LatencyChart(series),
+			report.RatesChart(series),
+			vuChart(series, metrics),
+		},
+		Steps: report.StepRows(folded),
+		Gates: gates(m),
+		Agent: "no agent attached — target CPU/memory overlay lands with #32",
+	}
+	if m.Mode == "soak" {
+		page.Trend = report.TrendFrom(series, m.Thresholds)
+	}
+	render(w, report.RenderDashboard, page)
+}
+
+// vuChart plots active virtual users over time from the generator's own metric
+// series (metrics.json). Its samples sit on their own grid, so they are placed by
+// time within the run's span rather than by index.
+func vuChart(series collector.Series, metrics []executor.MetricSample) report.LineChart {
+	span := report.SeriesSpan(series)
+	for _, mm := range metrics {
+		if mm.At > span {
+			span = mm.At
+		}
+	}
+	pts := make([]report.ChartPoint, 0, len(metrics))
+	var last int
+	for _, mm := range metrics {
+		x := 0.0
+		if span > 0 {
+			x = float64(mm.At) / float64(span)
+		}
+		pts = append(pts, report.ChartPoint{X: x, Y: float64(mm.ActiveVUs)})
+		last = mm.ActiveVUs
+	}
+	end := span.Round(100 * time.Millisecond).String()
+	return report.LineChartOf("Virtual users", []report.ChartSeries{{
+		Label: "VUs", Tone: "kind-retry", Points: pts, Last: fmt.Sprint(last),
+	}}, func(v float64) string { return fmt.Sprintf("%.0f", v) }, end)
+}
+
 // compare sets a run beside a baseline — the previous run of the same scenario
 // by default, or any same-scenario run named by ?with= — and reports the metric
 // deltas, the gates that changed verdict, and the step that regressed most. An
@@ -470,6 +534,7 @@ func (s *Server) shell(p store.Project, m store.Meta, index []store.Meta, view s
 	base := s.runBase(p, m.ID)
 	tabs := []report.Tab{
 		{Label: "Overview", Href: base, Selected: view == "overview"},
+		{Label: "Dashboard", Href: base + "/dashboard", Selected: view == "dashboard"},
 		{Label: "Flame graph", Href: base + "/flame", Count: frames, Selected: view == "flame"},
 		{Label: "Waterfall", Href: base + "/waterfall", Count: traces, Selected: view == "waterfall"},
 		{Label: "Outcomes", Href: base + "/outcomes", Count: runs, Selected: view == "outcomes"},
