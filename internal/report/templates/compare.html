@@ -1,0 +1,138 @@
+{{ define "content" }}
+
+{{ template "run-head" .RunHead }}
+{{ template "tabs" .Tabs }}
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Regression comparison</h2>
+      <p class="card-kicker">this run against a baseline</p>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="compare-heads">
+      <div>
+        <span class="compare-tag">this run</span>
+        <b class="mono">{{ .Cur.ID }}</b> · {{ .Cur.When }}
+        <span class="pill t-{{ .Cur.Verdict.Tone }}">{{ .Cur.Verdict.Label }}</span>
+      </div>
+      {{ if not .Note }}
+      <div>
+        <span class="compare-tag">baseline</span>
+        <b class="mono">{{ .Baseline.ID }}</b> · {{ .Baseline.When }}
+        <span class="pill t-{{ .Baseline.Verdict.Tone }}">{{ .Baseline.Verdict.Label }}</span>
+      </div>
+      {{ end }}
+    </div>
+
+    {{ if .Note }}<p class="hint">{{ .Note }}</p>{{ end }}
+
+    {{ if .Baselines }}
+    <h3 class="sub-h">Baseline</h3>
+    <div class="picker">
+      {{ range .Baselines }}
+      <a class="pick{{ if .Selected }} is-selected{{ end }}" href="{{ .Href }}" style="--tone:var(--kind-net)">
+        <span class="pick-seq">{{ .ID }}</span><span class="pick-dur">{{ .When }}</span>
+      </a>
+      {{ end }}
+    </div>
+    {{ end }}
+  </div>
+</section>
+
+{{ if not .Note }}
+
+{{ if .Regressed }}
+<section class="card">
+  <div class="card-body">
+    <p class="regression">
+      <span class="chip o-failed">regressed</span>
+      biggest regression: <b>{{ .Regressed.Step }}</b> grew <b>{{ .Regressed.Delta }}</b> since the baseline
+    </p>
+  </div>
+</section>
+{{ end }}
+
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Metric deltas</h2>
+    <p class="card-note">this run vs baseline</p>
+  </div>
+  <div class="tiles">
+    {{ range .Deltas }}
+    <div class="tile">
+      <div class="tile-label">{{ .Label }}</div>
+      <div class="tile-value"{{ if .Tone }} style="--tone:var(--{{ .Tone }})"{{ end }}>{{ .Value }}</div>
+      {{ if .Sub }}<div class="tile-sub">{{ .Sub }}</div>{{ end }}
+    </div>
+    {{ end }}
+  </div>
+</section>
+
+{{ if .Flips }}
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Threshold flips</h2>
+    <p class="card-note">gates that changed verdict</p>
+  </div>
+  <div class="card-body">
+    <table class="table">
+      <thead><tr><th>Gate</th><th>Change</th><th>Measured (this run)</th></tr></thead>
+      <tbody>
+        {{ range .Flips }}
+        <tr>
+          <td class="mono">{{ .Expr }}</td>
+          <td><span class="chip{{ if .Tone }} o-{{ .Tone }}{{ end }}">{{ .Kind }}</span></td>
+          <td class="mono" style="color:var(--ink-2)">{{ .Detail }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{ end }}
+
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Flame graphs</h2>
+    <p class="card-note">each folded across its own run</p>
+  </div>
+  <div class="card-body">
+    {{ template "legend-kinds" }}
+    <div class="compare-flames">
+      <div class="compare-flame">
+        <div class="compare-flame-head">
+          <b>this run</b><span class="mono">{{ .CurTotal }}</span>
+          <a class="span-link" href="{{ .Cur.FlameHref }}">open ›</a>
+        </div>
+        <div class="flame-viewport compare-viewport">
+          <div class="flame"><div class="flame-inner" style="{{ flameTall .FramesCur }}">
+            {{ range .FramesCur }}
+            <div class="frame k-{{ .Kind }}{{ if .Regressed }} is-regressed{{ end }}" style="{{ framePos . }}"
+                 title="{{ .Path }} — {{ dur .Total }} total, {{ dur .Self }} self, {{ .Count }} calls"><span>{{ .Name }}</span></div>
+            {{ end }}
+          </div></div>
+        </div>
+      </div>
+      <div class="compare-flame">
+        <div class="compare-flame-head">
+          <b>baseline</b><span class="mono">{{ .BaseTotal }}</span>
+          <a class="span-link" href="{{ .Baseline.FlameHref }}">open ›</a>
+        </div>
+        <div class="flame-viewport compare-viewport">
+          <div class="flame"><div class="flame-inner" style="{{ flameTall .FramesBase }}">
+            {{ range .FramesBase }}
+            <div class="frame k-{{ .Kind }}" style="{{ framePos . }}"
+                 title="{{ .Path }} — {{ dur .Total }} total, {{ dur .Self }} self, {{ .Count }} calls"><span>{{ .Name }}</span></div>
+            {{ end }}
+          </div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{{ end }}
+
+{{ end }}

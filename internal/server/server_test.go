@@ -519,3 +519,92 @@ func mustStore(t *testing.T, dir string) *store.Store {
 	}
 	return st
 }
+
+// runWithStep is a healthy checkout flow whose one step takes stepDur, so two
+// runs built with different stepDur differ by exactly an injected slowdown.
+func runWithStep(stepDur time.Duration) *executor.Result {
+	folded := span.NewFolded()
+	var samples []executor.Sample
+	for i := range 20 {
+		root := span.New("flow:checkout", time.Duration(i)*time.Millisecond)
+		root.Duration = stepDur + 2*time.Millisecond
+		step := root.Child("checkout", 0)
+		step.Duration = stepDur
+		step.Child("ttfb", time.Millisecond).Duration = stepDur - 2*time.Millisecond
+		folded.Add(root)
+		samples = append(samples, executor.Sample{
+			Flow:    "checkout",
+			Actual:  time.Duration(i) * time.Millisecond,
+			Service: stepDur,
+			Outcome: span.OutcomeOK,
+		})
+	}
+	return &executor.Result{Duration: 100 * time.Millisecond, Iterations: 20, Samples: samples, Folded: folded}
+}
+
+// Issue #40's acceptance: comparing two runs of the same scenario where one has
+// an injected slowdown highlights the regressed step.
+func TestComparePageHighlightsTheRegressedStep(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "checkout")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Baseline passes its gate; the later run is slower and breaches it.
+	baseDir, err := st.Save(
+		store.RunInfo{Scenario: "checkout.flow.yaml", Mode: "load", StartedAt: time.Date(2026, 7, 24, 13, 0, 0, 0, time.UTC)},
+		runWithStep(10*time.Millisecond),
+		[]collector.Outcome{{Expr: "p95(latency) < 30ms", Pass: true, Detail: "p95 = 12ms, want < 30ms"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	curDir, err := st.Save(
+		store.RunInfo{Scenario: "checkout.flow.yaml", Mode: "load", StartedAt: time.Date(2026, 7, 24, 13, 30, 0, 0, time.UTC)},
+		runWithStep(40*time.Millisecond),
+		[]collector.Outcome{{Expr: "p95(latency) < 30ms", Pass: false, Detail: "p95 = 41ms, want < 30ms"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseID, curID := filepath.Base(baseDir), filepath.Base(curDir)
+
+	ws, err := store.NewWorkspace([]string{"checkout=" + dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := server.New(ws)
+	base := "/p/checkout/runs/" + curID + "/compare"
+
+	// With no ?with=, the previous run is the baseline.
+	code, body := get(t, s, base)
+	if code != http.StatusOK {
+		t.Fatalf("compare returned %d", code)
+	}
+	for _, want := range []string{"Regression comparison", baseID, "biggest regression", "checkout", "is-regressed"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("compare page missing %q", want)
+		}
+	}
+	// The gate that passed in the baseline and fails now is marked regressed.
+	if !strings.Contains(body, `class="chip o-failed">regressed`) {
+		t.Error("the flipped threshold should read as a regression")
+	}
+
+	// An explicit baseline is honoured.
+	if code, _ := get(t, s, base+"?with="+baseID); code != http.StatusOK {
+		t.Errorf("explicit baseline returned %d", code)
+	}
+	// An unknown baseline degrades to the default rather than erroring.
+	if code, body := get(t, s, base+"?with=nope"); code != http.StatusOK || !strings.Contains(body, "biggest regression") {
+		t.Errorf("unknown baseline should fall back cleanly, got %d", code)
+	}
+	// The oldest run has nothing earlier: the empty state, never a 500.
+	if code, body := get(t, s, "/p/checkout/runs/"+baseID+"/compare"); code != http.StatusOK || !strings.Contains(body, "no earlier run") {
+		t.Errorf("the oldest run should show the empty state, got %d", code)
+	}
+}

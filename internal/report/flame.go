@@ -29,6 +29,10 @@ type Frame struct {
 	Count    int64
 	Selected bool
 
+	// Regressed marks the frame the regression comparison found to have grown
+	// most against a baseline (compare.go). Always false outside that view.
+	Regressed bool
+
 	// Href selects this frame, keeping the current zoom; ZoomHref re-roots the
 	// graph here. Both are built in Go because html/template refuses to
 	// interpolate into a URL assembled conditionally in markup.
