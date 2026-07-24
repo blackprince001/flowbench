@@ -1,0 +1,25 @@
+# RETRY / backoff — push slightly past the 200/s limit (250/s), but retry the
+# 429s with a short fixed backoff. Most recover on a later attempt once the
+# limiter refills, so throttle_rate drops toward zero and each retried call
+# shows one span per attempt in its trace, with time-to-success including the
+# backoff.  Inspect it:  grep -c '"attempt' runs/*/traces.json
+#
+#   flowbench run examples/load-local/retry.flow.yaml --target examples/load-local/target.yaml
+flow: checkout_with_retry
+steps:
+  - id: checkout
+    call: POST /checkout
+    retry:
+      on_status: [429]
+      backoff: fixed
+      base_delay: 50ms
+      max_attempts: 4
+    assert:
+      - status == 200
+profile:
+  mode: load
+  vus: 20
+  arrival_cap: 250/s # above the 200/s limit, so some calls are throttled first
+  hold: 5s
+  thresholds:
+    - error_rate < 1%

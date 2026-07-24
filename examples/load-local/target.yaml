@@ -1,0 +1,10 @@
+# --target for the load-local example: localhost only (the host allow-list),
+# with safety-rail ceilings. A run that would peak above 500 VUs, or declare an
+# arrival cap above 1000 rps, is refused before any load is generated. Flip
+# disallowed_modes on to forbid stress/soak against this target entirely.
+name: local-stub
+base_urls:
+  - http://localhost:8080
+max_vus: 500
+max_rps: 1000
+# disallowed_modes: [stress, soak]

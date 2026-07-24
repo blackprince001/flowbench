@@ -1,0 +1,19 @@
+# LOAD mode — capacity validation. Unlike stress (which floods past the limit),
+# load ramps to an expected concurrency and holds there, at a rate that stays
+# under the target's 200/s ceiling — so it runs clean, no throttling, and the
+# thresholds confirm the target holds up at the expected load.
+#
+#   flowbench run examples/load-local/load.flow.yaml --target examples/load-local/target.yaml
+flow: checkout_capacity
+steps:
+  - id: checkout
+    call: POST /checkout
+    assert:
+      - status == 200
+profile:
+  mode: load
+  vus: { ramp: "0 -> 30 over 3s", hold: 4s } # ramp up, then hold steady
+  arrival_cap: 150/s # under the 200/s limit → no throttling
+  thresholds:
+    - p95(latency) < 100ms
+    - error_rate < 1%
