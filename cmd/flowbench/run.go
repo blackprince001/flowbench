@@ -143,7 +143,7 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 
 	// Persist the run artifact regardless of pass/fail — a breaching run is
 	// exactly the one worth keeping. A store failure is a warning, not an exit.
-	if dir, err := saveRun(storeRoot, scenarioPath, sc, tgt, startedAt, res); err != nil {
+	if dir, err := saveRun(storeRoot, scenarioPath, sc, tgt, startedAt, res, outcomes); err != nil {
 		fmt.Fprintf(stderr, "flowbench: could not save run: %v\n", err)
 	} else {
 		fmt.Fprintf(stdout, "run saved to %s\n", dir)

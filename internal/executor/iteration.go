@@ -97,10 +97,16 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 	resp, sp, err := r.executeCall(ctx, st, req, anchor)
 	if !captureDisabled(st) {
 		var respBody []byte
+		status, retryAfter := 0, ""
 		if resp != nil {
 			respBody = resp.Body
+			status = resp.Status
+			// On a throttle this is the server saying how long it wanted to be
+			// left alone — the one header worth keeping unconditionally.
+			retryAfter = resp.Headers.Get("Retry-After")
 		}
 		sp.SetRaw(req.Body, respBody)
+		sp.SetCall(req.Method, req.URL, status, retryAfter)
 	}
 	if err != nil {
 		cont := r.record(it, sp, st, scope, fmt.Sprintf("call failed: %v", err))

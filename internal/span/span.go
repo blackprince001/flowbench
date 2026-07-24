@@ -27,6 +27,12 @@ type Span struct {
 	// kept, so sampling costs nothing for dropped traces. See capture.go.
 	rawReq  []byte
 	rawResp []byte
+
+	// The call's identity and result, held the same way and for the same reason.
+	callMethod string
+	callURL    string
+	callStatus int
+	retryAfter string
 }
 
 func New(name string, start time.Duration) *Span {

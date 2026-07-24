@@ -52,12 +52,12 @@ func TestSaveCarriesAttributionAndTiers(t *testing.T) {
 		Dirty:     true,
 		StartedAt: time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC),
 	}
-	dir, err := st.Save(info, syntheticResult())
+	dir, err := st.Save(info, syntheticResult(), nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	for _, f := range []string{"meta.json", "folded.json", "traces.json", "metrics.json"} {
+	for _, f := range []string{"meta.json", "folded.json", "traces.json", "series.json", "metrics.json"} {
 		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
 			t.Errorf("run dir missing %s: %v", f, err)
 		}
@@ -83,6 +83,52 @@ func TestSaveCarriesAttributionAndTiers(t *testing.T) {
 	}
 	if len(list) != 1 || list[0].ID != filepath.Base(dir) {
 		t.Fatalf("index should hold the one run, got %+v", list)
+	}
+}
+
+// The results server reads each tier back on its own, so every artifact Save
+// writes must round-trip without the others.
+func TestTiersRoundTripIndependently(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	dir, err := st.Save(store.RunInfo{Scenario: "s.yaml", Mode: "load", StartedAt: time.Now()}, syntheticResult(), nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	id := filepath.Base(dir)
+
+	folded, err := st.LoadFolded(id)
+	if err != nil {
+		t.Fatalf("LoadFolded: %v", err)
+	}
+	if folded.Root == nil || folded.Root.Children["flow:f"] == nil {
+		t.Errorf("folded tier lost its span paths: %+v", folded)
+	}
+
+	traces, err := st.LoadTraces(id)
+	if err != nil {
+		t.Fatalf("LoadTraces: %v", err)
+	}
+	if len(traces) != 1 || traces[0].Name != "flow:f" {
+		t.Errorf("trace tier did not round-trip: %+v", traces)
+	}
+
+	series, err := st.LoadSeries(id)
+	if err != nil {
+		t.Fatalf("LoadSeries: %v", err)
+	}
+	runs := 0
+	for _, p := range series.Points {
+		runs += p.FlowRuns
+	}
+	if runs != 3 {
+		t.Errorf("series tier should hold all 3 flow-runs, got %d in %d points", runs, len(series.Points))
+	}
+
+	if _, err := st.LoadMetrics(id); err != nil {
+		t.Errorf("LoadMetrics: %v", err)
 	}
 }
 
@@ -128,7 +174,7 @@ func TestSavePartialRunAfterCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir, err := st.Save(store.RunInfo{Scenario: "s.yaml", Mode: "load", StartedAt: time.Date(2026, 7, 21, 13, 0, 0, 0, time.UTC)}, res)
+	dir, err := st.Save(store.RunInfo{Scenario: "s.yaml", Mode: "load", StartedAt: time.Date(2026, 7, 21, 13, 0, 0, 0, time.UTC)}, res, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}

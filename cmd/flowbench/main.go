@@ -17,6 +17,7 @@ Usage:
 
 Commands:
   run        run a scenario against a target (integration mode)
+  serve      browse recorded runs from a run store on localhost
   version    print the flowbench build identity
 
 Run 'flowbench help' to show this message.
@@ -42,6 +43,8 @@ func run(stdout, stderr io.Writer, args []string) int {
 	switch args[0] {
 	case "run":
 		return runScenario(stdout, stderr, args[1:])
+	case "serve":
+		return serve(stdout, stderr, args[1:])
 	case "version", "--version":
 		fmt.Fprintln(stdout, version.String())
 		return exitOK
