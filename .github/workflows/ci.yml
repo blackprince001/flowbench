@@ -14,8 +14,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  python-lint:
+    name: python lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: sdk-python/uv.lock
+
+      - name: install python toolchain
+        run: uv sync --locked --project sdk-python
+
+      # tests/flows holds the Python conformance fixture, outside the SDK tree.
+      - name: ruff check
+        run: uv run --frozen --project sdk-python ruff check --config sdk-python/ruff.toml sdk-python tests/flows
+
+      - name: ruff format
+        run: uv run --frozen --project sdk-python ruff format --check --config sdk-python/ruff.toml sdk-python tests/flows
+
+  python-test:
+    name: pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: sdk-python/uv.lock
+
+      - name: pytest
+        run: uv run --locked --directory sdk-python --python ${{ matrix.python-version }} pytest
+
   build-test:
-    name: build & test
+    name: build & test (go)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -25,15 +64,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: sdk-python/uv.lock
 
-      - name: install python sdk dev deps
-        run: pip install -e "sdk-python[dev]"
-
-      - name: pytest (sdk-python)
-        run: python -m pytest sdk-python/tests
+      # internal/conformance compiles a Python flow and diffs its IR against
+      # the YAML parser's, so the Go suite needs the SDK environment too.
+      - name: install python toolchain
+        run: uv sync --locked --project sdk-python
 
       - name: gofmt
         run: |
@@ -51,4 +90,9 @@ jobs:
         run: go build ./...
 
       - name: test
+        env:
+          FLOWBENCH_PYTHON: ${{ github.workspace }}/sdk-python/.venv/bin/python
+          # Turn the conformance suite's "no usable interpreter" skip into a
+          # failure: CI provisions one, so a skip here means CI is broken.
+          FLOWBENCH_REQUIRE_PYTHON: "1"
         run: go test -race ./...

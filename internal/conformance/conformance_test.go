@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/blackprince001/flowbench/internal/ir"
@@ -34,45 +36,103 @@ func TestAuthenticatedCheckoutTwoSurfaceParity(t *testing.T) {
 	}
 }
 
+// minPythonMinor mirrors requires-python in sdk-python/pyproject.toml. The
+// SDK uses 3.10 syntax, so an older interpreter fails at import.
+const minPythonMinor = 10
+
 // compilePythonFlow runs a Python flow file with FLOWBENCH_COMPILE_ONLY set,
 // which makes flow.run(...) print the compiled IR as JSON instead of
 // executing (there is no runtime execution path for Python-driven flows
-// yet; that's issue #25). Skips, rather than fails, when no usable Python
-// interpreter with the flowbench package is available, so `go test ./...`
-// stays usable for Go-only contributors; CI installs Python explicitly so
-// this check is never silently skipped there.
+// yet; that's issue #25).
 func compilePythonFlow(t *testing.T, path string) []byte {
 	t.Helper()
-
-	python := os.Getenv("FLOWBENCH_PYTHON")
-	if python == "" {
-		python = "python3"
-	}
-	if _, err := exec.LookPath(python); err != nil {
-		t.Skipf("no %s interpreter on PATH: %v", python, err)
-	}
 
 	repoRoot, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatalf("resolving repo root: %v", err)
 	}
-	sdkSrc := filepath.Join(repoRoot, "sdk-python", "src")
+	python := pythonInterpreter(t, repoRoot)
 
 	cmd := exec.Command(python, path)
 	cmd.Env = append(os.Environ(),
 		"FLOWBENCH_COMPILE_ONLY=1",
-		"PYTHONPATH="+sdkSrc,
+		"PYTHONPATH="+filepath.Join(repoRoot, "sdk-python", "src"),
 	)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		if _, ok := err.(*exec.ExitError); ok && bytes.Contains(stderr.Bytes(), []byte("ModuleNotFoundError: No module named 'flowbench'")) {
-			t.Skipf("flowbench Python package not importable: %s", stderr.String())
+			skipOrFail(t, "flowbench Python package not importable: %s", stderr.String())
 		}
 		t.Fatalf("running %s %s: %v\nstderr:\n%s", python, path, err, stderr.String())
 	}
 	return stdout.Bytes()
+}
+
+// pythonInterpreter resolves the interpreter that compiles the Python
+// fixture: $FLOWBENCH_PYTHON, else the uv-managed sdk-python/.venv, else
+// python3 on PATH. That last one is a coin flip -- macOS still ships 3.9 as
+// python3, which cannot even import the SDK -- so the version is checked
+// whichever way it was found.
+func pythonInterpreter(t *testing.T, repoRoot string) string {
+	t.Helper()
+
+	python := resolvePython(t, repoRoot)
+	if minor := pythonMinor(t, python); minor < minPythonMinor {
+		skipOrFail(t, "%s is Python 3.%d, the SDK needs >= 3.%d; run `uv sync --project sdk-python`",
+			python, minor, minPythonMinor)
+	}
+	return python
+}
+
+func resolvePython(t *testing.T, repoRoot string) string {
+	t.Helper()
+
+	if python := os.Getenv("FLOWBENCH_PYTHON"); python != "" {
+		return python
+	}
+	venv := filepath.Join(repoRoot, "sdk-python", ".venv")
+	for _, python := range []string{
+		filepath.Join(venv, "bin", "python"),
+		filepath.Join(venv, "Scripts", "python.exe"),
+	} {
+		if _, err := os.Stat(python); err == nil {
+			return python
+		}
+	}
+
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		skipOrFail(t, "no python3 on PATH (%v); run `uv sync --project sdk-python`", err)
+	}
+	return python
+}
+
+func pythonMinor(t *testing.T, python string) int {
+	t.Helper()
+
+	out, err := exec.Command(python, "-c", "import sys; print(sys.version_info[1])").Output()
+	if err != nil {
+		t.Fatalf("querying %s version: %v", python, err)
+	}
+	minor, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		t.Fatalf("parsing %s version %q: %v", python, out, err)
+	}
+	return minor
+}
+
+// skipOrFail skips when no usable Python environment is around, keeping `go
+// test ./...` green for Go-only contributors -- unless FLOWBENCH_REQUIRE_PYTHON
+// is set, which CI does so a provisioning failure can't pass as a quiet skip.
+func skipOrFail(t *testing.T, format string, args ...any) {
+	t.Helper()
+
+	if os.Getenv("FLOWBENCH_REQUIRE_PYTHON") != "" {
+		t.Fatalf(format, args...)
+	}
+	t.Skipf(format, args...)
 }
 
 // canonicalize re-decodes a Scenario's JSON into a generic tree, strips
