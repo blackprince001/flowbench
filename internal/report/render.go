@@ -213,6 +213,7 @@ var (
 	flameTmpl     = parse("templates/flame.html")
 	waterfallTmpl = parse("templates/waterfall.html")
 	outcomesTmpl  = parse("templates/outcomes.html")
+	compareTmpl   = parse("templates/compare.html")
 )
 
 func parse(page string) *template.Template {
@@ -262,6 +263,11 @@ func RenderWaterfall(w io.Writer, p WaterfallPage) error {
 // RenderOutcomes writes the outcomes page.
 func RenderOutcomes(w io.Writer, p OutcomesPage) error {
 	return outcomesTmpl.ExecuteTemplate(w, "layout", p)
+}
+
+// RenderCompare writes the run-versus-baseline comparison page.
+func RenderCompare(w io.Writer, p ComparePage) error {
+	return compareTmpl.ExecuteTemplate(w, "layout", p)
 }
 
 // framePos and barPos build geometry as template.CSS because html/template

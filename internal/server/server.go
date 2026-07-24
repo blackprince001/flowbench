@@ -38,6 +38,7 @@ func New(ws *store.Workspace) *Server {
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/flame", s.flame)
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/waterfall", s.waterfall)
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/outcomes", s.outcomes)
+	s.mux.HandleFunc("GET /p/{project}/runs/{id}/compare", s.compare)
 	return s
 }
 
@@ -286,6 +287,127 @@ func (s *Server) outcomes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// compare sets a run beside a baseline — the previous run of the same scenario
+// by default, or any same-scenario run named by ?with= — and reports the metric
+// deltas, the gates that changed verdict, and the step that regressed most. An
+// unknown or cross-scenario baseline falls back to the default rather than
+// erroring, the way a stale ?frame= degrades on the flame page.
+func (s *Server) compare(w http.ResponseWriter, r *http.Request) {
+	p, m, index, ok := s.runContext(w, r)
+	if !ok {
+		return
+	}
+	id := m.ID
+
+	folded, _ := p.Store.LoadFolded(id)
+	traces, _ := p.Store.LoadTraces(id)
+	samples, _ := p.Store.LoadSamples(id)
+
+	base := s.runBase(p, id) + "/compare"
+	peers := sameScenario(index, m)
+
+	bm, haveB := store.Meta{}, false
+	if with := r.URL.Query().Get("with"); with != "" {
+		if cand, err := p.Store.Load(with); err == nil && cand.Scenario == m.Scenario && cand.ID != id {
+			bm, haveB = cand, true
+		}
+	}
+	if !haveB {
+		bm, haveB = previousRun(peers, m)
+	}
+
+	page := report.ComparePage{
+		Shell:     s.shell(p, m, index, "compare", len(report.FlameFrames(folded)), len(traces), samples.Kept),
+		RunHead:   head(m),
+		Cur:       s.compareRef(p, m),
+		Baselines: baselineOptions(peers, base, bm.ID),
+	}
+
+	if !haveB {
+		page.Note = "no earlier run of this scenario to compare against — record another run, or pick one above"
+		render(w, report.RenderCompare, page)
+		return
+	}
+
+	baseFolded, _ := p.Store.LoadFolded(bm.ID)
+	framesCur := report.FlameFrames(folded)
+	framesBase := report.FlameFrames(baseFolded)
+
+	page.Baseline = s.compareRef(p, bm)
+	page.Deltas = []report.Tile{
+		report.DurDelta("p50", m.P50, bm.P50),
+		report.DurDelta("p95", m.P95, bm.P95),
+		report.DurDelta("p99", m.P99, bm.P99),
+		report.RateDelta("error rate", m.ErrorRate, bm.ErrorRate, "failed"),
+		report.RateDelta("throttle rate", m.ThrottleRate, bm.ThrottleRate, "throttled"),
+	}
+	page.Flips = report.ThresholdFlips(m.Thresholds, bm.Thresholds)
+	// MarkRegressedStep marks the regressed frame in framesCur in place.
+	page.Regressed = report.MarkRegressedStep(framesCur, framesBase)
+	page.FramesCur = framesCur
+	page.FramesBase = framesBase
+	page.CurTotal = rootTotal(framesCur)
+	page.BaseTotal = rootTotal(framesBase)
+
+	render(w, report.RenderCompare, page)
+}
+
+// sameScenario returns the project's other runs of m's scenario, newest first.
+func sameScenario(index []store.Meta, m store.Meta) []store.Meta {
+	out := make([]store.Meta, 0)
+	for _, o := range index {
+		if o.Scenario == m.Scenario && o.ID != m.ID {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// previousRun is the newest run older than m — the natural baseline. peers are
+// newest-first, so the first one older than m is it.
+func previousRun(peers []store.Meta, m store.Meta) (store.Meta, bool) {
+	for _, o := range peers {
+		if o.StartedAt.Before(m.StartedAt) {
+			return o, true
+		}
+	}
+	return store.Meta{}, false
+}
+
+func (s *Server) compareRef(p store.Project, m store.Meta) report.CompareRef {
+	return report.CompareRef{
+		ID:        m.ID,
+		When:      m.StartedAt.Local().Format("2006-01-02 15:04"),
+		Verdict:   verdict(m),
+		FlameHref: s.runBase(p, m.ID) + "/flame",
+	}
+}
+
+func baselineOptions(peers []store.Meta, base, selected string) []report.BaselineOption {
+	out := make([]report.BaselineOption, 0, len(peers))
+	for _, o := range peers {
+		out = append(out, report.BaselineOption{
+			ID:       o.ID,
+			When:     o.StartedAt.Local().Format("01-02 15:04"),
+			Href:     base + "?with=" + url.QueryEscape(o.ID),
+			Selected: o.ID == selected,
+		})
+	}
+	return out
+}
+
+// rootTotal is the summed time of the top-level frames — the run's whole folded
+// extent — for the flame column header.
+func rootTotal(frames []report.Frame) string {
+	var t time.Duration
+	for _, f := range frames {
+		if f.Depth == 0 {
+			t += f.Total
+		}
+	}
+	return t.Round(time.Millisecond).String()
+}
+
 // runContext resolves the project and the run, or writes the error response.
 func (s *Server) runContext(w http.ResponseWriter, r *http.Request) (store.Project, store.Meta, []store.Meta, bool) {
 	var m store.Meta
@@ -351,6 +473,7 @@ func (s *Server) shell(p store.Project, m store.Meta, index []store.Meta, view s
 		{Label: "Flame graph", Href: base + "/flame", Count: frames, Selected: view == "flame"},
 		{Label: "Waterfall", Href: base + "/waterfall", Count: traces, Selected: view == "waterfall"},
 		{Label: "Outcomes", Href: base + "/outcomes", Count: runs, Selected: view == "outcomes"},
+		{Label: "Compare", Href: base + "/compare", Selected: view == "compare"},
 	}
 	return report.Shell{
 		Title:  m.Scenario,

@@ -864,6 +864,54 @@ a.frame { text-decoration: none; }
 .k-step { --tone: var(--kind-step); }
 .k-flow { --tone: var(--kind-flow); }
 
+/* The regressed frame is ringed in the failure colour, but the finding is also
+   stated in words in the callout above the graphs, so it is never colour alone
+   (ADR 0006). */
+.frame.is-regressed {
+  outline: 2px solid var(--failed);
+  outline-offset: -2px;
+  z-index: 2;
+}
+
+/* Regression comparison ------------------------------------------------ */
+
+.compare-heads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 26px;
+  align-items: center;
+  font-size: 12.5px;
+}
+.compare-heads > div { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.compare-tag {
+  font: 500 9.5px/1.6 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.regression { margin: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.regression b { color: var(--ink); font-weight: 600; }
+
+/* Two flame graphs side by side; each keeps its own horizontal scroll rather
+   than clipping a wide graph in a narrow column. Stacks under a narrow main. */
+.compare-flames { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.compare-flame { min-width: 0; }
+.compare-flame-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+}
+.compare-flame-head .mono { color: var(--ink-3); }
+.compare-flame-head .span-link { margin-left: auto; color: var(--ink-3); }
+.compare-viewport { overflow-x: auto; }
+
+@media (max-width: 1000px) {
+  .compare-flames { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* Tables --------------------------------------------------------------- */
 
 .table { width: 100%; border-collapse: collapse; }
