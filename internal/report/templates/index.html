@@ -1,0 +1,27 @@
+{{ define "content" }}
+
+<h1 class="page-title">Projects</h1>
+<p class="byline"><b>{{ len .Projects }} run stores</b></p>
+
+<div class="jumps">
+  {{ range .Projects }}
+  <a class="jump project" href="{{ .Href }}">
+    <span class="jump-title">{{ .Name }}</span>
+    {{ if .Runs }}
+    <span class="jump-value">{{ .Runs }}</span>
+    <span class="jump-note">{{ if eq .Scenarios 1 }}1 scenario{{ else }}{{ .Scenarios }} scenarios{{ end }}</span>
+    <span class="project-latest">
+      <span class="chip o-{{ .Verdict.Tone }}">{{ .Verdict.Label }}</span>
+      <span class="mono">{{ .Latest }}</span>
+    </span>
+    <span class="jump-note">{{ .When }}</span>
+    {{ else }}
+    <span class="jump-value">—</span>
+    <span class="jump-note">no runs recorded yet</span>
+    {{ end }}
+    <span class="jump-note store-path">{{ .Store }}</span>
+  </a>
+  {{ end }}
+</div>
+
+{{ end }}

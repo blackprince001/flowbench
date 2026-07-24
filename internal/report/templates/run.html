@@ -1,0 +1,67 @@
+{{ define "content" }}
+
+{{ template "run-head" .RunHead }}
+{{ template "tabs" .Tabs }}
+
+<section class="card">
+  <div class="card-head"><h2 class="card-title">Overview</h2></div>
+  <div class="tiles">
+    {{ range .Tiles }}
+    <div class="tile">
+      <div class="tile-label">{{ .Label }}</div>
+      <div class="tile-value"{{ if .Tone }} style="--tone:var(--{{ .Tone }})"{{ end }}>{{ .Value }}</div>
+      {{ if .Sub }}<div class="tile-sub">{{ .Sub }}</div>{{ end }}
+    </div>
+    {{ end }}
+  </div>
+</section>
+
+{{ if .Strip.Cells }}
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Outcomes over time</h2>
+    <p class="card-note">{{ if .Peak }}{{ .Peak }}{{ else }}one column per time bucket{{ end }}</p>
+  </div>
+  <div class="card-body">
+    {{ template "tallies" .Tallies }}
+    {{ template "strip" .Strip }}
+  </div>
+</section>
+{{ end }}
+
+{{ if .Gates }}
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Thresholds</h2>
+    <p class="card-note">the gates this scenario declared</p>
+  </div>
+  <div class="card-body">
+    <table class="table">
+      <thead><tr><th>Gate</th><th>Result</th><th>Measured</th></tr></thead>
+      <tbody>
+        {{ range .Gates }}
+        <tr>
+          <td class="mono">{{ .Expr }}</td>
+          <td><span class="chip o-{{ .Tone }}">{{ if .Pass }}ok{{ else }}breach{{ end }}</span></td>
+          <td class="mono" style="color:var(--ink-2)">{{ .Detail }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{ end }}
+
+{{ if .Links }}
+<div class="jumps">
+  {{ range .Links }}
+  <a class="jump" href="{{ .Href }}">
+    <span class="jump-title">{{ .Title }}</span>
+    <span class="jump-value">{{ .Value }}</span>
+    <span class="jump-note">{{ .Note }}</span>
+  </a>
+  {{ end }}
+</div>
+{{ end }}
+
+{{ end }}

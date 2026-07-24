@@ -1,0 +1,112 @@
+{{ define "run-head" }}
+<h1 class="page-title">{{ .Heading }}</h1>
+<p class="byline">
+  {{ range $i, $f := .Byline }}
+    {{ if $i }}<span class="byline-sep" aria-hidden="true">•</span>{{ end }}<b>{{ $f }}</b>
+  {{ end }}
+  <span class="byline-sep" aria-hidden="true">•</span>
+  <span class="pill t-{{ .Verdict.Tone }}">{{ .Verdict.Label }}</span>
+</p>
+{{ end }}
+
+{{ define "tabs" }}
+{{ if . }}
+<nav class="tabs" aria-label="Run views">
+  {{ range . }}
+  <a class="tab" href="{{ .Href }}"{{ if .Selected }} aria-current="page"{{ end }}>
+    {{ .Label }}{{ if .Count }} <span class="tab-count">{{ .Count }}</span>{{ end }}
+  </a>
+  {{ end }}
+</nav>
+{{ end }}
+{{ end }}
+
+{{ define "legend-kinds" }}
+<div class="legend">
+  <span><i class="swatch" aria-hidden="true" style="--tone:var(--kind-net)"></i>network</span>
+  <span><i class="swatch" aria-hidden="true" style="--tone:var(--kind-logic)"></i>assert / extract</span>
+  <span><i class="swatch" aria-hidden="true" style="--tone:var(--kind-retry)"></i>backoff</span>
+  <span><i class="swatch" aria-hidden="true" style="--tone:var(--kind-step)"></i>step</span>
+  <span><i class="swatch" aria-hidden="true" style="--tone:var(--kind-flow)"></i>flow</span>
+</div>
+{{ end }}
+
+{{ define "legend-outcomes" }}
+<div class="legend">
+  <span><i class="swatch" aria-hidden="true" style="--tone:var(--ok)"></i>✓ ok</span>
+  <span><i class="swatch" aria-hidden="true" style="--tone:var(--failed)"></i>✕ failed</span>
+  <span><i class="swatch" aria-hidden="true" style="--tone:var(--throttled)"></i>⚠ throttled</span>
+  <span><i class="swatch" aria-hidden="true" style="--tone:var(--skipped)"></i>⊘ skipped</span>
+</div>
+{{ end }}
+
+{{ define "tallies" }}
+<div class="tallies">
+  {{ range . }}
+  <span class="tally t-{{ .Outcome }}{{ if .Lead }} tally-lead{{ end }}"><b>{{ .Count }}</b> {{ .Label }}</span>
+  {{ end }}
+</div>
+{{ end }}
+
+{{ define "strip" }}
+<div class="strip">
+  {{ range .Cells }}
+  {{ if .Href }}<a class="strip-cell{{ if .Selected }} is-selected{{ end }}" href="{{ .Href }}" title="{{ .Title }}">
+    {{ if not .Empty }}
+    {{ if .OK }}<i class="strip-seg s-ok" style="{{ segHeight .OK }}"></i>{{ end }}
+    {{ if .Throttled }}<i class="strip-seg s-throttled" style="{{ segHeight .Throttled }}"></i>{{ end }}
+    {{ if .Failed }}<i class="strip-seg s-failed" style="{{ segHeight .Failed }}"></i>{{ end }}
+    {{ end }}
+  </a>{{ else }}<div class="strip-cell" title="{{ .Title }}">
+    {{ if not .Empty }}
+    {{ if .OK }}<i class="strip-seg s-ok" style="{{ segHeight .OK }}"></i>{{ end }}
+    {{ if .Throttled }}<i class="strip-seg s-throttled" style="{{ segHeight .Throttled }}"></i>{{ end }}
+    {{ if .Failed }}<i class="strip-seg s-failed" style="{{ segHeight .Failed }}"></i>{{ end }}
+    {{ end }}
+  </div>{{ end }}
+  {{ end }}
+</div>
+<div class="axis"><span>0</span><span>{{ .End }}</span></div>
+{{ end }}
+
+{{ define "waterfall-table" }}
+<table class="table">
+  <thead>
+    <tr>
+      <th>Span</th>
+      <th>Timeline</th>
+      <th class="num">Start</th>
+      <th class="num">Duration</th>
+      <th>Outcome</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{ range .Rows }}
+    <tr class="{{ if .Selected }}is-selected{{ end }}">
+      <td class="wf-name" style="{{ indent .Depth }}">
+        {{ if $.Base }}<a class="span-link" href="{{ $.Base }}&amp;span={{ .Path }}">{{ .Name }}</a>{{ else }}{{ .Name }}{{ end }}
+      </td>
+      <td>
+        <div class="wf-track">
+          <div class="wf-bar o-{{ .Outcome }}" style="{{ barPos . }}"></div>
+        </div>
+      </td>
+      <td class="num">{{ dur .Start }}</td>
+      <td class="num">{{ dur .Duration }}</td>
+      <td><span class="chip o-{{ .Outcome }}">{{ .Outcome }}</span></td>
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ end }}
+
+{{ define "facts" }}
+<dl class="facts">
+  {{ range . }}
+  <div class="fact">
+    <dt>{{ .Label }}</dt>
+    <dd{{ if .Tone }} class="o-{{ .Tone }}"{{ end }}>{{ .Value }}</dd>
+  </div>
+  {{ end }}
+</dl>
+{{ end }}

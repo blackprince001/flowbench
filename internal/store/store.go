@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/blackprince001/flowbench/internal/collector"
 	"github.com/blackprince001/flowbench/internal/executor"
+	"github.com/blackprince001/flowbench/internal/span"
 )
 
 // Store is a run store rooted at a directory the user owns: one subdirectory
@@ -58,25 +60,35 @@ type Meta struct {
 	P95          time.Duration `json:"p95"`
 	P99          time.Duration `json:"p99"`
 	Aborted      bool          `json:"aborted,omitempty"`
+
+	// Thresholds is the run's own verdict: the evaluated gates the scenario
+	// declared. Without it a reader can only guess from the rates, and would
+	// disagree with the exit code — a 0.2% error rate under a 1% gate is a pass,
+	// not a failure.
+	Thresholds []collector.Outcome `json:"thresholds,omitempty"`
+	Breached   bool                `json:"breached,omitempty"`
 }
 
-// Save writes a run's two span tiers, self-metrics, and attribution to a fresh
-// directory and appends it to the index. It returns the run directory.
-func (s *Store) Save(info RunInfo, res *executor.Result) (string, error) {
+// Save writes a run's span tiers, self-metrics, evaluated thresholds, and
+// attribution to a fresh directory and appends it to the index. It returns the
+// run directory.
+func (s *Store) Save(info RunInfo, res *executor.Result, outcomes []collector.Outcome) (string, error) {
 	id := runID(info.StartedAt)
 	dir := filepath.Join(s.root, id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create run dir: %w", err)
 	}
 
-	meta := metaFrom(id, info, res)
+	meta := metaFrom(id, info, res, outcomes)
 	writes := []struct {
 		name string
 		v    any
 	}{
 		{"meta.json", meta},
-		{"folded.json", res.Folded}, // tier 1: flame-graph aggregate
-		{"traces.json", res.Traces}, // tier 2: sampled raw trees
+		{"folded.json", res.Folded},                   // tier 1: flame-graph aggregate
+		{"traces.json", res.Traces},                   // tier 2: sampled raw trees
+		{"series.json", collector.BuildSeries(res)},   // tier 3: bucketed over time
+		{"samples.json", collector.BuildSamples(res)}, // tier 4: per flow-run, thinned
 		{"metrics.json", res.Metrics},
 	}
 	for _, w := range writes {
@@ -106,7 +118,47 @@ func (s *Store) List() ([]Meta, error) {
 	return s.readIndex()
 }
 
-func metaFrom(id string, info RunInfo, res *executor.Result) Meta {
+// The results server reads the tiers separately: a run list needs only meta,
+// a flame graph only folded, a waterfall only traces. Nothing loads all four.
+
+// LoadFolded reads a run's folded span aggregate, the flame-graph input.
+func (s *Store) LoadFolded(id string) (*span.Folded, error) {
+	return readJSON[*span.Folded](s.artifact(id, "folded.json"))
+}
+
+// LoadTraces reads a run's sampled raw trace trees, the waterfall input.
+func (s *Store) LoadTraces(id string) ([]*span.Span, error) {
+	return readJSON[[]*span.Span](s.artifact(id, "traces.json"))
+}
+
+// LoadSeries reads a run's bucketed outcomes and latencies over time.
+func (s *Store) LoadSeries(id string) (collector.Series, error) {
+	return readJSON[collector.Series](s.artifact(id, "series.json"))
+}
+
+// LoadSamples reads the per-flow-run tier, thinned per its capture policy.
+func (s *Store) LoadSamples(id string) (collector.Samples, error) {
+	return readJSON[collector.Samples](s.artifact(id, "samples.json"))
+}
+
+// LoadMetrics reads the generator's own resource series, so a saturated
+// generator is never read as a saturated target.
+func (s *Store) LoadMetrics(id string) ([]executor.MetricSample, error) {
+	return readJSON[[]executor.MetricSample](s.artifact(id, "metrics.json"))
+}
+
+func (s *Store) artifact(id, name string) string {
+	return filepath.Join(s.root, id, name)
+}
+
+func metaFrom(id string, info RunInfo, res *executor.Result, outcomes []collector.Outcome) Meta {
+	breached := false
+	for _, o := range outcomes {
+		if !o.Pass {
+			breached = true
+			break
+		}
+	}
 	return Meta{
 		ID:           id,
 		Scenario:     info.Scenario,
@@ -125,6 +177,8 @@ func metaFrom(id string, info RunInfo, res *executor.Result) Meta {
 		P95:          executor.Percentile(res.Samples, 0.95),
 		P99:          executor.Percentile(res.Samples, 0.99),
 		Aborted:      res.Aborted,
+		Thresholds:   outcomes,
+		Breached:     breached,
 	}
 }
 
@@ -159,6 +213,15 @@ func (s *Store) appendIndex(m Meta) error {
 	}
 	idx = append([]Meta{m}, idx...)
 	return writeJSON(s.indexPath(), idx)
+}
+
+func readJSON[T any](path string) (T, error) {
+	var v T
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return v, err
+	}
+	return v, json.Unmarshal(b, &v)
 }
 
 func writeJSON(path string, v any) error {
