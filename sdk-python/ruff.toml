@@ -1,0 +1,33 @@
+# Ruff owns lint and formatting for the SDK. The repo's other Python file --
+# the ../tests/flows conformance fixture -- lives outside this directory, so
+# CI passes it explicitly with `--config` to hold it to the same rules.
+line-length = 88
+indent-width = 2
+target-version = "py310"
+src = ["src", "tests"]
+# Markdown holds illustrative snippets (the PRD example), not code we ship.
+extend-exclude = ["*.md"]
+
+[lint]
+select = [
+  "F",   # pyflakes
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "I",   # import sorting
+  "N",   # pep8 naming
+  "UP",  # pyupgrade
+  "B",   # bugbear
+  "C4",  # comprehensions
+  "SIM", # simplify
+  "RET", # return values
+  "PIE", # misc lints
+  "PTH", # pathlib over os.path
+  "PT",  # pytest style
+  "RUF", # ruff-specific
+]
+
+[lint.isort]
+known-first-party = ["flowbench"]
+
+[lint.pydocstyle]
+convention = "pep257"
