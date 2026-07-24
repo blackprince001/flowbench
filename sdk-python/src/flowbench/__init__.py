@@ -2,5 +2,6 @@
 the canonical IR (ADR 0002), executed by the Go engine at full VU scale.
 """
 from ._assert import expect
+from ._retry import Retry
 
-__all__ = ["expect"]
+__all__ = ["Retry", "expect"]
