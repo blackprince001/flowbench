@@ -54,7 +54,9 @@ jobs:
         run: uv run --locked --directory sdk-python --python ${{ matrix.python-version }} pytest
 
   build-test:
-    name: build & test (go)
+    # Name is load-bearing: main's ruleset requires a check called
+    # "build & test", so renaming this job blocks every merge.
+    name: build & test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
