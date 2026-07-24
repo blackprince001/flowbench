@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blackprince001/flowbench/internal/collector"
 	"github.com/blackprince001/flowbench/internal/executor"
 	"github.com/blackprince001/flowbench/internal/ir"
 	"github.com/blackprince001/flowbench/internal/store"
@@ -16,7 +17,7 @@ import (
 
 // saveRun writes a completed load/stress/soak run to the store with attribution
 // so a run answers who ran what, against which target, at which revision.
-func saveRun(storeRoot, scenarioPath string, sc *ir.Scenario, tgt *target.Target, startedAt time.Time, res *executor.Result) (string, error) {
+func saveRun(storeRoot, scenarioPath string, sc *ir.Scenario, tgt *target.Target, startedAt time.Time, res *executor.Result, outcomes []collector.Outcome) (string, error) {
 	st, err := store.Open(storeRoot)
 	if err != nil {
 		return "", err
@@ -30,7 +31,7 @@ func saveRun(storeRoot, scenarioPath string, sc *ir.Scenario, tgt *target.Target
 		Commit:    commit,
 		Dirty:     dirty,
 		StartedAt: startedAt,
-	}, res)
+	}, res, outcomes)
 }
 
 // initiator is the OS user who launched the run.

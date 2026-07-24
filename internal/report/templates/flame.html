@@ -1,0 +1,118 @@
+{{ define "content" }}
+
+{{ template "run-head" .RunHead }}
+{{ template "tabs" .Tabs }}
+
+<section class="card flame-workspace">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Flame graph</h2>
+      <p class="card-kicker">Inclusive time by span path</p>
+    </div>
+    <p class="card-note">
+      {{ if .Zoom }}zoomed to {{ .ZoomOf }} · {{ .TotalDur }} in view{{ else }}folded across every iteration · {{ .TotalDur }} total{{ end }}
+    </p>
+  </div>
+
+  <div class="flame-layout">
+    <div class="flame-stage">
+      <div class="flame-context">
+        <nav class="zoom-trail" aria-label="Focused subtree">
+          <a class="zoom-step{{ if not .Zoom }} is-selected{{ end }}" href="{{ .Base }}">All spans</a>
+          {{ range .Trail }}
+          <span class="crumbs-sep" aria-hidden="true">&rsaquo;</span>
+          <a class="zoom-step{{ if eq .Path $.Zoom }} is-selected{{ end }}" href="{{ .ZoomHref }}">{{ .Name }}</a>
+          {{ end }}
+        </nav>
+        {{ template "legend-kinds" }}
+      </div>
+
+      <div class="flame-controls">
+        <label class="search-wrap">
+          <span class="search-icon" aria-hidden="true"></span>
+          <input class="search" type="search" placeholder="Find a span path…" data-flame-search
+                 aria-label="Highlight frames by span path">
+          <span class="search-count" data-flame-search-count aria-live="polite"></span>
+        </label>
+        <div class="zoom-tools" role="group" aria-label="Flame graph zoom">
+          <button class="icon-btn" type="button" data-flame-zoom-out title="Zoom out" aria-label="Zoom out">−</button>
+          <span class="zoom-readout" data-flame-zoom aria-live="polite">100%</span>
+          <button class="icon-btn" type="button" data-flame-zoom-in title="Zoom in" aria-label="Zoom in">+</button>
+          <button class="ghost-btn" type="button" data-flame-reset>Reset view</button>
+        </div>
+      </div>
+
+      <div class="flame-viewport">
+        <div class="flame" data-flame aria-label="Flame graph. Use the mouse wheel or zoom controls to zoom, then drag to pan.">
+          <div class="flame-inner" style="{{ flameTall .Frames }}">
+            {{ range .Frames }}
+            <a class="frame k-{{ .Kind }}{{ if .Selected }} is-selected{{ end }}"
+               href="{{ .Href }}" style="{{ framePos . }}"
+               data-l="{{ .Left }}" data-w="{{ .Width }}" data-path="{{ .Path }}"
+               title="{{ .Path }} — {{ dur .Total }} total, {{ dur .Self }} self, {{ .Count }} calls, {{ pct1 .Width }} of view"><span>{{ .Name }}</span></a>
+            {{ end }}
+          </div>
+          <div class="flame-tip" data-flame-tip hidden></div>
+        </div>
+        <div class="flame-overview" data-flame-overview aria-hidden="true">
+          <div class="flame-overview-window" data-flame-overview-window></div>
+        </div>
+        <div class="flame-help">
+          <span>Wheel to zoom · drag to pan · click a frame to inspect</span>
+          <span class="keys"><kbd>+</kbd><kbd>−</kbd> zoom · <kbd>0</kbd> reset · <kbd>←</kbd><kbd>→</kbd> pan</span>
+        </div>
+      </div>
+    </div>
+
+    <aside class="flame-inspector{{ if not .Detail }} is-empty{{ end }}" aria-label="Selected frame details">
+      {{ if .Detail }}
+      <div class="inspector-head">
+        <span class="inspector-label">Selected frame</span>
+        <h3 class="inspector-title">{{ .Detail.Name }}</h3>
+        {{ if .Detail.Ancestors }}
+        <p class="trail">{{ range .Detail.Ancestors }}<span>{{ . }}</span>{{ end }}<b>{{ .Detail.Name }}</b></p>
+        {{ end }}
+      </div>
+      <div class="inspector-actions">
+        {{ if eq .Detail.Path .Zoom }}
+        <span class="zoomed-label">Focused subtree</span>
+        {{ else }}
+        <button class="ghost-btn" type="button" data-flame-fit-selected>Fit in view</button>
+        <a class="primary-link" href="{{ .Detail.ZoomHref }}">Focus subtree</a>
+        {{ end }}
+      </div>
+      <div class="inspector-scroll">
+        {{ template "facts" .Detail.Facts }}
+        <h3 class="sub-h">Where its time goes</h3>
+        {{ if .Detail.Children }}
+        <table class="table compact">
+          <thead><tr><th>Child</th><th class="num">Total</th><th class="num">Share</th></tr></thead>
+          <tbody>
+            {{ range .Detail.Children }}
+            <tr>
+              <td><a class="span-link" href="{{ .ZoomHref }}">{{ .Name }}</a></td>
+              <td class="num">{{ dur .Total }}</td>
+              <td class="num">{{ pct1 .Share }}</td>
+            </tr>
+            {{ end }}
+          </tbody>
+        </table>
+        {{ else }}
+        <p class="hint">A leaf frame — all of its time is its own.</p>
+        {{ end }}
+      </div>
+      {{ else }}
+      <div class="inspector-empty">
+        <span class="inspector-empty-mark" aria-hidden="true"></span>
+        <h3 class="inspector-title">Inspect a frame</h3>
+        <p class="hint">Choose any bar to see its total and self time, folded call count, and direct-child breakdown.</p>
+        <p class="hint">Narrow frames become readable as you zoom; labels remain anchored at the edge while panning.</p>
+      </div>
+      {{ end }}
+    </aside>
+  </div>
+</section>
+
+<script>{{ flameJS }}</script>
+
+{{ end }}

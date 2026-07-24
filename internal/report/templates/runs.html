@@ -1,0 +1,63 @@
+{{ define "content" }}
+
+<h1 class="page-title">{{ .Project }}</h1>
+<p class="byline">
+  <b>{{ .Store }}</b>
+  <span class="byline-sep" aria-hidden="true">•</span>
+  <b>{{ .Total }} runs</b>
+  <span class="byline-sep" aria-hidden="true">•</span>
+  <b>{{ len .Groups }} scenarios</b>
+</p>
+
+{{ if .Groups }}
+{{ range .Groups }}
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">{{ .Scenario }}</h2>
+    <p class="card-note">{{ if eq (len .Runs) 1 }}1 run{{ else }}{{ len .Runs }} runs{{ end }} · newest first</p>
+  </div>
+  <div class="card-body">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Started</th>
+          <th>Mode</th>
+          <th>Target</th>
+          <th class="num">Flow-runs</th>
+          <th class="num">Errors</th>
+          <th class="num">Throttled</th>
+          <th class="num">p95</th>
+          <th>Verdict</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .Runs }}
+        <tr{{ if .Latest }} class="is-latest"{{ end }}>
+          <td>
+            <a class="row-link" href="{{ .Href }}"><span class="row-name mono">{{ .Started }}</span></a>
+            {{ if .Latest }}<span class="latest-tag">latest</span>{{ end }}
+          </td>
+          <td class="mono">{{ .Mode }}</td>
+          <td class="mono">{{ .Target }}</td>
+          <td class="num">{{ .FlowRuns }}</td>
+          <td class="num">{{ .ErrorRate }}</td>
+          <td class="num">{{ .ThrottleRate }}</td>
+          <td class="num">{{ .P95 }}</td>
+          <td><span class="chip o-{{ .Verdict.Tone }}">{{ .Verdict.Label }}</span></td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{ end }}
+{{ else }}
+<section class="card">
+  <div class="card-head"><h2 class="card-title">No runs</h2></div>
+  <div class="card-body">
+    <p class="empty">Nothing recorded in this store yet. Run a load, stress or soak scenario and it will appear here.</p>
+  </div>
+</section>
+{{ end }}
+
+{{ end }}
