@@ -1,0 +1,36 @@
+# The chaining mechanic over GraphQL: a query resolves a product, its id is
+# extracted from the `data` shape, and a mutation places an order with it.
+#
+# Values reach an operation through `variables`, never by splicing `{{ }}`
+# into the document — so the server types and escapes them, and an extracted
+# value carrying a quote cannot rewrite the query.
+flow: graphql_chain
+steps:
+  - id: find_product
+    graphql:
+      url: /graphql
+      query: |
+        query FindProduct($sku: String!) {
+          product(sku: $sku) { id name priceCents }
+        }
+      variables: { sku: "FB-001" }
+    extract:
+      product_id: $.data.product.id
+      price: $.data.product.priceCents
+    assert:
+      - status == 200
+      - $.data.product.name == "Flowbench Tee"
+
+  - id: place_order
+    graphql:
+      url: /graphql
+      query: |
+        mutation PlaceOrder($productId: ID!, $quantity: Int!) {
+          placeOrder(productId: $productId, quantity: $quantity) { id status }
+        }
+      variables: { productId: "{{ product_id }}", quantity: 2 }
+    extract:
+      order_id: $.data.placeOrder.id
+    assert:
+      - status == 200
+      - $.data.placeOrder.status == "PENDING"

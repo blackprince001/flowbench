@@ -1,0 +1,7 @@
+# --target for the graphql-local example. A GraphQL API is one endpoint, so
+# the allow-list is one host; the operations vary, not the URL.
+name: graphql-stub
+base_urls:
+  - http://localhost:8091
+max_vus: 100
+max_rps: 500

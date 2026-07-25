@@ -1,0 +1,11 @@
+# --target for the auth-local example. The allow-list covers the OAuth2 token
+# endpoint as well as the calls: fetching a token is a real outbound request
+# carrying the client credentials, so it is gated like any other. Point
+# `token_url` at a host that is not listed here and the run refuses it.
+#
+# No credentials live in this file, or in any target config (ADR 0005).
+name: auth-stub
+base_urls:
+  - http://localhost:8090
+max_vus: 100
+max_rps: 500

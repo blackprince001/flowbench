@@ -1,0 +1,10 @@
+# Bearer/JWT. The token here is static, held in the environment; a flow that
+# logs in first extracts one and references `{{ token }}` the same way.
+flow: auth_bearer
+steps:
+  - id: whoami
+    call: GET /whoami
+    auth:
+      scheme: bearer
+      token: "{{ env.FLOWBENCH_TEST_BEARER }}"
+    assert: [ status == 200 ]

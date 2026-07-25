@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
+	"sort"
 	"strings"
 )
 
@@ -161,7 +163,7 @@ func (st *Step) validate(path string) []error {
 	}
 
 	specs := 0
-	for _, set := range []bool{st.Call != nil, st.Wait != nil, st.Poll != nil, st.Verify != nil} {
+	for _, set := range []bool{st.Call != nil, st.GraphQL != nil, st.Wait != nil, st.Poll != nil, st.Verify != nil} {
 		if set {
 			specs++
 		}
@@ -171,15 +173,16 @@ func (st *Step) validate(path string) []error {
 	}
 
 	specFor := map[StepType]bool{
-		StepCall:   st.Call != nil,
-		StepWait:   st.Wait != nil,
-		StepPoll:   st.Poll != nil,
-		StepVerify: st.Verify != nil,
+		StepCall:    st.Call != nil,
+		StepGraphQL: st.GraphQL != nil,
+		StepWait:    st.Wait != nil,
+		StepPoll:    st.Poll != nil,
+		StepVerify:  st.Verify != nil,
 	}
 	matches, known := specFor[st.Type]
 	switch {
 	case !known:
-		errs = append(errs, errf(path, "unknown step type %q (v0 executes call, wait, poll, verify)", st.Type))
+		errs = append(errs, errf(path, "unknown step type %q (v0 executes call, graphql, wait, poll, verify)", st.Type))
 	case !matches:
 		errs = append(errs, errf(path, "type is %q but the %q spec is not set", st.Type, st.Type))
 	}
@@ -187,6 +190,8 @@ func (st *Step) validate(path string) []error {
 	switch {
 	case st.Call != nil:
 		errs = append(errs, st.Call.validate(path)...)
+	case st.GraphQL != nil:
+		errs = append(errs, st.GraphQL.validate(path)...)
 	case st.Wait != nil && st.Wait.Duration <= 0:
 		errs = append(errs, errf(path, "wait duration must be positive"))
 	case st.Poll != nil:
@@ -198,10 +203,17 @@ func (st *Step) validate(path string) []error {
 	}
 
 	if st.Retry != nil {
-		if st.Type != StepCall {
-			errs = append(errs, errf(path, "retry policies apply to call steps only (poll bounds itself)"))
+		if st.Type != StepCall && st.Type != StepGraphQL {
+			errs = append(errs, errf(path, "retry policies apply to call and graphql steps only (poll bounds itself)"))
 		}
 		errs = append(errs, st.Retry.validate(path)...)
+	}
+
+	if st.Auth != nil {
+		if !st.MakesRequest() {
+			errs = append(errs, errf(path, "auth applies to steps that make a request (call, graphql, poll), not %q steps", st.Type))
+		}
+		errs = append(errs, st.Auth.validate(path)...)
 	}
 
 	switch st.OnFailure {
@@ -226,6 +238,117 @@ func (st *Step) validate(path string) []error {
 	return errs
 }
 
+// authFields is the per-scheme field vocabulary. Anything set outside a
+// scheme's own vocabulary is an error rather than a silent no-op, so a
+// `password` under `scheme: bearer` is caught at parse time instead of
+// authenticating as nothing at request time.
+var authFields = map[AuthScheme]struct{ required, optional []string }{
+	AuthNone:   {},
+	AuthBearer: {required: []string{"token"}},
+	AuthBasic:  {required: []string{"username", "password"}},
+	AuthAPIKey: {required: []string{"name", "value"}, optional: []string{"in"}},
+	AuthCookie: {required: []string{"name", "value"}},
+	AuthOAuth2: {
+		required: []string{"token_url", "client_id", "client_secret"},
+		optional: []string{"scopes"},
+	},
+	AuthHMAC: {
+		required: []string{"secret"},
+		optional: []string{"algorithm", "encoding", "header", "key_id", "key_id_header", "timestamp_header", "sign"},
+	},
+}
+
+func (a *AuthSpec) validate(path string) []error {
+	vocab, known := authFields[a.Scheme]
+	if !known {
+		return []error{errf(path, "unknown auth scheme %q (one of %s)", a.Scheme, strings.Join(authSchemeNames(), ", "))}
+	}
+
+	var errs []error
+	set := a.setFields()
+	for _, name := range vocab.required {
+		if !slices.Contains(set, name) {
+			errs = append(errs, errf(path, "auth scheme %q needs %q", a.Scheme, name))
+		}
+	}
+	allowed := append(append([]string{}, vocab.required...), vocab.optional...)
+	for _, name := range set {
+		if !slices.Contains(allowed, name) {
+			errs = append(errs, errf(path, "auth field %q does not apply to the %q scheme", name, a.Scheme))
+		}
+	}
+
+	switch a.In {
+	case "", InHeader, InQuery:
+	default:
+		errs = append(errs, errf(path, "auth in %q must be %q or %q", a.In, InHeader, InQuery))
+	}
+	switch a.Algorithm {
+	case "", "sha256", "sha512":
+	default:
+		errs = append(errs, errf(path, "hmac algorithm %q must be sha256 or sha512", a.Algorithm))
+	}
+	switch a.Encoding {
+	case "", "hex", "base64":
+	default:
+		errs = append(errs, errf(path, "hmac encoding %q must be hex or base64", a.Encoding))
+	}
+
+	// A templated token URL is only known at request time, where the
+	// allow-list gate checks it; a literal one is checked here.
+	if a.TokenURL != "" && !strings.Contains(a.TokenURL, "{{") {
+		if u, err := url.Parse(a.TokenURL); err != nil || u.Scheme == "" || u.Host == "" {
+			errs = append(errs, errf(path, "oauth2 token_url %q must be absolute (scheme and host)", a.TokenURL))
+		}
+	}
+	return errs
+}
+
+// setFields names the fields carrying a value, in a fixed order so errors
+// read the same every run.
+func (a *AuthSpec) setFields() []string {
+	var set []string
+	for _, f := range []struct {
+		name  string
+		value string
+	}{
+		{"token", a.Token},
+		{"username", a.Username},
+		{"password", a.Password},
+		{"name", a.Name},
+		{"value", a.Value},
+		{"in", string(a.In)},
+		{"token_url", a.TokenURL},
+		{"client_id", a.ClientID},
+		{"client_secret", a.ClientSecret},
+		{"secret", a.Secret},
+		{"algorithm", a.Algorithm},
+		{"encoding", a.Encoding},
+		{"header", a.Header},
+		{"key_id", a.KeyID},
+		{"key_id_header", a.KeyIDHeader},
+		{"timestamp_header", a.TimestampHeader},
+		{"sign", a.Sign},
+	} {
+		if f.value != "" {
+			set = append(set, f.name)
+		}
+	}
+	if len(a.Scopes) > 0 {
+		set = append(set, "scopes")
+	}
+	return set
+}
+
+func authSchemeNames() []string {
+	names := make([]string, 0, len(authFields))
+	for s := range authFields {
+		names = append(names, string(s))
+	}
+	sort.Strings(names)
+	return names
+}
+
 func (c *CallSpec) validate(path string) []error {
 	var errs []error
 	inline := c.Method != "" || c.URL != ""
@@ -241,6 +364,48 @@ func (c *CallSpec) validate(path string) []error {
 	}
 	if len(c.Body) > 0 && !json.Valid(c.Body) {
 		errs = append(errs, errf(path, "body is not valid JSON"))
+	}
+	return errs
+}
+
+// MakesRequest reports whether the step sends something over the wire. It is
+// what decides whether auth has anything to attach itself to, so the parser
+// and the validator have to agree on it — a new protocol adapter that forgets
+// this line silently loses its credentials.
+func (st *Step) MakesRequest() bool {
+	return st.Call != nil || st.GraphQL != nil || st.Poll != nil
+}
+
+func (g *GraphQLSpec) validate(path string) []error {
+	var errs []error
+	inline := g.URL != ""
+	switch {
+	case g.Endpoint != "" && inline:
+		errs = append(errs, errf(path, "graphql is either an endpoint reference or an inline url, not both"))
+	case g.Endpoint != "":
+		if !identRe.MatchString(g.Endpoint) {
+			errs = append(errs, errf(path, "endpoint reference %q must match %s", g.Endpoint, identRe))
+		}
+	case g.URL == "":
+		errs = append(errs, errf(path, "graphql step needs a url (the endpoint the operation posts to)"))
+	}
+
+	if strings.TrimSpace(g.Query) == "" {
+		errs = append(errs, errf(path, "graphql step needs a query (the operation document)"))
+	}
+	if len(g.Variables) > 0 {
+		if !json.Valid(g.Variables) {
+			errs = append(errs, errf(path, "graphql variables are not valid JSON"))
+		} else if g.Variables[0] != '{' {
+			// The spec requires a map; a bare list or scalar is rejected by
+			// every server, so catching it here beats a runtime 400.
+			errs = append(errs, errf(path, "graphql variables must be a mapping of name to value"))
+		}
+	}
+	switch g.OnErrors {
+	case "", GraphQLErrorsFail, GraphQLErrorsAllowPartial, GraphQLErrorsIgnore:
+	default:
+		errs = append(errs, errf(path, "unknown graphql on_errors %q (fail, allow_partial, ignore)", g.OnErrors))
 	}
 	return errs
 }
@@ -411,8 +576,36 @@ func (st *Step) templatedFields() []string {
 		collect(&st.Poll.Call)
 	case st.Verify != nil:
 		fields = append(fields, st.Verify.Args...)
+	case st.GraphQL != nil:
+		// The query document is deliberately excluded: values reach a GraphQL
+		// operation through variables, and a `{{ }}` spliced into the document
+		// itself would be string-substituted into a query rather than sent as
+		// a typed, escaped variable.
+		fields = append(fields, st.GraphQL.URL)
+		for _, v := range st.GraphQL.Headers {
+			fields = append(fields, v)
+		}
+		if len(st.GraphQL.Variables) > 0 {
+			fields = append(fields, string(st.GraphQL.Variables))
+		}
+	}
+	if st.Auth != nil {
+		fields = append(fields, st.Auth.templatedFields()...)
 	}
 	return fields
+}
+
+// templatedFields is every auth field resolved through the scope at request
+// time. Sign is excluded: its `{placeholder}` vocabulary is the signer's, not
+// the templater's, and single braces would trip the malformed-template check.
+func (a *AuthSpec) templatedFields() []string {
+	fields := []string{
+		a.Token, a.Username, a.Password, a.Name, a.Value,
+		a.TokenURL, a.ClientID, a.ClientSecret,
+		a.Secret, a.Algorithm, a.Encoding, a.Header,
+		a.KeyID, a.KeyIDHeader, a.TimestampHeader,
+	}
+	return append(fields, a.Scopes...)
 }
 
 func rootOf(ref string) string {

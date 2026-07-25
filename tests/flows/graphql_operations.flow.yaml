@@ -1,0 +1,55 @@
+# GraphQL on the YAML surface, paired with graphql_operations.py — the two
+# spellings must compile to the same IR (ADR 0002; internal/conformance).
+#
+# Covers a query, a mutation chained to its extraction, an explicit operation
+# name, a partial-success policy, and the auth a graphql step inherits like
+# any other request-making step.
+flow: graphql_operations
+auth:
+  scheme: bearer
+  token: "{{ env.GRAPH_TOKEN }}"
+steps:
+  - id: find_product
+    graphql:
+      url: /graphql
+      query: |
+        query FindProduct($sku: String!) {
+          product(sku: $sku) { id name priceCents }
+        }
+      variables: { sku: "FB-001" }
+      operation_name: FindProduct
+    extract:
+      product_id: $.data.product.id
+    assert:
+      - status == 200
+
+  - id: place_order
+    graphql:
+      url: /graphql
+      query: |
+        mutation PlaceOrder($productId: ID!, $quantity: Int!) {
+          placeOrder(productId: $productId, quantity: $quantity) { id status }
+        }
+      variables: { productId: "{{ product_id }}", quantity: 2 }
+    headers: { X-Trace: "{{ env.TRACE_ID }}" }
+    retry:
+      on_status: [429]
+      backoff: honor_retry_after
+      max_attempts: 3
+    assert:
+      - status == 200
+
+  - id: reviews_may_be_degraded
+    graphql:
+      url: /graphql
+      query: |
+        query Reviews($sku: String!) {
+          reviews(sku: $sku) { rating }
+        }
+      variables: { sku: "FB-001" }
+      on_errors: allow_partial
+    assert:
+      - status == 200
+
+profile:
+  mode: integration

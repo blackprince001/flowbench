@@ -8,6 +8,10 @@ from .errors import FlowCompileError
 
 _METHODS = ("get", "post", "put", "patch", "delete")
 
+# Matches ir.GraphQLErrorPolicy. Unset means "fail", so a broken query is a
+# failed step rather than a pass nobody asserted on.
+_ERROR_POLICIES = ("fail", "allow_partial", "ignore")
+
 
 class Http:
   def __init__(self, driver):
@@ -15,6 +19,41 @@ class Http:
 
   def _call(self, method, url, *, json=None, headers=None, query=None):
     return self._driver.call(method, url, json=json, headers=headers, query=query)
+
+
+class GraphQL:
+  """``ctx.graphql(...)`` — one GraphQL operation.
+
+  It compiles to a ``graphql`` step, not a hand-rolled POST, so the engine
+  reads the ``data``/``errors`` shape and fails the step on an operation
+  error that arrives inside a ``200 OK``.
+  """
+
+  def __init__(self, driver):
+    self._driver = driver
+
+  def __call__(
+    self,
+    url,
+    *,
+    query,
+    variables=None,
+    operation_name=None,
+    headers=None,
+    on_errors=None,
+  ):
+    if on_errors is not None and on_errors not in _ERROR_POLICIES:
+      raise FlowCompileError(
+        f"on_errors must be one of {list(_ERROR_POLICIES)!r}, got {on_errors!r}"
+      )
+    return self._driver.graphql(
+      url,
+      query=query,
+      variables=variables,
+      operation_name=operation_name,
+      headers=headers,
+      on_errors=on_errors,
+    )
 
 
 def _make_method(verb):
@@ -61,6 +100,7 @@ class Context:
   def __init__(self, driver, has_data_pool):
     self._driver = driver
     self.http = Http(driver)
+    self.graphql = GraphQL(driver)
     self.vars = VarsProxy(driver)
     self.env = EnvProxy(driver)
     self._has_data_pool = has_data_pool

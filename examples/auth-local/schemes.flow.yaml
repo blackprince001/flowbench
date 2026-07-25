@@ -1,0 +1,104 @@
+# Every auth scheme in one flow, against a stub that 401s anything it does not
+# recognise — so a scheme that silently sends nothing fails the run.
+#
+#   go run ./examples/auth-local/stub          # in one terminal
+#   flowbench run examples/auth-local/schemes.flow.yaml \
+#     --target examples/auth-local/target.yaml
+#
+# The `auth:` block below is the flow-level default: every step that makes a
+# request inherits it unless it declares its own, and `scheme: none` opts one
+# out. Both authoring surfaces flatten this onto the steps at compile time.
+flow: auth_schemes
+auth:
+  scheme: bearer
+  token: "{{ env.DEMO_API_TOKEN }}"
+steps:
+  # Inherits the flow default.
+  - id: orders
+    call: GET /orders
+    assert: [ status == 200 ]
+
+  # Opts out. /health refuses a credential, so an inherited default leaking
+  # onto this step would fail the run rather than pass unnoticed.
+  - id: health
+    call: GET /health
+    auth: { scheme: none }
+    assert: [ status == 200 ]
+
+  - id: reports
+    call: GET /reports
+    auth:
+      scheme: basic
+      username: "{{ env.DEMO_USER }}"
+      password: "{{ env.DEMO_PASSWORD }}"
+    assert: [ status == 200 ]
+
+  - id: search
+    call: GET /search
+    auth:
+      scheme: api_key
+      name: X-Api-Key
+      value: "{{ env.DEMO_API_KEY }}"
+    assert: [ status == 200 ]
+
+  # The same key in the query string, for an endpoint that only takes it there.
+  - id: legacy_search
+    call: GET /legacy/search
+    auth:
+      scheme: api_key
+      name: api_key
+      value: "{{ env.DEMO_API_KEY }}"
+      in: query
+    assert: [ status == 200 ]
+
+  - id: account
+    call: GET /account
+    auth:
+      scheme: cookie
+      name: session
+      value: "{{ env.DEMO_SESSION }}"
+    assert: [ status == 200 ]
+
+  # The token endpoint is reached once for the whole run and the token shared
+  # across every VU — watch the stub's log: one "issued access token" line.
+  - id: payments
+    call: POST /payments
+    body: { amount: 250, currency: "GHS" }
+    auth:
+      scheme: oauth2_client_credentials
+      token_url: http://localhost:8090/oauth/token
+      client_id: "{{ env.DEMO_CLIENT_ID }}"
+      client_secret: "{{ env.DEMO_CLIENT_SECRET }}"
+      scopes: [payments:write]
+    assert: [ status == 202 ]
+
+  # Signed per attempt, not per step: the stub enforces a 30s replay window,
+  # which a signature stamped once and replayed through backoff would fall out
+  # of. Unset, `sign` is "{method}\n{path}\n{timestamp}\n{body_sha256}".
+  - id: signed_webhook
+    call: POST /webhooks/replay
+    body: { event_id: "evt_123", attempt: 2 }
+    auth:
+      scheme: hmac
+      secret: "{{ env.DEMO_SIGNING_SECRET }}"
+      key_id: "{{ env.DEMO_SIGNING_KEY_ID }}"
+      timestamp_header: X-Timestamp
+    assert: [ status == 202 ]
+
+  # /whoami echoes the credential into its own response body, so a captured
+  # payload holds something redaction has to scrub. Nothing here reaches runs/.
+  - id: echo
+    call: GET /whoami
+    auth:
+      scheme: basic
+      username: "{{ env.DEMO_USER }}"
+      password: "{{ env.DEMO_PASSWORD }}"
+    assert: [ status == 200 ]
+
+profile:
+  mode: load
+  vus: 5
+  hold: 3s
+  thresholds:
+    - error_rate < 1%
+    - p95(latency) < 100ms

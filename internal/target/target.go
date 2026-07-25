@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/blackprince001/flowbench/internal/ir"
 )
@@ -42,6 +43,10 @@ func (t *Target) Config() *ir.TargetConfig { return t.cfg }
 
 // BaseURL is prepended to relative call URLs.
 func (t *Target) BaseURL() string { return t.base }
+
+// RequestTimeout bounds one call against this target; zero leaves the adapter's
+// default in place.
+func (t *Target) RequestTimeout() time.Duration { return time.Duration(t.cfg.RequestTimeout) }
 
 // Allows reports whether a fully resolved call URL targets an allowed host.
 // Relative URLs are allowed because they resolve against the base URL. This is
@@ -105,14 +110,23 @@ func Resolve(name, dir string) string {
 	return filepath.Join(dir, name+".yaml")
 }
 
+// stepURLs is every host a step can reach — its call, plus an OAuth2 token
+// endpoint, which is a real outbound request carrying env-sourced client
+// credentials and so belongs under the same allow-list as the call itself.
 func stepURLs(st *ir.Step) []string {
+	var urls []string
 	switch {
 	case st.Call != nil:
-		return []string{st.Call.URL}
+		urls = append(urls, st.Call.URL)
+	case st.GraphQL != nil:
+		urls = append(urls, st.GraphQL.URL)
 	case st.Poll != nil:
-		return []string{st.Poll.Call.URL}
+		urls = append(urls, st.Poll.Call.URL)
 	}
-	return nil
+	if st.Auth != nil && st.Auth.TokenURL != "" {
+		urls = append(urls, st.Auth.TokenURL)
+	}
+	return urls
 }
 
 func originOf(raw string) (string, error) {

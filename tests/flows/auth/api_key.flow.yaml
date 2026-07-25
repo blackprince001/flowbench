@@ -1,0 +1,20 @@
+# API keys, in a header (the default) and in a query parameter — the placement
+# an endpoint accepts is the endpoint's choice, so both are first class.
+flow: auth_api_key
+steps:
+  - id: key_in_header
+    call: GET /whoami
+    auth:
+      scheme: api_key
+      name: X-Api-Key
+      value: "{{ env.FLOWBENCH_TEST_API_KEY }}"
+    assert: [ status == 200 ]
+
+  - id: key_in_query
+    call: GET /whoami-query
+    auth:
+      scheme: api_key
+      name: api_key
+      value: "{{ env.FLOWBENCH_TEST_API_KEY }}"
+      in: query
+    assert: [ status == 200 ]

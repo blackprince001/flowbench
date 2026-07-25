@@ -254,6 +254,21 @@ class LiveDriver:
 
     return LiveResponse(resp, self)
 
+  def graphql(
+    self,
+    url,
+    *,
+    query,
+    variables=None,
+    operation_name=None,
+    headers=None,
+    on_errors=None,
+  ):
+    raise FlowExecutionError(
+      "ctx.graphql() is not yet supported by live execution -- run "
+      "`flowbench run <file>.py` instead (the Go engine supports GraphQL steps)"
+    )
+
   def set_var(self, key, value):
     if not isinstance(value, _PendingLiveExtraction):
       raise FlowExecutionError(

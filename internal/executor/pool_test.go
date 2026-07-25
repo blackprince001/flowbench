@@ -261,3 +261,37 @@ func TestPoolCoordinatedOmission(t *testing.T) {
 		t.Fatalf("coordinated omission not accounted: max latency %s barely exceeds max service %s", maxLat, maxSvc)
 	}
 }
+
+// A target that accepts a connection and then says nothing must not hold its VU
+// for the adapter's default. The run's own budget ends the call, and the
+// flow-run is recorded as a failure rather than a stall.
+func TestRequestTimeoutBoundsAHungCall(t *testing.T) {
+	hung := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer hung.Close()
+
+	start := time.Now()
+	res, err := executor.Run(context.Background(), executor.Options{
+		Schedule: holdSchedule(ir.ModeLoad, 1, 900*time.Millisecond),
+		Flows: []ir.Flow{{Name: "hang", Steps: []ir.Step{{
+			ID: "wait_forever", Type: ir.StepCall,
+			Call: &ir.CallSpec{Method: http.MethodGet, URL: hung.URL + "/"},
+		}}}},
+		RequestTimeout: 150 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("the run took %s: the budget did not bound the call", elapsed)
+	}
+	if res.Failed() == 0 {
+		t.Error("a call that never answered should be recorded as a failure")
+	}
+	// Several iterations fit inside the hold, which they could not if each one
+	// waited out the adapter's 30s default.
+	if len(res.Samples) < 3 {
+		t.Errorf("only %d flow-runs completed; the timeout is not being applied", len(res.Samples))
+	}
+}

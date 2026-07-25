@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/blackprince001/flowbench/internal/adapters"
+	"github.com/blackprince001/flowbench/internal/auth"
 	"github.com/blackprince001/flowbench/internal/data"
 	"github.com/blackprince001/flowbench/internal/ir"
 	"github.com/blackprince001/flowbench/internal/planner"
@@ -31,6 +32,10 @@ type Options struct {
 	BaseURL  string
 	Allow    func(string) (bool, error)
 
+	// Auth applies steps' declared credentials. One provider serves the whole
+	// run, so an OAuth2 token endpoint sees one fetch rather than one per VU.
+	Auth *auth.Provider
+
 	// Metrics is the self-metric sample interval; 0 uses a default, negative
 	// disables sampling.
 	Metrics time.Duration
@@ -53,6 +58,11 @@ type Options struct {
 	MaxTraces    int
 	MaxFailures  int
 	MaxBodyBytes int
+
+	// RequestTimeout bounds a single call. Without it a target that accepts a
+	// connection and then says nothing holds a VU for the adapter's default,
+	// which is a long time to lose a worker for. Zero uses that default.
+	RequestTimeout time.Duration
 }
 
 // Result is the raw product of a run: latency samples, retained trace trees,
@@ -147,6 +157,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	metricInterval := opts.Metrics
 	if metricInterval == 0 {
 		metricInterval = defaultMetricInterval
+	}
+	if opts.Auth == nil {
+		// One provider for the run, gated by the same allow-list as the calls.
+		opts.Auth = auth.NewProvider(auth.Options{Allow: opts.Allow})
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -310,7 +324,7 @@ func (p *pool) runClosed(ctx context.Context) {
 // iteration (integration/system).
 func (p *pool) vu(ctx context.Context, wg *sync.WaitGroup, deadline time.Time, once bool) {
 	defer wg.Done()
-	sess := adapters.NewSession(adapters.SessionOptions{})
+	sess := adapters.NewSession(adapters.SessionOptions{Timeout: p.opts.RequestTimeout})
 	local := newAcc()
 	for ctx.Err() == nil {
 		if !once && !time.Now().Before(deadline) {
@@ -377,7 +391,7 @@ func (p *pool) runOpen(ctx context.Context) {
 
 func (p *pool) worker(ctx context.Context, jobs <-chan time.Duration, wg *sync.WaitGroup) {
 	defer wg.Done()
-	sess := adapters.NewSession(adapters.SessionOptions{})
+	sess := adapters.NewSession(adapters.SessionOptions{Timeout: p.opts.RequestTimeout})
 	local := newAcc()
 	for intended := range jobs {
 		if ctx.Err() != nil {
@@ -396,7 +410,7 @@ func (p *pool) iterate(ctx context.Context, sess *adapters.Session, local *acc, 
 	p.active.Add(1)
 	defer p.active.Add(-1)
 
-	runner := &Runner{Session: sess, BaseURL: p.opts.BaseURL, Mode: p.sched.Mode, Allow: p.opts.Allow}
+	runner := &Runner{Session: sess, BaseURL: p.opts.BaseURL, Mode: p.sched.Mode, Allow: p.opts.Allow, Auth: p.opts.Auth}
 	for i := range p.opts.Flows {
 		fl := p.opts.Flows[i]
 		actual := time.Since(p.start)

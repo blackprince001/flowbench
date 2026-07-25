@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/blackprince001/flowbench/internal/adapters"
+	"github.com/blackprince001/flowbench/internal/auth"
 	"github.com/blackprince001/flowbench/internal/eval"
 	"github.com/blackprince001/flowbench/internal/ir"
 	"github.com/blackprince001/flowbench/internal/span"
@@ -21,6 +22,12 @@ type Runner struct {
 	BaseURL string // prepended to relative call URLs
 	Mode    ir.Mode
 	Allow   func(rawURL string) (bool, error)
+
+	// Auth applies steps' declared credentials. One provider is shared by
+	// every VU in a run so an OAuth2 token is fetched once, not per VU; a
+	// step declaring auth without one set is a wiring error, not a silent
+	// unauthenticated request.
+	Auth *auth.Provider
 }
 
 // Failure is one recorded assertion or extraction failure within an iteration.
@@ -65,6 +72,8 @@ func (r *Runner) runStep(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 	switch st.Type {
 	case ir.StepCall:
 		return r.runCall(ctx, st, scope, anchor, it)
+	case ir.StepGraphQL:
+		return r.runGraphQL(ctx, st, scope, anchor, it)
 	case ir.StepWait:
 		sp := span.New(st.ID, time.Since(anchor))
 		time.Sleep(time.Duration(st.Wait.Duration))
@@ -80,6 +89,32 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 	if err != nil {
 		return nil, false, fmt.Errorf("step %q: %w", st.ID, err)
 	}
+	return r.request(ctx, st, req, scope, anchor, it, nil)
+}
+
+// runGraphQL executes one GraphQL operation. It is the HTTP path with one
+// extra reading: the operation's own errors, which arrive in the body of a
+// `200 OK` and so cannot be classified from the status.
+func (r *Runner) runGraphQL(ctx context.Context, st *ir.Step, scope *Scope, anchor time.Time, it *Iteration) (*span.Span, bool, error) {
+	req, err := adapters.BuildGraphQLRequest(st.GraphQL, scope.Resolve)
+	if err != nil {
+		return nil, false, fmt.Errorf("step %q: %w", st.ID, err)
+	}
+	return r.request(ctx, st, req, scope, anchor, it, graphQLCheck(st.GraphQL))
+}
+
+// bodyCheck reads an outcome out of a successful response, for a protocol
+// whose payload carries one the transport status does not. It names the span
+// the failure belongs to and the detail, or returns "" when the response is
+// good. GraphQL is the first such protocol; gRPC status codes will be next.
+type bodyCheck func(body []byte) (spanName, detail string)
+
+// request is the shared path every HTTP-shaped step takes: resolve the URL,
+// clear the allow-list, execute (with auth and retry), capture, classify, then
+// extract and assert. check, when set, gets a look at a successful response
+// before extraction — nothing downstream should read a body the protocol has
+// already declared broken.
+func (r *Runner) request(ctx context.Context, st *ir.Step, req *adapters.Request, scope *Scope, anchor time.Time, it *Iteration, check bodyCheck) (*span.Span, bool, error) {
 	req.URL = r.resolveURL(req.URL)
 
 	if r.Allow != nil {
@@ -94,7 +129,7 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 		}
 	}
 
-	resp, sp, err := r.executeCall(ctx, st, req, anchor)
+	resp, sp, err := r.executeCall(ctx, st, req, scope, anchor)
 	if !captureDisabled(st) {
 		var respBody []byte
 		status, retryAfter := 0, ""
@@ -118,6 +153,17 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 	// from it.
 	if isThrottled(resp.Status, st.Throttle) {
 		return sp, r.recordThrottle(it, sp, st, scope, resp.Status), nil
+	}
+
+	// A protocol that reports failure in the body gets its say before anything
+	// reads that body, so a broken operation is a failed step rather than an
+	// extraction that mysteriously finds nothing.
+	if check != nil {
+		if name, detail := check(resp.Body); detail != "" {
+			child := sp.Child(name, time.Since(anchor))
+			child.Outcome = span.OutcomeFailed
+			return sp, r.record(it, sp, child, st, scope, detail), nil
+		}
 	}
 
 	tgt := target{resp: resp, latency: sp.Duration}
@@ -154,6 +200,31 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 		}
 	}
 	return sp, cont, nil
+}
+
+// applyAuth attaches the step's declared credentials to req, resolving their
+// `{{ env.* }}` references through the iteration's scope — which registers
+// them as secrets on the way past, so the redaction path covers them without
+// auth having to know about artifacts.
+func (r *Runner) applyAuth(ctx context.Context, st *ir.Step, req *adapters.Request, scope *Scope) error {
+	if st.Auth == nil || st.Auth.Scheme == ir.AuthNone {
+		return nil
+	}
+	if r.Auth == nil {
+		return fmt.Errorf("step %q declares %s auth but the runner has no auth provider", st.ID, st.Auth.Scheme)
+	}
+	if err := r.Auth.Apply(ctx, st.Auth, req, scope.Resolve, scope.Secrets()); err != nil {
+		return fmt.Errorf("step %q: %w", st.ID, err)
+	}
+	return nil
+}
+
+// failedSpan is a closed, failed span for work that never reached the wire.
+func failedSpan(name string, anchor time.Time) *span.Span {
+	sp := span.New(name, time.Since(anchor))
+	sp.Outcome = span.OutcomeFailed
+	sp.Duration = time.Since(anchor) - sp.Start
+	return sp
 }
 
 func (r *Runner) resolveURL(u string) string {

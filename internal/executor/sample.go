@@ -1,7 +1,7 @@
 package executor
 
 import (
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/blackprince001/flowbench/internal/span"
@@ -38,7 +38,7 @@ func Percentile(samples []Sample, q float64) time.Duration {
 	for i, s := range samples {
 		xs[i] = s.Latency()
 	}
-	sort.Slice(xs, func(i, j int) bool { return xs[i] < xs[j] })
+	slices.Sort(xs)
 	i := int(q * float64(len(xs)-1))
 	if i < 0 {
 		i = 0

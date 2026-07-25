@@ -197,6 +197,160 @@ span path), `traces.json` (sampled raw traces — all failures plus a sample of
 successes, bodies redacted), and `metrics.json` (the generator's own
 CPU/memory). It's a directory you own — no retention machinery.
 
+## `auth-local/` — every auth scheme, against a service that checks
+
+[`schemes.flow.yaml`](auth-local/schemes.flow.yaml) exercises all six schemes —
+bearer, basic, API key (header and query), session cookie, OAuth2
+client-credentials, HMAC signing — against a stub that `401`s anything it does
+not recognise. That's the point: a scheme that quietly sends nothing **fails**
+the run rather than passing it.
+
+Start the stub in one terminal; it prints the credentials it expects:
+
+```
+go run ./examples/auth-local/stub
+```
+
+```
+auth stub listening on :8090 — every endpoint demands a different scheme
+export the credentials it expects:
+  export DEMO_API_TOKEN=tok_demo_bearer_9f8e7d DEMO_USER=reports-service …
+```
+
+Paste that `export` block, then run:
+
+```
+flowbench run examples/auth-local/schemes.flow.yaml --target examples/auth-local/target.yaml
+```
+
+```
+running "auth_schemes" against auth-stub (http://localhost:8090) [load, 5 VUs]
+  20095 iteration(s), 20095 flow-run(s) in 3.001s
+  error_rate=0.00%  throttle_rate=0.00%  p50=702µs p95=1.025ms p99=1.174ms
+  error_rate < 1%: ok   p95(latency) < 100ms: ok
+```
+
+Nine steps × 20k iterations, every one authenticated. Three things that run
+proves:
+
+**One token, not twenty thousand.** The stub logs a line per client-credentials
+grant. Across the whole run there is exactly one:
+
+```
+issued access token (grant 1, scope "payments:write")
+```
+
+The token endpoint is fetched once and the token shared by every VU, refreshed
+30s before expiry. Without that, a 10k-VU run would open by rate-limiting
+itself on its own auth server.
+
+**Credentials declared once.** The `auth:` block at the top of the flow is the
+flow-level default; every step inherits it, `reports` and the rest override it,
+and `health` opts out with `auth: { scheme: none }`. The stub's `/health`
+*refuses* a credential, so a default leaking onto an opted-out step fails the
+run instead of passing unnoticed.
+
+**Nothing reaches the run store.** `/whoami` echoes the credential into its own
+response body, and captured payloads keep response bodies for debugging — so
+there is something to scrub:
+
+```
+grep -rc 'tok_demo_bearer_9f8e7d\|s3cr3t-basic-pw\|at_demo_issued_by_the_stub' runs/
+```
+
+Zero, for every one of them — including the two the engine *derived* rather
+than resolved: the base64 basic blob and the OAuth2 access token. The captured
+body shows what happened instead:
+
+```json
+"response": "{\"seen\":\"Basic [redacted]\"}"
+```
+
+The HMAC signature deliberately isn't redacted: it is per-request and not
+reversible to the secret, and registering one per request would grow the
+redaction set without bound at 10k VUs.
+
+Two more things the stub enforces, worth knowing because they shape the design:
+
+- **The signature is stamped per attempt, not per step.** `/webhooks/replay`
+  rejects a signature older than 30 seconds, which a request signed once and
+  replayed through retry backoff would fall out of.
+- **The OAuth2 token endpoint is inside the host allow-list.** It is a real
+  outbound request carrying the client credentials, so it is gated like any
+  call. Point `token_url` at a host missing from
+  [`target.yaml`](auth-local/target.yaml) and the run refuses it — pre-run if
+  the URL is a literal, at request time if it is templated.
+
+## `graphql-local/` — operations, and the 200 that isn't a pass
+
+Start the graph in one terminal:
+
+```
+go run ./examples/graphql-local/stub
+```
+
+[`chain.flow.yaml`](graphql-local/chain.flow.yaml) runs a query, extracts a
+product id from the `data` shape, and feeds it to a mutation:
+
+```
+flowbench run examples/graphql-local/chain.flow.yaml --target examples/graphql-local/target.yaml
+```
+
+```
+running "graphql_shop" against graphql-stub (http://localhost:8091) [load, 5 VUs]
+  56305 iteration(s), 56305 flow-run(s) in 3.002s
+  error_rate=0.00%  throttle_rate=0.00%  p50=247µs p95=420µs p99=511µs
+  error_rate < 1%: ok   p95(latency) < 100ms: ok
+```
+
+**Values travel as variables, never spliced into the document.** The extracted
+id goes over the wire in `variables`, so the server types and escapes it — and
+an extracted value full of quotes and braces can't rewrite the query. The
+document itself is sent verbatim; templating it is deliberately not supported.
+
+### The 200 that isn't a pass
+
+GraphQL puts the transport's verdict in the status and the *operation's*
+verdict in the body. [`errors.flow.yaml`](graphql-local/errors.flow.yaml) asks
+for a restricted field and gets this, with `HTTP 200`:
+
+```json
+{"data":null,"errors":[{"message":"field 'costPriceCents' is restricted to internal clients",
+                        "path":["product","costPriceCents"]}]}
+```
+
+The flow asserts only `status == 200` — which is true. It still fails:
+
+```
+running "graphql_restricted" against graphql-stub (http://localhost:8091)
+  graphql_restricted [1/1]  FAIL (1)
+      restricted_field: graphql: field 'costPriceCents' is restricted to internal
+                        clients (at product.costPriceCents)
+1 iteration(s): 0 passed, 1 failed  (3ms)
+```
+
+Exit `1`. A non-empty `errors` array fails the step by default, because the
+alternative is a flow that forgets one assertion and reports a broken query as
+green forever. The error's `path` is kept, so the failure names the field.
+
+Two ways out when that default is wrong, both on the `graphql` block:
+
+- `on_errors: allow_partial` — fails only when the operation resolved **no**
+  data. This is the federated case: one subgraph times out, the rest answer,
+  and the response is still useful. The third step of `chain.flow.yaml` does
+  exactly this, and extraction still runs over the half that resolved.
+- `on_errors: ignore` — hands the judgement back to the flow's own assertions
+  (`- $.errors not_exists`).
+
+### Everything else is just HTTP
+
+A `graphql` step is a POST, so it keeps the machinery that already exists —
+per-phase spans (dns/connect/tls/ttfb/transfer) under the same `http_call`
+child a `call` step gets, `429` still classifies as `throttled`, `retry:`
+works, and auth is declared exactly as [`auth-local/`](auth-local/) shows. A
+GraphQL failure folds under its own `graphql_errors` span, so a run where one
+query kept erroring shows up in the flame graph rather than only in a list.
+
 ## Two files, two jobs
 
 The flow says *what* to do; the target says *where*. Notice the flows call

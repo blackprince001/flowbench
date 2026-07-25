@@ -22,14 +22,15 @@ _LIVE_MODES = ("integration", "system")
 
 
 class Flow:
-  def __init__(self, name, data=None):
+  def __init__(self, name, data=None, auth=None):
     self.name = name
     self.data = data
-    self._steps = []  # list of (func, retry_or_None), in registration order
+    self.auth = auth  # default every step inherits unless it declares its own
+    self._steps = []  # list of (func, retry_or_None, auth_or_None), in order
 
-  def step(self, func=None, *, retry=None):
+  def step(self, func=None, *, retry=None, auth=None):
     def register(f):
-      self._steps.append((f, retry))
+      self._steps.append((f, retry, auth))
       return f
 
     if func is not None:
@@ -42,25 +43,33 @@ class Flow:
 
     available_vars = set()
     steps = []
-    for func, retry in self._steps:
+    for func, retry, auth in self._steps:
       step_id = func.__name__
       builder = TraceDriver(step_id, available_vars)
       ctx = Context(builder, has_data_pool=self.data is not None)
       func(ctx)
 
-      if builder.call_spec is None:
+      if builder.spec is None:
         raise FlowCompileError(
           f"step {step_id!r} never made a ctx.http call; "
           "every @flow.step function must make exactly one"
         )
 
-      step = {"id": step_id, "type": "call", "call": builder.call_spec}
+      step = {"id": step_id, "type": builder.kind, builder.kind: builder.spec}
       if builder.extract:
         step["extract"] = builder.extract
       if builder.assert_:
         step["assert"] = builder.assert_
       if retry is not None:
         step["retry"] = retry.to_ir()
+      # Flatten the flow-level default onto the step and drop explicit
+      # opt-outs, exactly as the YAML parser does (internal/parser's
+      # flattenAuth), so both surfaces hand the executor the same IR.
+      effective = self.auth if auth is None else auth
+      if effective is not None:
+        spec = effective.to_ir()
+        if spec["scheme"] != "none":
+          step["auth"] = spec
       steps.append(step)
 
     return build_scenario(
@@ -160,7 +169,19 @@ class Flow:
     driver = LiveDriver(cfg, has_data_pool=self.data is not None, secrets=secrets)
     driver.set_row(row)
     try:
-      for func, retry in self._steps:
+      for func, retry, auth in self._steps:
+        # Auth schemes and GraphQL steps compile fine (both surfaces produce
+        # the same IR either way) but LiveDriver doesn't apply/execute them
+        # yet -- fail loud here rather than silently sending an
+        # unauthenticated request or crashing deep inside ctx.graphql().
+        effective_auth = self.auth if auth is None else auth
+        if effective_auth is not None and effective_auth.to_ir()["scheme"] != "none":
+          raise FlowExecutionError(
+            f"step {func.__name__!r} declares auth, which live execution does "
+            "not yet apply -- run `flowbench run <file>.py` instead (the Go "
+            "engine supports every auth scheme)"
+          )
+
         driver.begin_step(func.__name__, retry)
         ctx = Context(driver, has_data_pool=self.data is not None)
         try:

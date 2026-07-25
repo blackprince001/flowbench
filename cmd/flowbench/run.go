@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/blackprince001/flowbench/internal/adapters"
+	"github.com/blackprince001/flowbench/internal/auth"
 	"github.com/blackprince001/flowbench/internal/collector"
 	"github.com/blackprince001/flowbench/internal/data"
 	"github.com/blackprince001/flowbench/internal/executor"
@@ -158,11 +159,12 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 
 	startedAt := time.Now()
 	res, err := executor.Run(ctx, executor.Options{
-		Schedule: sched,
-		Flows:    sc.Flows,
-		Pools:    pools,
-		BaseURL:  tgt.BaseURL(),
-		Allow:    tgt.Allows,
+		Schedule:       sched,
+		Flows:          sc.Flows,
+		Pools:          pools,
+		BaseURL:        tgt.BaseURL(),
+		Allow:          tgt.Allows,
+		RequestTimeout: tgt.RequestTimeout(),
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "flowbench: %v\n", err)
@@ -244,6 +246,10 @@ func executeOnce(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 
 	fmt.Fprintf(stdout, "running %q against %s (%s)\n", sc.Name, tgt.Config().Name, tgt.BaseURL())
 
+	// One provider for the whole command, so a token fetched for the first
+	// fixture row serves the rest, gated by the same allow-list as the calls.
+	credentials := auth.NewProvider(auth.Options{Allow: tgt.Allows})
+
 	for _, flow := range sc.Flows {
 		rows := iterationRows(flow, pools)
 		for i, row := range rows {
@@ -251,10 +257,11 @@ func executeOnce(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 			iterStart := time.Now()
 			scope := executor.NewScope(flow.Data, row)
 			runner := &executor.Runner{
-				Session: adapters.NewSession(adapters.SessionOptions{}),
+				Session: adapters.NewSession(adapters.SessionOptions{Timeout: tgt.RequestTimeout()}),
 				BaseURL: tgt.BaseURL(),
 				Mode:    sc.Profile.Mode,
 				Allow:   tgt.Allows,
+				Auth:    credentials,
 			}
 			it, err := runner.RunFlow(context.Background(), flow, scope)
 			if err != nil {

@@ -1,0 +1,26 @@
+# A flow-level default: every step that makes a request inherits it, a step
+# overrides it by declaring its own, and `scheme: none` opts one out.
+#
+# Both surfaces flatten this onto the steps at compile time, so the IR the
+# executor sees carries auth per step and never has to look at the flow.
+flow: auth_flow_default
+auth:
+  scheme: bearer
+  token: "{{ env.FLOWBENCH_TEST_BEARER }}"
+steps:
+  - id: inherits
+    call: GET /whoami
+    assert: [ status == 200 ]
+
+  - id: opts_out
+    call: GET /public
+    auth: { scheme: none }
+    assert: [ status == 200 ]
+
+  - id: overrides
+    call: GET /whoami-key
+    auth:
+      scheme: api_key
+      name: X-Api-Key
+      value: "{{ env.FLOWBENCH_TEST_API_KEY }}"
+    assert: [ status == 200 ]
