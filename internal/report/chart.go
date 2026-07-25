@@ -1,0 +1,336 @@
+package report
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/blackprince001/flowbench/internal/collector"
+	"github.com/blackprince001/flowbench/internal/span"
+)
+
+// The dashboard's charts are server-rendered SVG: one stylesheet, geometry in a
+// fixed viewBox so the browser reflows on resize with nothing re-laid out. There
+// is no client rendering step and no JS on this page (ADR 0014) — the same
+// posture as the flame graph, one dimension simpler.
+
+// chartW/chartH are the SVG user-space extent every line is scaled into. y grows
+// downward. chartTop/chartBottom hold a little headroom so a line at the maximum
+// (or minimum) never hugs the frame or collides with the axis labels.
+const (
+	chartW      = 100.0
+	chartH      = 40.0
+	chartTop    = 4.0
+	chartBottom = 4.0
+)
+
+// ChartPoint is one plotted sample: X is 0..1 along the shared time axis (so
+// lanes sampled on different grids still line up), Y is the raw value.
+type ChartPoint struct {
+	X, Y float64
+}
+
+// ChartSeries is one input line. Last is the latest value, preformatted for the
+// legend, so a reader gets the current number without reading the axis.
+type ChartSeries struct {
+	Label  string
+	Tone   string // a kind or status tone (net/logic/retry/step/flow, ok/failed/throttled)
+	Points []ChartPoint
+	Last   string
+}
+
+// ChartLine is a laid-out line: Points is the polyline in viewBox coordinates
+// and Area closes that line down to the baseline for the dithered fill beneath
+// it. Both are plain coordinate text, so they interpolate into the SVG attribute
+// without tripping the escaper.
+type ChartLine struct {
+	Label  string
+	Tone   string
+	Points string
+	Area   string
+	Last   string
+}
+
+// LineChart is one titled chart of one or more lines over a shared axis.
+type LineChart struct {
+	Title string
+	Lines []ChartLine
+	YTop  string // the y-axis maximum, labelled
+	XEnd  string // the time span, the x-axis end label
+	Empty bool
+}
+
+// LineChartOf scales every series to one shared y-maximum — so lines in the same
+// chart are visually comparable — and lays each out as a polyline. unit formats
+// the axis maximum from the computed max; an all-empty input renders an explicit
+// empty state rather than a flat line at zero.
+func LineChartOf(title string, series []ChartSeries, unit func(float64) string, xEnd string) LineChart {
+	max, any := 0.0, false
+	for _, s := range series {
+		for _, p := range s.Points {
+			any = true
+			if p.Y > max {
+				max = p.Y
+			}
+		}
+	}
+	lc := LineChart{Title: title, XEnd: xEnd}
+	if !any {
+		lc.Empty = true
+		return lc
+	}
+	if max <= 0 {
+		max = 1
+	}
+	lc.YTop = unit(max)
+
+	for _, s := range series {
+		var b strings.Builder
+		var firstX, lastX float64
+		for i, p := range s.Points {
+			if i > 0 {
+				b.WriteByte(' ')
+			}
+			x := p.X * chartW
+			y := chartTop + (1-p.Y/max)*(chartH-chartTop-chartBottom)
+			fmt.Fprintf(&b, "%.2f,%.2f", x, y)
+			if i == 0 {
+				firstX = x
+			}
+			lastX = x
+		}
+		cl := ChartLine{Label: s.Label, Tone: s.Tone, Points: b.String(), Last: s.Last}
+		if len(s.Points) > 0 {
+			// The filled area is the line carried down to the baseline and back,
+			// so the dither sits under the line.
+			cl.Area = fmt.Sprintf("%s %.2f,%.2f %.2f,%.2f", b.String(), lastX, chartH, firstX, chartH)
+		}
+		lc.Lines = append(lc.Lines, cl)
+	}
+	return lc
+}
+
+// timeFrac positions a bucket on the 0..1 axis by its start time, so an empty
+// bucket keeps its place and lanes on different sampling grids share the axis.
+func timeFrac(at, span time.Duration) float64 {
+	if span <= 0 {
+		return 0
+	}
+	return float64(at) / float64(span)
+}
+
+func ratePctText(v float64) string { return fmt.Sprintf("%.2f%%", v*100) }
+
+// ThroughputChart plots achieved throughput (flow-runs per second) per bucket.
+func ThroughputChart(s collector.Series) LineChart {
+	span := SeriesSpan(s)
+	pts := make([]ChartPoint, 0, len(s.Points))
+	var last float64
+	for _, p := range s.Points {
+		rps := 0.0
+		if s.Bucket > 0 {
+			rps = float64(p.FlowRuns) / s.Bucket.Seconds()
+		}
+		pts = append(pts, ChartPoint{X: timeFrac(p.At, span), Y: rps})
+		last = rps
+	}
+	return LineChartOf("Throughput", []ChartSeries{{
+		Label: "req/s", Tone: "kind-net", Points: pts, Last: fmt.Sprintf("%.0f/s", last),
+	}}, func(v float64) string { return fmt.Sprintf("%.0f/s", v) }, humanDur(span))
+}
+
+// LatencyChart plots p50/p95/p99 over time. Empty buckets carry zero percentiles
+// (series.go), which would dive the line to zero, so they are skipped — the line
+// bridges the gap instead of misreporting a fast window.
+func LatencyChart(s collector.Series) LineChart {
+	span := SeriesSpan(s)
+	p50 := ChartSeries{Label: "p50", Tone: "kind-retry"}
+	p95 := ChartSeries{Label: "p95", Tone: "kind-net"}
+	p99 := ChartSeries{Label: "p99", Tone: "kind-logic"}
+	var l50, l95, l99 time.Duration
+	for _, p := range s.Points {
+		if p.FlowRuns == 0 {
+			continue
+		}
+		x := timeFrac(p.At, span)
+		p50.Points = append(p50.Points, ChartPoint{X: x, Y: float64(p.P50)})
+		p95.Points = append(p95.Points, ChartPoint{X: x, Y: float64(p.P95)})
+		p99.Points = append(p99.Points, ChartPoint{X: x, Y: float64(p.P99)})
+		l50, l95, l99 = p.P50, p.P95, p.P99
+	}
+	p50.Last, p95.Last, p99.Last = humanDur(l50), humanDur(l95), humanDur(l99)
+	return LineChartOf("Latency", []ChartSeries{p50, p95, p99},
+		func(v float64) string { return humanDur(time.Duration(v)) }, humanDur(span))
+}
+
+// RatesChart plots error rate and throttle rate over time. Throttle keeps its own
+// tone and never the failure red (ADR 0006).
+func RatesChart(s collector.Series) LineChart {
+	span := SeriesSpan(s)
+	errs := ChartSeries{Label: "error", Tone: "failed"}
+	thr := ChartSeries{Label: "throttled", Tone: "throttled"}
+	var le, lt float64
+	for _, p := range s.Points {
+		x := timeFrac(p.At, span)
+		e, t := 0.0, 0.0
+		if p.FlowRuns > 0 {
+			e = float64(p.Failed) / float64(p.FlowRuns)
+			t = float64(p.Throttled) / float64(p.FlowRuns)
+		}
+		errs.Points = append(errs.Points, ChartPoint{X: x, Y: e})
+		thr.Points = append(thr.Points, ChartPoint{X: x, Y: t})
+		le, lt = e, t
+	}
+	errs.Last, thr.Last = ratePctText(le), ratePctText(lt)
+	return LineChartOf("Outcome rates", []ChartSeries{errs, thr}, ratePctText, humanDur(span))
+}
+
+// StepRow is one authored step in the per-step table.
+type StepRow struct {
+	Name  string
+	Total string
+	Count int64
+	Mean  string
+	Share string
+}
+
+// StepRows summarizes the authored steps (KindStep frames) from a run's folded
+// aggregate, biggest first — the table beside the charts that says which step
+// owns the time. Total is inclusive; Share is of the whole run.
+func StepRows(f *span.Folded) []StepRow {
+	frames := FlameFrames(f)
+	var runTotal time.Duration
+	for _, fr := range frames {
+		if fr.Depth == 0 {
+			runTotal += fr.Total
+		}
+	}
+
+	steps := make([]Frame, 0)
+	for _, fr := range frames {
+		if fr.Kind == KindStep {
+			steps = append(steps, fr)
+		}
+	}
+	sort.SliceStable(steps, func(i, j int) bool { return steps[i].Total > steps[j].Total })
+
+	out := make([]StepRow, 0, len(steps))
+	for _, fr := range steps {
+		mean := time.Duration(0)
+		if fr.Count > 0 {
+			mean = fr.Total / time.Duration(fr.Count)
+		}
+		share := 0.0
+		if runTotal > 0 {
+			share = float64(fr.Total) / float64(runTotal) * 100
+		}
+		out = append(out, StepRow{
+			Name:  fr.Name,
+			Total: humanDur(fr.Total),
+			Count: fr.Count,
+			Mean:  humanDur(mean),
+			Share: fmt.Sprintf("%.1f%%", share),
+		})
+	}
+	return out
+}
+
+// DashboardPage is a run's time-series view: the charts, the per-step table, the
+// thresholds, and — for a soak — the drift trend. The target-resource overlay is
+// an empty slot until an agent is attached (#32).
+type DashboardPage struct {
+	Shell
+	RunHead
+	Charts []LineChart
+	Steps  []StepRow
+	Gates  []Gate
+	Agent  string        // the empty-state note for the deferred overlay lane
+	Trend  *TrendSection // soak runs only; nil otherwise
+}
+
+// TrendSection is the soak drift view: the run's second half measured against its
+// first, plus any persisted trend findings. It is computed from the bucketed
+// series (not raw samples), so it tracks EvaluateTrends without reproducing it
+// exactly — enough to see creep, with the flags carrying the authoritative call.
+type TrendSection struct {
+	Tiles []Tile   // p95 / error / throttle: first half → second half
+	Flags []string // persisted drift findings (Outcome.Detail), if any
+	Note  string
+}
+
+// TrendFrom splits a run's series at its midpoint and reports how p95, error rate
+// and throttle rate drifted from the first half to the second, reusing the
+// comparison tiles. It returns nil for a run too short to have two halves.
+func TrendFrom(s collector.Series, thresholds []collector.Outcome) *TrendSection {
+	span := SeriesSpan(s)
+	if span <= 0 || len(s.Points) < 2 {
+		return nil
+	}
+	mid := span / 2
+
+	var early, late half
+	for _, p := range s.Points {
+		if p.FlowRuns == 0 {
+			continue
+		}
+		if p.At < mid {
+			early.add(p)
+		} else {
+			late.add(p)
+		}
+	}
+	if early.runs == 0 || late.runs == 0 {
+		return nil
+	}
+
+	ts := &TrendSection{Tiles: []Tile{
+		DurDelta("p95 latency", late.p95(), early.p95()),
+		RateDelta("error rate", late.errRate(), early.errRate(), "failed"),
+		RateDelta("throttle rate", late.throttleRate(), early.throttleRate(), "throttled"),
+	}}
+	for _, o := range thresholds {
+		if strings.Contains(o.Expr, "trend") {
+			ts.Flags = append(ts.Flags, o.Detail)
+		}
+	}
+	if len(ts.Flags) == 0 {
+		ts.Note = "no drift beyond the soak thresholds — a clean soak is flat"
+	}
+	return ts
+}
+
+// half accumulates one side of the midpoint split, flow-run-weighted so a busier
+// window counts for more than a sparse one.
+type half struct {
+	runs   int
+	failed int
+	thr    int
+	p95w   float64
+}
+
+func (h *half) add(p collector.SeriesPoint) {
+	h.runs += p.FlowRuns
+	h.failed += p.Failed
+	h.thr += p.Throttled
+	h.p95w += float64(p.P95) * float64(p.FlowRuns)
+}
+
+func (h half) p95() time.Duration {
+	if h.runs == 0 {
+		return 0
+	}
+	return time.Duration(h.p95w / float64(h.runs))
+}
+func (h half) errRate() float64 {
+	if h.runs == 0 {
+		return 0
+	}
+	return float64(h.failed) / float64(h.runs)
+}
+func (h half) throttleRate() float64 {
+	if h.runs == 0 {
+		return 0
+	}
+	return float64(h.thr) / float64(h.runs)
+}

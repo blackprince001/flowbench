@@ -35,6 +35,11 @@ type Options struct {
 	// disables sampling.
 	Metrics time.Duration
 
+	// Progress, when set, is called about once per metric interval with a live
+	// snapshot of the run in flight — the data source for the live view. It is
+	// never called after Run returns; nil (the default) disables it.
+	Progress func(Progress)
+
 	// Capture policy (ADR 0007). All failures are kept up to an internal safety
 	// ceiling; successes and throttled responses are sampled.
 	//
@@ -99,6 +104,18 @@ func (r *Result) ThrottleRate() float64 {
 	return float64(r.Throttled()) / float64(len(r.Samples))
 }
 
+// Progress is a live snapshot of a run in flight, for the live view. Completed
+// is the flow-runs finished so far; Failed and Throttled count them the same way
+// the final Result does, so a live rate matches the run's own once it ends.
+type Progress struct {
+	At        time.Duration
+	ActiveVUs int
+	PeakVUs   int
+	Completed int64
+	Failed    int64
+	Throttled int64
+}
+
 // Run drives opts.Schedule to completion with one goroutine per virtual user,
 // each isolated in its own session (cookie jar and connection pool), drawing
 // its own data rows and running every iteration in a fresh variable scope.
@@ -154,6 +171,24 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		p.metrics = sampleMetrics(mctx, p.start, metricInterval, func() int { return int(p.active.Load()) })
 	})
 
+	// Stream live progress to a watcher on the same cadence, if one is attached.
+	// It reads the same atomics off the hot path, so it never touches the run.
+	if opts.Progress != nil {
+		mwg.Go(func() {
+			t := time.NewTicker(metricInterval)
+			defer t.Stop()
+			for {
+				select {
+				case <-mctx.Done():
+					opts.Progress(p.snapshot()) // one final reading at the end
+					return
+				case <-t.C:
+					opts.Progress(p.snapshot())
+				}
+			}
+		})
+	}
+
 	if p.sched.Arrival == planner.Open && p.sched.ArrivalCap != nil {
 		p.runOpen(ctx)
 	} else {
@@ -185,6 +220,12 @@ type pool struct {
 	active  atomic.Int32 // iterations currently in flight
 	aborted atomic.Bool
 
+	// Live running tallies for the progress snapshot, incremented per flow-run so
+	// they track the final Result's own counts.
+	completed atomic.Int64
+	failed    atomic.Int64
+	throttled atomic.Int64
+
 	successBudget atomic.Int64
 	failBudget    atomic.Int64
 	successSeen   atomic.Int64
@@ -205,6 +246,20 @@ func (p *pool) peak() int {
 		return 1
 	}
 	return p.sched.PeakVUs
+}
+
+// snapshot is a thread-safe live read of the run's progress, from the atomics
+// the hot path maintains — safe to call from another goroutine (the live view)
+// while the run is in flight.
+func (p *pool) snapshot() Progress {
+	return Progress{
+		At:        time.Since(p.start),
+		ActiveVUs: int(p.active.Load()),
+		PeakVUs:   p.peak(),
+		Completed: p.completed.Load(),
+		Failed:    p.failed.Load(),
+		Throttled: p.throttled.Load(),
+	}
 }
 
 // runClosed is the VU-driven model: a fixed population loops iterations
@@ -379,6 +434,13 @@ func (p *pool) iterate(ctx context.Context, sess *adapters.Session, local *acc, 
 			Outcome:   outcome,
 			Throttled: throttled,
 		})
+		p.completed.Add(1)
+		if outcome == span.OutcomeFailed {
+			p.failed.Add(1)
+		}
+		if throttled {
+			p.throttled.Add(1)
+		}
 		if it != nil {
 			p.record(local, fl.Name, actual, service, outcome, it.Spans, scope.Secrets().RedactBytes)
 			if it.Aborted {

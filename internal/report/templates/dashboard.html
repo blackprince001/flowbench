@@ -1,0 +1,143 @@
+{{ define "content" }}
+
+{{ template "run-head" .RunHead }}
+{{ template "tabs" .Tabs }}
+
+<!-- One dither tile, shared by every chart's area fill (referenced by url(#…)).
+     White dots on transparent, used as a mask so each area shows its own tone
+     only where the dots fall — a dithered fill, server-side, no client work. -->
+<svg class="chart-defs" width="0" height="0" aria-hidden="true" focusable="false">
+  <defs>
+    <pattern id="dither" width="2.4" height="2.4" patternUnits="userSpaceOnUse">
+      <circle cx="0.55" cy="0.55" r="0.55" fill="#fff"></circle>
+      <circle cx="1.75" cy="1.75" r="0.55" fill="#fff"></circle>
+    </pattern>
+    <mask id="dither-mask" maskContentUnits="userSpaceOnUse">
+      <rect x="0" y="0" width="100" height="40" fill="url(#dither)"></rect>
+    </mask>
+  </defs>
+</svg>
+
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Charts</h2>
+    <p class="card-note">over the run</p>
+  </div>
+  <div class="card-body">
+    <div class="charts">
+      {{ range .Charts }}{{ template "linechart" . }}{{ end }}
+    </div>
+  </div>
+</section>
+
+{{ if .Trend }}
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Soak trend</h2>
+    <p class="card-note">second half vs first</p>
+  </div>
+  <div class="tiles">
+    {{ range .Trend.Tiles }}
+    <div class="tile">
+      <div class="tile-label">{{ .Label }}</div>
+      <div class="tile-value"{{ if .Tone }} style="--tone:var(--{{ .Tone }})"{{ end }}>{{ .Value }}</div>
+      {{ if .Sub }}<div class="tile-sub">{{ .Sub }}</div>{{ end }}
+    </div>
+    {{ end }}
+  </div>
+  <div class="card-body">
+    {{ if .Trend.Flags }}
+    <ul class="drift">
+      {{ range .Trend.Flags }}<li><span class="chip o-failed">drift</span> {{ . }}</li>{{ end }}
+    </ul>
+    {{ else }}
+    <p class="hint">{{ .Trend.Note }}</p>
+    {{ end }}
+  </div>
+</section>
+{{ end }}
+
+{{ if .Steps }}
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Steps</h2>
+    <p class="card-note">where the time goes, biggest first</p>
+  </div>
+  <div class="card-body">
+    <table class="table">
+      <thead><tr><th>Step</th><th class="num">Total</th><th class="num">Calls</th><th class="num">Mean</th><th class="num">Share</th></tr></thead>
+      <tbody>
+        {{ range .Steps }}
+        <tr>
+          <td class="mono">{{ .Name }}</td>
+          <td class="num">{{ .Total }}</td>
+          <td class="num">{{ .Count }}</td>
+          <td class="num">{{ .Mean }}</td>
+          <td class="num">{{ .Share }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{ end }}
+
+{{ if .Gates }}
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Thresholds</h2>
+    <p class="card-note">the gates this scenario declared</p>
+  </div>
+  <div class="card-body">
+    <table class="table">
+      <thead><tr><th>Gate</th><th>Result</th><th>Measured</th></tr></thead>
+      <tbody>
+        {{ range .Gates }}
+        <tr>
+          <td class="mono">{{ .Expr }}</td>
+          <td><span class="chip o-{{ .Tone }}">{{ if .Pass }}ok{{ else }}breach{{ end }}</span></td>
+          <td class="mono" style="color:var(--ink-2)">{{ .Detail }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{ end }}
+
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Target resources</h2>
+    <p class="card-note">agent overlay</p>
+  </div>
+  <div class="card-body">
+    <p class="hint">{{ .Agent }}</p>
+  </div>
+</section>
+
+{{ end }}
+
+{{ define "linechart" }}
+<figure class="chart">
+  <figcaption class="chart-head">
+    <span class="chart-title">{{ .Title }}</span>
+    <span class="chart-legend">
+      {{ range .Lines }}<span class="chart-key" style="--tone:var(--{{ .Tone }})">{{ .Label }}{{ if .Last }} <b>{{ .Last }}</b>{{ end }}</span>{{ end }}
+    </span>
+  </figcaption>
+  {{ if .Empty }}
+  <div class="chart-plot chart-empty">no data recorded</div>
+  {{ else }}
+  <div class="chart-plot">
+    <span class="chart-ymax">{{ .YTop }}</span>
+    <svg class="chart-svg" viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label="{{ .Title }}">
+      <line class="cgrid" x1="0" y1="20" x2="100" y2="20" vector-effect="non-scaling-stroke"></line>
+      <line class="cbase" x1="0" y1="36" x2="100" y2="36" vector-effect="non-scaling-stroke"></line>
+      {{ range .Lines }}<polygon class="carea" style="--tone:var(--{{ .Tone }})" points="{{ .Area }}" mask="url(#dither-mask)"></polygon>{{ end }}
+      {{ range .Lines }}<polyline class="cline" style="--tone:var(--{{ .Tone }})" points="{{ .Points }}" vector-effect="non-scaling-stroke"></polyline>{{ end }}
+    </svg>
+  </div>
+  {{ end }}
+  <div class="axis"><span>0</span><span>{{ .XEnd }}</span></div>
+</figure>
+{{ end }}

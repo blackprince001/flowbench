@@ -542,6 +542,58 @@ func runWithStep(stepDur time.Duration) *executor.Result {
 	return &executor.Result{Duration: 100 * time.Millisecond, Iterations: 20, Samples: samples, Folded: folded}
 }
 
+// Issue #37: the dashboard renders the time-series charts and the per-step table
+// for a stored run.
+func TestDashboardRendersChartsAndSteps(t *testing.T) {
+	s, runBase := serve(t)
+
+	code, body := get(t, s, runBase+"/dashboard")
+	if code != http.StatusOK {
+		t.Fatalf("dashboard returned %d", code)
+	}
+	for _, want := range []string{"Charts", "<polyline", "req/s", "Steps", "checkout", "no agent attached"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard missing %q", want)
+		}
+	}
+	if strings.Contains(body, "ZgotmplZ") {
+		t.Error("chart geometry was stripped by the escaper")
+	}
+}
+
+// Issue #41's trend: a soak run's dashboard shows the drift section, including
+// any persisted trend finding.
+func TestDashboardShowsSoakTrend(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "svc")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rd, err := st.Save(
+		store.RunInfo{Scenario: "soak.flow.yaml", Mode: "soak", StartedAt: time.Now()},
+		throttledRun(),
+		[]collector.Outcome{{Expr: "p95(latency) trend", Detail: "p95 latency crept 10ms → 30ms over the run"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := store.NewWorkspace([]string{"svc=" + dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, body := get(t, server.New(ws), "/p/svc/runs/"+filepath.Base(rd)+"/dashboard")
+	if !strings.Contains(body, "Soak trend") {
+		t.Error("a soak run should show the trend section")
+	}
+	if !strings.Contains(body, "crept") {
+		t.Error("the persisted trend finding should be surfaced")
+	}
+}
+
 // Issue #40's acceptance: comparing two runs of the same scenario where one has
 // an injected slowdown highlights the regressed step.
 func TestComparePageHighlightsTheRegressedStep(t *testing.T) {

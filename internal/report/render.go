@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-//go:embed assets/report.css assets/flame.js templates/*.html
+//go:embed assets/report.css assets/flame.js assets/live.js templates/*.html
 var assets embed.FS
 
 // rowHeight is the flame-graph row pitch: 34px of frame plus a 2px gap, so
@@ -214,6 +214,8 @@ var (
 	waterfallTmpl = parse("templates/waterfall.html")
 	outcomesTmpl  = parse("templates/outcomes.html")
 	compareTmpl   = parse("templates/compare.html")
+	dashboardTmpl = parse("templates/dashboard.html")
+	liveTmpl      = parse("templates/live.html")
 )
 
 func parse(page string) *template.Template {
@@ -224,6 +226,7 @@ func parse(page string) *template.Template {
 var funcs = template.FuncMap{
 	"css":       func() template.CSS { return template.CSS(mustRead("assets/report.css")) },
 	"flameJS":   func() template.JS { return template.JS(mustRead("assets/flame.js")) },
+	"liveJS":    func() template.JS { return template.JS(mustRead("assets/live.js")) },
 	"dur":       humanDur,
 	"framePos":  framePos,
 	"barPos":    barPos,
@@ -268,6 +271,16 @@ func RenderOutcomes(w io.Writer, p OutcomesPage) error {
 // RenderCompare writes the run-versus-baseline comparison page.
 func RenderCompare(w io.Writer, p ComparePage) error {
 	return compareTmpl.ExecuteTemplate(w, "layout", p)
+}
+
+// RenderDashboard writes the time-series dashboard page.
+func RenderDashboard(w io.Writer, p DashboardPage) error {
+	return dashboardTmpl.ExecuteTemplate(w, "layout", p)
+}
+
+// RenderLive writes the live view of an in-progress run.
+func RenderLive(w io.Writer, p LivePage) error {
+	return liveTmpl.ExecuteTemplate(w, "layout", p)
 }
 
 // framePos and barPos build geometry as template.CSS because html/template

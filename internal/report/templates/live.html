@@ -1,0 +1,53 @@
+{{ define "content" }}
+
+<h1 class="page-title">Watching {{ .Scenario }}</h1>
+<p class="byline">
+  <b>{{ .Mode }}</b>
+  <span class="byline-sep" aria-hidden="true">•</span><b>{{ .Target }}</b>
+  <span class="byline-sep" aria-hidden="true">•</span>
+  <span class="pill" id="live-status" style="--tone:var(--kind-net)">running</span>
+</p>
+
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Live</h2>
+    <form class="live-abort" method="post" action="{{ .AbortURL }}" data-live-abort>
+      <button class="ghost-btn" type="submit">Abort run</button>
+    </form>
+  </div>
+  <div class="tiles">
+    <div class="tile">
+      <div class="tile-label">elapsed</div>
+      <div class="tile-value" id="live-elapsed">{{ .Stat.Elapsed }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile-label">virtual users</div>
+      <div class="tile-value" id="live-vus">{{ .Stat.VUs }}</div>
+      <div class="tile-sub">of {{ .Stat.PeakVUs }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile-label">completed</div>
+      <div class="tile-value" id="live-completed">{{ .Stat.Completed }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile-label">throughput</div>
+      <div class="tile-value" id="live-rps">{{ .Stat.RPS }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile-label">error rate</div>
+      <div class="tile-value" id="live-error">{{ .Stat.ErrorRate }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile-label">throttle rate</div>
+      <div class="tile-value" id="live-throttle">{{ .Stat.ThrottleRate }}</div>
+    </div>
+  </div>
+  <div class="card-body">
+    <p class="hint">Percentiles, the flame graph and the full dashboard appear once the run completes.</p>
+  </div>
+</section>
+
+<noscript><meta http-equiv="refresh" content="2"></noscript>
+<script>{{ liveJS }}</script>
+
+{{ end }}
