@@ -105,14 +105,21 @@ func Resolve(name, dir string) string {
 	return filepath.Join(dir, name+".yaml")
 }
 
+// stepURLs is every host a step can reach — its call, plus an OAuth2 token
+// endpoint, which is a real outbound request carrying env-sourced client
+// credentials and so belongs under the same allow-list as the call itself.
 func stepURLs(st *ir.Step) []string {
+	var urls []string
 	switch {
 	case st.Call != nil:
-		return []string{st.Call.URL}
+		urls = append(urls, st.Call.URL)
 	case st.Poll != nil:
-		return []string{st.Poll.Call.URL}
+		urls = append(urls, st.Poll.Call.URL)
 	}
-	return nil
+	if st.Auth != nil && st.Auth.TokenURL != "" {
+		urls = append(urls, st.Auth.TokenURL)
+	}
+	return urls
 }
 
 func originOf(raw string) (string, error) {

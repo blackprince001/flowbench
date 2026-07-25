@@ -18,21 +18,32 @@ import (
 	"github.com/blackprince001/flowbench/internal/parser"
 )
 
-func TestAuthenticatedCheckoutTwoSurfaceParity(t *testing.T) {
-	yamlRes, err := parser.ParseFlowFile("../../tests/flows/authenticated_checkout.flow.yaml", nil)
-	if err != nil {
-		t.Fatalf("parsing YAML fixture: %v", err)
-	}
+// fixtures are the flows written twice, once per surface. Each name resolves
+// to ../../tests/flows/<name>.flow.yaml and ../../tests/flows/<name>.py.
+var fixtures = []string{
+	"authenticated_checkout", // the PRD section 11 sample: chaining (#22)
+	"auth_schemes",           // every auth scheme, plus flow default and opt-out (#30)
+}
 
-	pyJSON := compilePythonFlow(t, "../../tests/flows/authenticated_checkout.py")
-	pySc, err := ir.DecodeScenario(pyJSON)
-	if err != nil {
-		t.Fatalf("decoding Python-compiled IR: %v\n%s", err, pyJSON)
-	}
+func TestTwoSurfaceParity(t *testing.T) {
+	for _, name := range fixtures {
+		t.Run(name, func(t *testing.T) {
+			yamlRes, err := parser.ParseFlowFile("../../tests/flows/"+name+".flow.yaml", nil)
+			if err != nil {
+				t.Fatalf("parsing YAML fixture: %v", err)
+			}
 
-	got, want := canonicalize(t, pySc), canonicalize(t, yamlRes.Scenario)
-	if got != want {
-		t.Errorf("IR diverged between surfaces:\n--- yaml ---\n%s\n--- python ---\n%s", want, got)
+			pyJSON := compilePythonFlow(t, "../../tests/flows/"+name+".py")
+			pySc, err := ir.DecodeScenario(pyJSON)
+			if err != nil {
+				t.Fatalf("decoding Python-compiled IR: %v\n%s", err, pyJSON)
+			}
+
+			got, want := canonicalize(t, pySc), canonicalize(t, yamlRes.Scenario)
+			if got != want {
+				t.Errorf("IR diverged between surfaces:\n--- yaml ---\n%s\n--- python ---\n%s", want, got)
+			}
+		})
 	}
 }
 

@@ -1,0 +1,11 @@
+# HTTP basic auth. The engine base64-encodes the pair and registers the blob
+# for redaction, since it decodes straight back to the password.
+flow: auth_basic
+steps:
+  - id: whoami
+    call: GET /whoami
+    auth:
+      scheme: basic
+      username: "{{ env.FLOWBENCH_TEST_USER }}"
+      password: "{{ env.FLOWBENCH_TEST_PASSWORD }}"
+    assert: [ status == 200 ]

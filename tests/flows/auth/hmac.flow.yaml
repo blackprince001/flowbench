@@ -1,0 +1,18 @@
+# HMAC request signing. Unset, `sign` is the canonical string most schemes
+# agree on — "{method}\n{path}\n{timestamp}\n{body_sha256}" — and services
+# that sign something else override it over the same placeholders:
+# {method} {path} {query} {body} {body_sha256} {timestamp} {key_id}.
+#
+# The signature is computed per attempt, so a retried request is signed
+# afresh rather than replaying a stale timestamp.
+flow: auth_hmac
+steps:
+  - id: place_order
+    call: POST /orders
+    body: { item: "widget", quantity: 2 }
+    auth:
+      scheme: hmac
+      secret: "{{ env.FLOWBENCH_TEST_HMAC_SECRET }}"
+      key_id: "{{ env.FLOWBENCH_TEST_HMAC_KEY_ID }}"
+      timestamp_header: X-Timestamp
+    assert: [ status == 200 ]

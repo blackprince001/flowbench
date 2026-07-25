@@ -1,0 +1,17 @@
+# OAuth2 client-credentials. The token endpoint is fetched once for the whole
+# run and shared across every VU, and must sit inside the target's allow-list —
+# it is a real outbound request carrying the client credentials.
+#
+# Authorization-code is deliberately absent: it needs browser interaction and
+# is out of v1 scope.
+flow: auth_oauth2
+steps:
+  - id: whoami
+    call: GET /whoami
+    auth:
+      scheme: oauth2_client_credentials
+      token_url: "{{ env.FLOWBENCH_TEST_TOKEN_URL }}"
+      client_id: "{{ env.FLOWBENCH_TEST_CLIENT_ID }}"
+      client_secret: "{{ env.FLOWBENCH_TEST_CLIENT_SECRET }}"
+      scopes: [orders:read, orders:write]
+    assert: [ status == 200 ]

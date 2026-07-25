@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/blackprince001/flowbench/internal/adapters"
+	"github.com/blackprince001/flowbench/internal/auth"
 	"github.com/blackprince001/flowbench/internal/collector"
 	"github.com/blackprince001/flowbench/internal/data"
 	"github.com/blackprince001/flowbench/internal/executor"
@@ -211,6 +212,10 @@ func executeOnce(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 
 	fmt.Fprintf(stdout, "running %q against %s (%s)\n", sc.Name, tgt.Config().Name, tgt.BaseURL())
 
+	// One provider for the whole command, so a token fetched for the first
+	// fixture row serves the rest, gated by the same allow-list as the calls.
+	credentials := auth.NewProvider(auth.Options{Allow: tgt.Allows})
+
 	for _, flow := range sc.Flows {
 		rows := iterationRows(flow, pools)
 		for i, row := range rows {
@@ -221,6 +226,7 @@ func executeOnce(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 				BaseURL: tgt.BaseURL(),
 				Mode:    sc.Profile.Mode,
 				Allow:   tgt.Allows,
+				Auth:    credentials,
 			}
 			it, err := runner.RunFlow(context.Background(), flow, scope)
 			if err != nil {

@@ -17,8 +17,9 @@ uv run ruff check .     # lint
 uv run ruff format .    # format
 ```
 
-The Go conformance suite (`internal/conformance`) compiles
-`tests/flows/authenticated_checkout.py` and diffs the resulting IR against the
-YAML parser's. It picks up `sdk-python/.venv` automatically, so run `uv sync`
+The Go conformance suite (`internal/conformance`) compiles each `tests/flows/*.py`
+fixture and diffs the resulting IR against the YAML parser's output for the
+`.flow.yaml` of the same name — a flow written twice must compile to one
+representation. It picks up `sdk-python/.venv` automatically, so run `uv sync`
 before `go test ./...`, or point `FLOWBENCH_PYTHON` at an interpreter of your
 own. Without either it skips rather than fails.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -26,23 +27,34 @@ const maxBackoff = 2 * time.Minute
 // wraps each attempt and each backoff wait in a child span under the step, and
 // the step's duration is the time-to-success including backoff — so retries add
 // to measured latency rather than hiding it.
-func (r *Runner) executeCall(ctx context.Context, st *ir.Step, req *adapters.Request, anchor time.Time) (*adapters.Response, *span.Span, error) {
+//
+// Credentials are attached per attempt rather than once for the step, so a
+// retried request carries a fresh HMAC signature and timestamp — and a token
+// that refreshed mid-backoff — instead of replaying the first attempt's.
+func (r *Runner) executeCall(ctx context.Context, st *ir.Step, req *adapters.Request, scope *Scope, anchor time.Time) (*adapters.Response, *span.Span, error) {
 	if st.Retry == nil {
+		if err := r.applyAuth(ctx, st, req, scope); err != nil {
+			return nil, failedSpan(st.ID, anchor), err
+		}
 		return r.Session.Do(ctx, st.ID, req, anchor)
 	}
 
 	p := st.Retry
-	attempts := p.MaxAttempts
-	if attempts < 1 {
-		attempts = 1
-	}
+	attempts := max(p.MaxAttempts, 1)
 
 	step := span.New(st.ID, time.Since(anchor))
 	var resp *adapters.Response
 	var err error
 	for attempt := 1; ; attempt++ {
+		name := fmt.Sprintf("attempt %d", attempt)
+		if err = r.applyAuth(ctx, st, req, scope); err != nil {
+			resp = nil
+			step.Children = append(step.Children, failedSpan(name, anchor))
+			break
+		}
+
 		var aSp *span.Span
-		resp, aSp, err = r.Session.Do(ctx, fmt.Sprintf("attempt %d", attempt), req, anchor)
+		resp, aSp, err = r.Session.Do(ctx, name, req, anchor)
 		step.Children = append(step.Children, aSp)
 
 		if err != nil || attempt >= attempts || !retryable(p, resp.Status) {
@@ -74,12 +86,7 @@ func (r *Runner) backoff(ctx context.Context, step *span.Span, d time.Duration, 
 
 // retryable reports whether a status is in the policy's on_status list.
 func retryable(p *ir.RetryPolicy, status int) bool {
-	for _, s := range p.OnStatus {
-		if s == status {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(p.OnStatus, status)
 }
 
 // backoffDelay computes the wait before the next attempt.
@@ -91,10 +98,7 @@ func backoffDelay(p *ir.RetryPolicy, attempt int, resp *adapters.Response) time.
 		}
 		return baseDelay(p)
 	case ir.BackoffExponential:
-		shift := attempt - 1
-		if shift > 16 {
-			shift = 16
-		}
+		shift := min(attempt-1, 16)
 		return clampBackoff(baseDelay(p) << shift)
 	default: // fixed
 		return baseDelay(p)
@@ -131,10 +135,7 @@ func retryAfter(resp *adapters.Response) (time.Duration, bool) {
 		return time.Duration(secs) * time.Second, true
 	}
 	if t, err := http.ParseTime(v); err == nil {
-		d := time.Until(t)
-		if d < 0 {
-			d = 0
-		}
+		d := max(time.Until(t), 0)
 		return d, true
 	}
 	return 0, false

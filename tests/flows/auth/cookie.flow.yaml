@@ -1,0 +1,11 @@
+# A session cookie set explicitly. It rides alongside whatever the VU's own
+# cookie jar picked up from earlier steps rather than replacing it.
+flow: auth_cookie
+steps:
+  - id: whoami
+    call: GET /whoami
+    auth:
+      scheme: cookie
+      name: session
+      value: "{{ env.FLOWBENCH_TEST_SESSION }}"
+    assert: [ status == 200 ]

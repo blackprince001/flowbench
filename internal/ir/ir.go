@@ -92,6 +92,7 @@ type Step struct {
 	Assert    []Assertion   `json:"assert,omitempty"`
 	Retry     *RetryPolicy  `json:"retry,omitempty"`
 	Throttle  *ThrottleSpec `json:"throttle,omitempty"`
+	Auth      *AuthSpec     `json:"auth,omitempty"`
 	OnFailure FailureAction `json:"on_failure,omitempty"`
 	Capture   *Capture      `json:"capture,omitempty"`
 	Pos       *Pos          `json:"pos,omitempty"`
@@ -192,6 +193,84 @@ type RetryPolicy struct {
 type ThrottleSpec struct {
 	Statuses []int `json:"statuses,omitempty"`
 	AsError  *bool `json:"as_error,omitempty"`
+}
+
+type AuthScheme string
+
+const (
+	// AuthNone is an explicit opt-out. Both authoring surfaces drop it while
+	// flattening a flow-level default onto steps, so it only reaches the
+	// executor in hand-written IR, where it is a no-op.
+	AuthNone   AuthScheme = "none"
+	AuthBearer AuthScheme = "bearer"
+	AuthBasic  AuthScheme = "basic"
+	AuthAPIKey AuthScheme = "api_key"
+	AuthCookie AuthScheme = "cookie"
+	AuthOAuth2 AuthScheme = "oauth2_client_credentials"
+	AuthHMAC   AuthScheme = "hmac"
+)
+
+// CredentialIn names where an api_key rides on the request.
+type CredentialIn string
+
+const (
+	InHeader CredentialIn = "header"
+	InQuery  CredentialIn = "query"
+)
+
+// HMAC defaults. The canonical string is what most request-signing schemes
+// agree on — method, path, a timestamp, a body digest — and Sign overrides it
+// for services that sign something else.
+const (
+	DefaultHMACAlgorithm       = "sha256"
+	DefaultHMACEncoding        = "hex"
+	DefaultHMACHeader          = "X-Signature"
+	DefaultHMACKeyIDHeader     = "X-Key-Id"
+	DefaultHMACSigningTemplate = "{method}\n{path}\n{timestamp}\n{body_sha256}"
+)
+
+// AuthSpec declares how a step authenticates. It carries credential
+// *references* — `{{ env.* }}` templates resolved at request time — never
+// literal credentials, so every file holding one stays safe to commit
+// (ADR 0005). Which fields apply depends on Scheme; validate rejects fields
+// belonging to another scheme rather than silently ignoring them.
+//
+// OAuth2 authorization-code is deliberately absent: it needs browser
+// interaction and is explicitly out of v1 scope (PRD section 8).
+type AuthSpec struct {
+	Scheme AuthScheme `json:"scheme"`
+
+	// bearer: the token, static or extracted by an earlier step.
+	Token string `json:"token,omitempty"`
+
+	// basic
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+
+	// api_key (In selects header or query) and cookie (always a cookie).
+	Name  string       `json:"name,omitempty"`
+	Value string       `json:"value,omitempty"`
+	In    CredentialIn `json:"in,omitempty"`
+
+	// oauth2_client_credentials. The token endpoint is fetched once per run
+	// and cached across VUs, and must sit inside the target's allow-list.
+	TokenURL     string   `json:"token_url,omitempty"`
+	ClientID     string   `json:"client_id,omitempty"`
+	ClientSecret string   `json:"client_secret,omitempty"`
+	Scopes       []string `json:"scopes,omitempty"`
+
+	// hmac request signing.
+	Secret          string `json:"secret,omitempty"`
+	Algorithm       string `json:"algorithm,omitempty"`        // sha256 (default) | sha512
+	Encoding        string `json:"encoding,omitempty"`         // hex (default) | base64
+	Header          string `json:"header,omitempty"`           // carries the signature
+	KeyID           string `json:"key_id,omitempty"`           // optional key identifier
+	KeyIDHeader     string `json:"key_id_header,omitempty"`    // carries KeyID when set
+	TimestampHeader string `json:"timestamp_header,omitempty"` // carries the signing timestamp
+	// Sign is the canonical string, over the placeholders {method}, {path},
+	// {query}, {body}, {body_sha256}, {timestamp}, and {key_id}. It is not
+	// a credential and is never `{{ }}`-templated.
+	Sign string `json:"sign,omitempty"`
 }
 
 type Profile struct {

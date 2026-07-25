@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/blackprince001/flowbench/internal/adapters"
+	"github.com/blackprince001/flowbench/internal/auth"
 	"github.com/blackprince001/flowbench/internal/eval"
 	"github.com/blackprince001/flowbench/internal/ir"
 	"github.com/blackprince001/flowbench/internal/span"
@@ -21,6 +22,12 @@ type Runner struct {
 	BaseURL string // prepended to relative call URLs
 	Mode    ir.Mode
 	Allow   func(rawURL string) (bool, error)
+
+	// Auth applies steps' declared credentials. One provider is shared by
+	// every VU in a run so an OAuth2 token is fetched once, not per VU; a
+	// step declaring auth without one set is a wiring error, not a silent
+	// unauthenticated request.
+	Auth *auth.Provider
 }
 
 // Failure is one recorded assertion or extraction failure within an iteration.
@@ -94,7 +101,7 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 		}
 	}
 
-	resp, sp, err := r.executeCall(ctx, st, req, anchor)
+	resp, sp, err := r.executeCall(ctx, st, req, scope, anchor)
 	if !captureDisabled(st) {
 		var respBody []byte
 		status, retryAfter := 0, ""
@@ -154,6 +161,31 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 		}
 	}
 	return sp, cont, nil
+}
+
+// applyAuth attaches the step's declared credentials to req, resolving their
+// `{{ env.* }}` references through the iteration's scope — which registers
+// them as secrets on the way past, so the redaction path covers them without
+// auth having to know about artifacts.
+func (r *Runner) applyAuth(ctx context.Context, st *ir.Step, req *adapters.Request, scope *Scope) error {
+	if st.Auth == nil || st.Auth.Scheme == ir.AuthNone {
+		return nil
+	}
+	if r.Auth == nil {
+		return fmt.Errorf("step %q declares %s auth but the runner has no auth provider", st.ID, st.Auth.Scheme)
+	}
+	if err := r.Auth.Apply(ctx, st.Auth, req, scope.Resolve, scope.Secrets()); err != nil {
+		return fmt.Errorf("step %q: %w", st.ID, err)
+	}
+	return nil
+}
+
+// failedSpan is a closed, failed span for work that never reached the wire.
+func failedSpan(name string, anchor time.Time) *span.Span {
+	sp := span.New(name, time.Since(anchor))
+	sp.Outcome = span.OutcomeFailed
+	sp.Duration = time.Since(anchor) - sp.Start
+	return sp
 }
 
 func (r *Runner) resolveURL(u string) string {

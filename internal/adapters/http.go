@@ -12,6 +12,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptrace"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,6 +61,59 @@ type Response struct {
 	Status  int
 	Headers http.Header
 	Body    []byte
+}
+
+// FinalURL is the request as it will be sent: URL with Query merged in. The
+// transport and the HMAC signer both build it here, so a signature always
+// covers the URL that actually goes on the wire.
+func (r *Request) FinalURL() (*url.URL, error) {
+	u, err := url.Parse(r.URL)
+	if err != nil {
+		return nil, fmt.Errorf("parse url %q: %w", r.URL, err)
+	}
+	if len(r.Query) > 0 {
+		q := u.Query()
+		for k, v := range r.Query {
+			q.Set(k, v)
+		}
+		u.RawQuery = q.Encode()
+	}
+	return u, nil
+}
+
+// SetHeader sets a header, allocating the map on first use.
+func (r *Request) SetHeader(name, value string) {
+	if r.Headers == nil {
+		r.Headers = make(map[string]string, 1)
+	}
+	r.Headers[name] = value
+}
+
+// SetQuery sets a query parameter, allocating the map on first use.
+func (r *Request) SetQuery(name, value string) {
+	if r.Query == nil {
+		r.Query = make(map[string]string, 1)
+	}
+	r.Query[name] = value
+}
+
+// AddCookie sets one cookie in the Cookie header, keeping the others and
+// replacing any pair of the same name. Keeping the others is why a declared
+// cookie rides alongside the ones the step's own headers carry; replacing by
+// name is why re-applying on a retry does not send it twice.
+func (r *Request) AddCookie(name, value string) {
+	var pairs []string
+	for _, pair := range strings.Split(r.Headers["Cookie"], ";") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		if k, _, ok := strings.Cut(pair, "="); ok && strings.TrimSpace(k) == name {
+			continue
+		}
+		pairs = append(pairs, pair)
+	}
+	r.SetHeader("Cookie", strings.Join(append(pairs, name+"="+value), "; "))
 }
 
 // BuildRequest expands templates; body values are JSON-escaped so a quote in
@@ -170,16 +224,9 @@ func (s *Session) newHTTPRequest(ctx context.Context, req *Request) (*http.Reque
 	if req.Method == "" || req.URL == "" {
 		return nil, errors.New("request needs a method and a url")
 	}
-	u, err := url.Parse(req.URL)
+	u, err := req.FinalURL()
 	if err != nil {
-		return nil, fmt.Errorf("parse url %q: %w", req.URL, err)
-	}
-	if len(req.Query) > 0 {
-		q := u.Query()
-		for k, v := range req.Query {
-			q.Set(k, v)
-		}
-		u.RawQuery = q.Encode()
+		return nil, err
 	}
 
 	var body io.Reader

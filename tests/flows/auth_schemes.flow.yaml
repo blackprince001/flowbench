@@ -1,0 +1,76 @@
+# Every auth scheme in one flow, plus the flow-level default and the opt-out.
+# Paired with auth_schemes.py: the conformance suite holds the two spellings
+# to byte-identical IR, so the surfaces cannot drift (ADR 0002).
+#
+# Nothing here is a credential — every value is an `{{ env.* }}` reference the
+# engine resolves at run time (ADR 0005), so this file is safe to commit.
+flow: auth_schemes
+auth:
+  scheme: bearer
+  token: "{{ env.FB_API_TOKEN }}"
+steps:
+  - id: inherits_flow_default
+    call: GET /orders
+    assert: [ status == 200 ]
+
+  - id: opted_out
+    call: GET /health
+    auth: { scheme: none }
+    assert: [ status == 200 ]
+
+  - id: basic_auth
+    call: GET /reports
+    auth:
+      scheme: basic
+      username: "{{ env.FB_USER }}"
+      password: "{{ env.FB_PASSWORD }}"
+    assert: [ status == 200 ]
+
+  - id: api_key_header
+    call: GET /search
+    auth:
+      scheme: api_key
+      name: X-Api-Key
+      value: "{{ env.FB_API_KEY }}"
+    assert: [ status == 200 ]
+
+  - id: api_key_query
+    call: GET /legacy/search
+    auth:
+      scheme: api_key
+      name: api_key
+      value: "{{ env.FB_API_KEY }}"
+      in: query
+    assert: [ status == 200 ]
+
+  - id: session_cookie
+    call: GET /account
+    auth:
+      scheme: cookie
+      name: session
+      value: "{{ env.FB_SESSION }}"
+    assert: [ status == 200 ]
+
+  - id: client_credentials
+    call: POST /payments
+    body: { amount: 250 }
+    auth:
+      scheme: oauth2_client_credentials
+      token_url: https://issuer.example/oauth/token
+      client_id: "{{ env.FB_CLIENT_ID }}"
+      client_secret: "{{ env.FB_CLIENT_SECRET }}"
+      scopes: [payments:write]
+    assert: [ status == 202 ]
+
+  - id: signed_webhook
+    call: POST /webhooks/replay
+    body: { event_id: "evt_123" }
+    auth:
+      scheme: hmac
+      secret: "{{ env.FB_SIGNING_SECRET }}"
+      key_id: "{{ env.FB_SIGNING_KEY_ID }}"
+      timestamp_header: X-Timestamp
+    assert: [ status == 202 ]
+
+profile:
+  mode: integration
