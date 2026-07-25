@@ -118,6 +118,8 @@ func stepURLs(st *ir.Step) []string {
 	switch {
 	case st.Call != nil:
 		urls = append(urls, st.Call.URL)
+	case st.GraphQL != nil:
+		urls = append(urls, st.GraphQL.URL)
 	case st.Poll != nil:
 		urls = append(urls, st.Poll.Call.URL)
 	}

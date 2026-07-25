@@ -163,7 +163,7 @@ func (st *Step) validate(path string) []error {
 	}
 
 	specs := 0
-	for _, set := range []bool{st.Call != nil, st.Wait != nil, st.Poll != nil, st.Verify != nil} {
+	for _, set := range []bool{st.Call != nil, st.GraphQL != nil, st.Wait != nil, st.Poll != nil, st.Verify != nil} {
 		if set {
 			specs++
 		}
@@ -173,15 +173,16 @@ func (st *Step) validate(path string) []error {
 	}
 
 	specFor := map[StepType]bool{
-		StepCall:   st.Call != nil,
-		StepWait:   st.Wait != nil,
-		StepPoll:   st.Poll != nil,
-		StepVerify: st.Verify != nil,
+		StepCall:    st.Call != nil,
+		StepGraphQL: st.GraphQL != nil,
+		StepWait:    st.Wait != nil,
+		StepPoll:    st.Poll != nil,
+		StepVerify:  st.Verify != nil,
 	}
 	matches, known := specFor[st.Type]
 	switch {
 	case !known:
-		errs = append(errs, errf(path, "unknown step type %q (v0 executes call, wait, poll, verify)", st.Type))
+		errs = append(errs, errf(path, "unknown step type %q (v0 executes call, graphql, wait, poll, verify)", st.Type))
 	case !matches:
 		errs = append(errs, errf(path, "type is %q but the %q spec is not set", st.Type, st.Type))
 	}
@@ -189,6 +190,8 @@ func (st *Step) validate(path string) []error {
 	switch {
 	case st.Call != nil:
 		errs = append(errs, st.Call.validate(path)...)
+	case st.GraphQL != nil:
+		errs = append(errs, st.GraphQL.validate(path)...)
 	case st.Wait != nil && st.Wait.Duration <= 0:
 		errs = append(errs, errf(path, "wait duration must be positive"))
 	case st.Poll != nil:
@@ -200,15 +203,15 @@ func (st *Step) validate(path string) []error {
 	}
 
 	if st.Retry != nil {
-		if st.Type != StepCall {
-			errs = append(errs, errf(path, "retry policies apply to call steps only (poll bounds itself)"))
+		if st.Type != StepCall && st.Type != StepGraphQL {
+			errs = append(errs, errf(path, "retry policies apply to call and graphql steps only (poll bounds itself)"))
 		}
 		errs = append(errs, st.Retry.validate(path)...)
 	}
 
 	if st.Auth != nil {
-		if st.Call == nil && st.Poll == nil {
-			errs = append(errs, errf(path, "auth applies to steps that make a request (call, poll), not %q steps", st.Type))
+		if !st.MakesRequest() {
+			errs = append(errs, errf(path, "auth applies to steps that make a request (call, graphql, poll), not %q steps", st.Type))
 		}
 		errs = append(errs, st.Auth.validate(path)...)
 	}
@@ -361,6 +364,48 @@ func (c *CallSpec) validate(path string) []error {
 	}
 	if len(c.Body) > 0 && !json.Valid(c.Body) {
 		errs = append(errs, errf(path, "body is not valid JSON"))
+	}
+	return errs
+}
+
+// MakesRequest reports whether the step sends something over the wire. It is
+// what decides whether auth has anything to attach itself to, so the parser
+// and the validator have to agree on it — a new protocol adapter that forgets
+// this line silently loses its credentials.
+func (st *Step) MakesRequest() bool {
+	return st.Call != nil || st.GraphQL != nil || st.Poll != nil
+}
+
+func (g *GraphQLSpec) validate(path string) []error {
+	var errs []error
+	inline := g.URL != ""
+	switch {
+	case g.Endpoint != "" && inline:
+		errs = append(errs, errf(path, "graphql is either an endpoint reference or an inline url, not both"))
+	case g.Endpoint != "":
+		if !identRe.MatchString(g.Endpoint) {
+			errs = append(errs, errf(path, "endpoint reference %q must match %s", g.Endpoint, identRe))
+		}
+	case g.URL == "":
+		errs = append(errs, errf(path, "graphql step needs a url (the endpoint the operation posts to)"))
+	}
+
+	if strings.TrimSpace(g.Query) == "" {
+		errs = append(errs, errf(path, "graphql step needs a query (the operation document)"))
+	}
+	if len(g.Variables) > 0 {
+		if !json.Valid(g.Variables) {
+			errs = append(errs, errf(path, "graphql variables are not valid JSON"))
+		} else if g.Variables[0] != '{' {
+			// The spec requires a map; a bare list or scalar is rejected by
+			// every server, so catching it here beats a runtime 400.
+			errs = append(errs, errf(path, "graphql variables must be a mapping of name to value"))
+		}
+	}
+	switch g.OnErrors {
+	case "", GraphQLErrorsFail, GraphQLErrorsAllowPartial, GraphQLErrorsIgnore:
+	default:
+		errs = append(errs, errf(path, "unknown graphql on_errors %q (fail, allow_partial, ignore)", g.OnErrors))
 	}
 	return errs
 }
@@ -531,6 +576,18 @@ func (st *Step) templatedFields() []string {
 		collect(&st.Poll.Call)
 	case st.Verify != nil:
 		fields = append(fields, st.Verify.Args...)
+	case st.GraphQL != nil:
+		// The query document is deliberately excluded: values reach a GraphQL
+		// operation through variables, and a `{{ }}` spliced into the document
+		// itself would be string-substituted into a query rather than sent as
+		// a typed, escaped variable.
+		fields = append(fields, st.GraphQL.URL)
+		for _, v := range st.GraphQL.Headers {
+			fields = append(fields, v)
+		}
+		if len(st.GraphQL.Variables) > 0 {
+			fields = append(fields, string(st.GraphQL.Variables))
+		}
 	}
 	if st.Auth != nil {
 		fields = append(fields, st.Auth.templatedFields()...)

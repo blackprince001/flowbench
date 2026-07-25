@@ -1,0 +1,18 @@
+# A failed GraphQL operation answers `200 OK` and reports the failure in the
+# body, so the status alone would score this as a pass. By default a non-empty
+# `errors` array fails the step — the author opts out rather than having to
+# remember to opt in with an assertion.
+#
+# on_failure: record keeps the flow going so the recorded failure can be read.
+flow: graphql_errors
+steps:
+  - id: forbidden_field
+    graphql:
+      url: /graphql
+      query: |
+        query Restricted {
+          product(sku: "FB-001") { id costPriceCents }
+        }
+    on_failure: record
+    assert:
+      - status == 200
