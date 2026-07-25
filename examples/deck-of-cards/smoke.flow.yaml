@@ -1,0 +1,74 @@
+# The chaining primitive, end to end against a real stateful API: shuffle a
+# deck, keep its id, draw from *that* deck, put the drawn cards in a pile, and
+# read the pile back. Every step depends on a value the previous one returned,
+# which is the thing a fixed JSON endpoint cannot demonstrate.
+#
+#   flowbench run examples/deck-of-cards/smoke.flow.yaml --target examples/deck-of-cards/target.yaml
+#
+# Integration mode is the exit-code contract: 0 clean, 1 a recorded failure
+# naming the step, 2 a pre-run error. It prints and exits — only load/stress/soak
+# write a run artifact for the results server (see deal.flow.yaml).
+flow: deck_round_trip
+steps:
+  # 1. Ask for a fresh shuffled deck and keep the id the server gives back.
+  #    Everything after this addresses that deck by id.
+  - id: shuffle_deck
+    call: GET /api/deck/new/shuffle/
+    query:
+      deck_count: "1"
+    extract:
+      deck_id: $.deck_id
+    assert:
+      - status == 200
+      - header.Content-Type contains "application/json"
+      - $.success == true
+      - $.remaining == 52
+      - $.deck_id != null
+      - latency < 5000ms
+
+  # 2. Draw from the deck just created. The extracted id is injected into the
+  #    path, and two card codes come back out for the next step.
+  - id: draw_hand
+    call: GET /api/deck/{{ deck_id }}/draw/
+    query:
+      count: "2"
+    extract:
+      first_card: $.cards[0].code
+      second_card: $.cards[1].code
+    assert:
+      - status == 200
+      - $.success == true
+      - $.remaining == 50 # the two cards really left the deck
+      - $.cards[0].code matches "^[0-9AJQK]+[SDCH]$"
+      - $.cards[0].suit != null
+
+  # 3. A courtesy pause between calls against a free public service. `wait` is a
+  #    step in its own right, so it shows up in the trace as one.
+  - id: settle
+    wait: 300ms
+
+  # 4. Put both drawn cards into a named pile. Two extracted variables are
+  #    injected into one query value.
+  - id: build_pile
+    call: GET /api/deck/{{ deck_id }}/pile/hand/add/
+    query:
+      cards: "{{ first_card }},{{ second_card }}"
+    assert:
+      - status == 200
+      - $.success == true
+      - $.piles.hand.remaining == 2
+
+  # 5. Read the pile back. The deck the flow started is still there, holding
+  #    exactly what this flow put in it.
+  - id: list_pile
+    call: GET /api/deck/{{ deck_id }}/pile/hand/list/
+    assert:
+      - status == 200
+      - $.success == true
+      - $.piles.hand.remaining == 2
+      - $.piles.hand.cards[0].code != null
+      # The variable itself is assertable, not just the response.
+      - first_card != null
+
+profile:
+  mode: integration

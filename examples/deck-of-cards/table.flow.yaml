@@ -1,0 +1,51 @@
+# The same chain under a load profile, so there is a run artifact to open in the
+# results server: only load/stress/soak write to the run store — integration and
+# system print and exit.
+#
+#   flowbench run examples/deck-of-cards/table.flow.yaml --target examples/deck-of-cards/target.yaml
+#   flowbench serve --store runs
+#
+# Deliberately tiny. This is a free hobby API, and 2 VUs at 2 flow-runs/s for
+# eight seconds is about eighty requests — a person clicking around the site.
+# Anything at real scale belongs against the local stub (examples/load-local),
+# which exists so a public service does not have to absorb a stress run.
+flow: deck_table
+steps:
+  - id: shuffle_deck
+    call: GET /api/deck/new/shuffle/
+    query:
+      deck_count: "1"
+    extract:
+      deck_id: $.deck_id
+    assert:
+      - status == 200
+      - $.success == true
+
+  - id: draw_hand
+    call: GET /api/deck/{{ deck_id }}/draw/
+    query:
+      count: "2"
+    extract:
+      first_card: $.cards[0].code
+    assert:
+      - status == 200
+      - $.remaining == 50
+
+  - id: build_pile
+    call: GET /api/deck/{{ deck_id }}/pile/hand/add/
+    query:
+      cards: "{{ first_card }}"
+    assert:
+      - status == 200
+      - $.piles.hand.remaining == 1
+
+profile:
+  mode: load
+  vus: 2
+  arrival_cap: 2/s # an open-loop schedule: 2 flow-runs a second, whatever the latency
+  hold: 8s
+  thresholds:
+    # Over the public internet, a threshold is really a statement about the
+    # network as much as the service. Both are generous on purpose.
+    - p95(latency) < 4s
+    - error_rate < 5%

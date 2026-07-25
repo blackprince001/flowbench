@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/blackprince001/flowbench/internal/ir"
 )
@@ -42,6 +43,10 @@ func (t *Target) Config() *ir.TargetConfig { return t.cfg }
 
 // BaseURL is prepended to relative call URLs.
 func (t *Target) BaseURL() string { return t.base }
+
+// RequestTimeout bounds one call against this target; zero leaves the adapter's
+// default in place.
+func (t *Target) RequestTimeout() time.Duration { return time.Duration(t.cfg.RequestTimeout) }
 
 // Allows reports whether a fully resolved call URL targets an allowed host.
 // Relative URLs are allowed because they resolve against the base URL. This is

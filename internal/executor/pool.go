@@ -53,6 +53,11 @@ type Options struct {
 	MaxTraces    int
 	MaxFailures  int
 	MaxBodyBytes int
+
+	// RequestTimeout bounds a single call. Without it a target that accepts a
+	// connection and then says nothing holds a VU for the adapter's default,
+	// which is a long time to lose a worker for. Zero uses that default.
+	RequestTimeout time.Duration
 }
 
 // Result is the raw product of a run: latency samples, retained trace trees,
@@ -310,7 +315,7 @@ func (p *pool) runClosed(ctx context.Context) {
 // iteration (integration/system).
 func (p *pool) vu(ctx context.Context, wg *sync.WaitGroup, deadline time.Time, once bool) {
 	defer wg.Done()
-	sess := adapters.NewSession(adapters.SessionOptions{})
+	sess := adapters.NewSession(adapters.SessionOptions{Timeout: p.opts.RequestTimeout})
 	local := newAcc()
 	for ctx.Err() == nil {
 		if !once && !time.Now().Before(deadline) {
@@ -377,7 +382,7 @@ func (p *pool) runOpen(ctx context.Context) {
 
 func (p *pool) worker(ctx context.Context, jobs <-chan time.Duration, wg *sync.WaitGroup) {
 	defer wg.Done()
-	sess := adapters.NewSession(adapters.SessionOptions{})
+	sess := adapters.NewSession(adapters.SessionOptions{Timeout: p.opts.RequestTimeout})
 	local := newAcc()
 	for intended := range jobs {
 		if ctx.Err() != nil {

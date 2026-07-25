@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blackprince001/flowbench/internal/ir"
 	"github.com/blackprince001/flowbench/internal/parser"
@@ -103,5 +104,30 @@ func TestDisallowedModeRefused(t *testing.T) {
 	sc := scenario(ir.ModeStress, callStep("s1", "GET", "/x"))
 	if err := g.Check(sc); err == nil || !strings.Contains(err.Error(), "stress") {
 		t.Errorf("stress mode should be refused, got %v", err)
+	}
+}
+
+// A call budget belongs to the target: without one, a host that accepts a
+// connection and then says nothing holds a VU for the adapter's default.
+func TestRequestTimeoutIsCarried(t *testing.T) {
+	tg, err := target.New(&ir.TargetConfig{
+		Name:           "svc",
+		BaseURLs:       []string{"http://localhost:8080"},
+		RequestTimeout: ir.Duration(2 * time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tg.RequestTimeout(); got != 2*time.Second {
+		t.Errorf("request timeout = %s, want 2s", got)
+	}
+
+	// Unset leaves the adapter's own default in place rather than forcing zero.
+	plain, err := target.New(&ir.TargetConfig{Name: "svc", BaseURLs: []string{"http://localhost:8080"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plain.RequestTimeout(); got != 0 {
+		t.Errorf("an undeclared timeout should stay zero, got %s", got)
 	}
 }
