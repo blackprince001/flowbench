@@ -1,0 +1,79 @@
+{{ define "content" }}
+
+{{ template "run-head" .RunHead }}
+{{ template "tabs" .Tabs }}
+
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Failures by step and cause</h2>
+    <p class="card-note">{{ .Note }}</p>
+  </div>
+  <div class="card-body">
+    {{ if .Groups }}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Step</th>
+          <th>Cause</th>
+          <th>Detail</th>
+          <th class="num">Iterations</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .Groups }}
+        <tr class="{{ if .Selected }}is-selected{{ end }}">
+          <td class="wf-name"><a class="span-link" href="{{ .Href }}">{{ .Step }}</a></td>
+          <td><span class="chip o-{{ .Tone }}">{{ .Cause }}</span></td>
+          <td class="mono cause-label">{{ .Label }}</td>
+          <td class="num">{{ .Count }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ else }}
+    <p class="empty">{{ .Note }}</p>
+    {{ end }}
+  </div>
+</section>
+
+{{ end }}
+
+{{ define "detail" }}
+{{ if .Groups }}
+{{ template "rail-head" "The failure group you picked: what the engine recorded, and every iteration behind it." }}
+<section class="card panel{{ if not .Selected }} is-empty{{ end }}">
+  {{ if .Selected }}
+  <div class="card-head">
+    <h2 class="card-title">{{ .Selected.Step }}</h2>
+    <p class="card-note"><span class="chip o-{{ .Selected.Tone }}">{{ .Selected.Cause }}</span></p>
+  </div>
+  <div class="card-body">
+    {{ template "facts" .Selected.Facts }}
+    {{ with .Selected.Detail }}
+    <h3 class="sub-h">Recorded reason</h3>
+    <pre class="body">{{ . }}</pre>
+    {{ end }}
+
+    <h3 class="sub-h">Iterations</h3>
+    <p class="hint">Each opens this failure's own waterfall, with the span that failed selected.</p>
+    <div class="picker">
+      {{ range .Selected.Runs }}
+      <a class="pick o-{{ .Outcome }}" href="{{ .Href }}" title="trace #{{ .Trace }} — {{ .Flow }} at {{ dur .At }}, {{ dur .Duration }}">
+        <span class="pick-seq">#{{ .Trace }}</span>
+        <span class="pick-dur">{{ dur .At }}</span>
+      </a>
+      {{ end }}
+    </div>
+    {{ if .Selected.Omitted }}
+    <p class="hint">{{ .Selected.Omitted }} more not listed.</p>
+    {{ end }}
+  </div>
+  {{ else }}
+  <div class="card-head"><h2 class="card-title">No group selected</h2></div>
+  <div class="card-body">
+    <p class="hint">Pick a row to see what the engine recorded and every iteration that failed that way — each one a link into its own waterfall.</p>
+  </div>
+  {{ end }}
+</section>
+{{ end }}
+{{ end }}

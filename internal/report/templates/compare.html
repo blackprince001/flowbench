@@ -136,3 +136,13 @@
 {{ end }}
 
 {{ end }}
+
+{{ define "detail" }}
+{{ template "rail-head" "Nothing to inspect on a comparison. It sets two whole runs side by side, rather than one thing inside a run." }}
+<section class="card panel is-empty">
+  <div class="card-head"><h2 class="card-title">Nothing selected</h2></div>
+  <div class="card-body">
+    <p class="hint">Open either run's flame graph, waterfall or outcomes to inspect a single frame, span or flow-run.</p>
+  </div>
+</section>
+{{ end }}

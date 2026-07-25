@@ -2,8 +2,38 @@
    percent so the browser reflows on resize with nothing re-laid out server-side.
 
    Two type roles carry the identity: a monospace for machine facts — run ids,
-   breadcrumbs, timestamps, tile labels — and the system sans for everything a
-   person wrote. Anything the engine produced is set in mono. */
+   breadcrumbs, timestamps, tile labels — and a sans for everything a person
+   wrote. Anything the engine produced is set in mono.
+
+   The sans is Open Runde, a soft cut of Inter, shipped in the binary (SIL OFL
+   1.1, licence beside the files) and served as files under /assets/ rather than
+   inlined — the stylesheet is inlined into every page, so an inlined font would
+   be re-sent with it. The mono stays the platform's own: a terminal face is
+   what machine facts should look like, and it costs nothing to ship. The
+   system stack sits behind Open Runde too, so a glyph outside its latin subset
+   falls back per glyph instead of failing. */
+
+@font-face {
+  font-family: "Open Runde";
+  src: url("/assets/OpenRunde-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Open Runde";
+  src: url("/assets/OpenRunde-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Open Runde";
+  src: url("/assets/OpenRunde-Semibold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
 
 :root {
   --ground: #0c0a09;
@@ -38,7 +68,7 @@
      prefers-reduced-motion guard. */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 
-  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --sans: "Open Runde", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   color-scheme: dark;
@@ -105,15 +135,20 @@ a { color: inherit; }
 
 /* Shell ---------------------------------------------------------------- */
 
+/* Three columns: the run list on the left, the flow in the middle, whatever is
+   selected on the right. The outer columns are `auto` so a collapsed — or
+   empty — rail takes no width at all rather than leaving a gap, and the middle
+   is the only track that grows. */
 .shell {
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 14px;
   min-height: 100vh;
   padding: 14px;
 }
 
 .side {
+  width: 232px;
   display: flex;
   flex-direction: column;
   gap: 22px;
@@ -123,6 +158,92 @@ a { color: inherit; }
   align-self: start;
   max-height: calc(100vh - 28px);
   overflow-y: auto;
+}
+.nav-list { list-style: none; margin: 0; padding: 0; }
+
+/* The right rail is where anything individual is read: the span, the frame, the
+   flow-run, the failure group. It scrolls on its own so a long payload never
+   moves the page under it. */
+.rail {
+  width: 340px;
+  position: sticky;
+  top: 14px;
+  align-self: start;
+  max-height: calc(100vh - 28px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.rail:empty { display: none; }
+.rail-head { padding: 2px 2px 0; }
+.rail-label {
+  font: 500 10px/1 var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.rail-note { margin: 6px 0 0; font-size: 12px; color: var(--ink-3); }
+
+/* Collapsed by the shell script, which writes the state on <html>. */
+:root[data-side="off"] .side,
+:root[data-rail="off"] .rail { display: none; }
+:root:has(.rail:empty) .detail-btn { display: none; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.topbar .crumbs { margin: 0; flex: 1; min-width: 0; }
+.detail-btn { margin-left: auto; }
+
+/* Two 14px bars, one narrow: a panel beside a page. The side button's narrow
+   bar leads, the detail button's trails, so each points at what it toggles. */
+.rail-btn {
+  flex: none;
+  width: 28px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.rail-btn:hover { border-color: var(--ink-3); background: var(--raised); }
+.rail-btn-mark {
+  width: 14px;
+  height: 11px;
+  border: 1.5px solid var(--ink-3);
+  border-radius: 2.5px;
+  position: relative;
+}
+.rail-btn:hover .rail-btn-mark { border-color: var(--ink); }
+.rail-btn-mark::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  width: 4px;
+  background: var(--ink-3);
+}
+.rail-btn:hover .rail-btn-mark::before { background: var(--ink); }
+.side-mark::before { left: 0; }
+.detail-mark::before { right: 0; }
+.rail-btn[aria-pressed="false"] .rail-btn-mark::before { background: none; }
+
+/* The flow has a reading width of its own: on a wide screen the middle column
+   stops growing rather than stretching a table across a metre of glass. */
+.flow {
+  width: 100%;
+  max-width: var(--flow, 1080px);
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
 .brand {
@@ -191,6 +312,11 @@ a { color: inherit; }
 
 .main { min-width: 0; padding: 10px 12px 72px; }
 
+/* The flow's own gap owns the vertical rhythm, so nothing inside it carries a
+   stacking margin of its own. */
+.flow > * { margin-block: 0; }
+.page-head { display: flex; flex-direction: column; gap: 5px; }
+
 /* Header --------------------------------------------------------------- */
 
 .crumbs {
@@ -258,7 +384,7 @@ a { color: inherit; }
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
-  margin: 0 0 18px;
+  margin: 0;
   padding: 3px;
   background: var(--surface);
   border: 1px solid var(--hairline);
@@ -287,24 +413,13 @@ a { color: inherit; }
    and simply follows the view on a narrow one. */
 /* Charts and their inspectors are peers, but each card follows its content.
    A short chart must not inherit the height of a long inspector (or vice versa). */
-.split { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; align-items: start; }
-.split > .card { align-self: start; width: 100%; }
-
-/* Detail panels size to their content. Only genuinely long payloads scroll;
-   empty and compact selections no longer reserve a large blank rectangle. */
-.panel {
-  display: flex;
-  flex-direction: column;
-  max-height: min(70vh, var(--panel-h, 520px));
-}
+/* Detail panels live in the right rail and size to their content: an empty or
+   compact selection reserves no large blank rectangle, and only a genuinely
+   long payload scrolls — inside its own card, so the page never moves. */
+.panel { display: flex; flex-direction: column; }
 .panel > .card-body { overflow-y: auto; min-height: 0; }
 .panel.is-empty > .card-body { display: flex; align-items: center; min-height: 96px; }
 .panel.is-empty .hint { margin: 0; }
-
-@media (max-width: 1080px) {
-  .split { grid-template-columns: minmax(0, 1fr); }
-  .panel { max-height: var(--panel-h, 520px); }
-}
 
 /* Jump cards ----------------------------------------------------------- */
 
@@ -421,7 +536,6 @@ pre.body {
   background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: var(--radius);
-  margin-bottom: 14px;
   overflow: hidden;
 }
 .card-head {
@@ -543,10 +657,6 @@ a.strip-cell.is-selected { outline: 2px solid var(--ink); outline-offset: 1px; }
 /* Flame graph ---------------------------------------------------------- */
 
 .flame-workspace { overflow: visible; }
-.flame-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-}
 .flame-stage {
   min-width: 0;
   padding: 14px 16px 16px;
@@ -690,7 +800,7 @@ a.strip-cell.is-selected { outline: 2px solid var(--ink); outline-offset: 1px; }
   border-radius: 9px;
   background: var(--ground);
 }
-.flame { position: relative; overflow: hidden; min-height: 112px; touch-action: none; }
+.flame { position: relative; overflow: hidden; min-height: 320px; touch-action: none; }
 .flame-inner { position: relative; min-width: 560px; }
 .flame.is-zoomed { cursor: grab; }
 .flame.is-panning { cursor: grabbing; user-select: none; }
@@ -778,90 +888,19 @@ a.frame { text-decoration: none; }
   z-index: 2;
 }
 
-.flame-inspector {
-  min-width: 0;
-  min-height: 0;
-  max-height: 300px;
-  display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
-  grid-template-rows: auto 1fr;
-  border-top: 1px solid var(--hairline);
-  background: color-mix(in oklab, var(--raised) 45%, var(--surface));
-}
-.inspector-head {
-  grid-column: 1;
-  grid-row: 1;
-  padding: 16px 18px 10px;
-}
-.inspector-label {
-  display: block;
-  margin-bottom: 5px;
-  font: 500 9.5px/1 var(--mono);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
-.inspector-title {
-  margin: 0;
-  font-size: 17px;
-  line-height: 1.35;
-  letter-spacing: -0.01em;
-  word-break: break-word;
-}
-.inspector-head .trail { margin: 8px 0 0; font-size: 10px; }
 .inspector-actions {
-  grid-column: 1;
-  grid-row: 2;
-  align-items: flex-start;
   display: flex;
+  flex-wrap: wrap;
   gap: 7px;
-  padding: 0 18px 16px;
+  margin-bottom: 14px;
 }
-.inspector-scroll {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  min-height: 0;
-  padding: 14px 18px 16px;
-  overflow-y: auto;
-  border-left: 1px solid var(--hairline);
-}
-.inspector-scroll .sub-h { margin-top: 20px; }
 .zoomed-label {
   color: var(--kind-net);
   font: 10px/30px var(--mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.flame-inspector.is-empty {
-  display: flex;
-  min-height: 122px;
-  align-items: center;
-  justify-content: center;
-}
-.inspector-empty {
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
-  gap: 2px 14px;
-  width: 100%;
-  max-width: 720px;
-  padding: 20px 22px;
-}
-.inspector-empty-mark {
-  display: block;
-  grid-row: 1 / span 3;
-  width: 34px;
-  height: 28px;
-  margin: 2px 0 0;
-  border: 1px solid var(--kind-net);
-  border-radius: 3px;
-  background:
-    linear-gradient(var(--kind-net), var(--kind-net)) 4px 17px / 24px 5px no-repeat,
-    linear-gradient(var(--kind-logic), var(--kind-logic)) 4px 10px / 16px 5px no-repeat,
-    linear-gradient(var(--kind-retry), var(--kind-retry)) 4px 3px / 9px 5px no-repeat;
-  opacity: 0.75;
-}
-.inspector-empty .inspector-title { margin-bottom: 5px; }
-.inspector-empty .hint { margin-bottom: 2px; }
+.flame-inspector .trail { margin: 0; font-size: 10px; }
 
 .k-net { --tone: var(--kind-net); }
 .k-logic { --tone: var(--kind-logic); }
@@ -880,7 +919,7 @@ a.frame { text-decoration: none; }
 
 /* Time-series charts --------------------------------------------------- */
 
-.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 18px; }
 /* Each chart is a three-row subgrid — head, plot, axis — sharing its row tracks
    with the charts beside it. So the tallest header (a legend that wraps to two
    lines) sets a common height and every plot and axis lines up, whatever each
@@ -919,12 +958,76 @@ a.frame { text-decoration: none; }
 .chart-svg {
   display: block;
   width: 100%;
-  height: 118px;
+  height: 180px;
   background: var(--ground);
   border: 1px solid var(--hairline);
   border-radius: 7px;
 }
+
 .chart-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+/* A small multiple is a summary; opening one gives it the whole card, a labelled
+   y axis, quarter ticks across the run, and a rule at the peak — the detail
+   there is no room for at four-up. Server-rendered like the rest: the expanded
+   chart is a URL (`?chart=latency`), so it is shareable and needs no script. */
+.chart { position: relative; }
+.chart-hit { position: absolute; inset: 0; border-radius: 9px; }
+.chart-expand {
+  position: absolute;
+  top: 26px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--raised);
+  border: 1px solid var(--hairline);
+  color: var(--ink-2);
+  font-size: 12px;
+  opacity: 0;
+}
+.chart:hover .chart-expand,
+.chart-hit:focus-visible .chart-expand { opacity: 1; }
+.chart:hover .chart-svg { border-color: var(--ink-3); }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Outside the .charts grid there is no subgrid to share rows with. */
+.chart.is-expanded { display: block; }
+.chart.is-expanded .chart-svg { height: min(56vh, 520px); }
+.chart.is-expanded .chart-empty { min-height: min(56vh, 520px); }
+.chart.is-expanded .chart-title { font-size: 13.5px; }
+
+/* Axis labels track the plot's own geometry: the viewBox puts the maximum at
+   10% of the height, the gridline at 50% and the baseline at 90%. */
+.chart-ymid, .chart-yzero {
+  position: absolute;
+  left: 5px;
+  font: 10px/1 var(--mono);
+  color: var(--ink-3);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+.chart-ymid { top: 50%; }
+.chart-yzero { top: 90%; }
+.chart.is-expanded .chart-ymax { top: 10%; transform: translateY(-50%); }
+.axis-ticks span { flex: 1; text-align: center; }
+.axis-ticks span:first-child { text-align: left; }
+.axis-ticks span:last-child { text-align: right; }
+
+.chart-stats { margin-top: 18px; }
+.chart-stats td:first-child { width: 40%; }
+.chart-picker { margin-top: 16px; }
 
 /* A dithered wash under each line — the line's own tone, shown only through the
    shared dot mask. Kept low so overlapping series stay legible. */
@@ -940,8 +1043,11 @@ a.frame { text-decoration: none; }
    the stretched viewBox. */
 .cbase, .cgrid { stroke: var(--hairline); stroke-width: 1px; }
 .cgrid { stroke: var(--hairline-soft); stroke-dasharray: 2 3; }
+.ctick { stroke: var(--hairline-soft); }
+/* The peak is called out in words above the chart too, never by the rule alone. */
+.cpeak { stroke: var(--ink-3); stroke-width: 1px; stroke-dasharray: 3 3; }
 .chart-empty {
-  min-height: 118px;
+  min-height: 180px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1080,6 +1186,20 @@ a.frame { text-decoration: none; }
 .o-throttled { --glyph: "⚠"; }
 .o-skipped { --glyph: "⊘"; }
 
+/* Failures ------------------------------------------------------------- */
+
+/* The discriminator within a cause — a status, an assertion name, a variable.
+   It is the widest column and the least load-bearing, so it truncates rather
+   than pushing the counts off the card. */
+.cause-label {
+  color: var(--ink-2);
+  font-size: 11.5px;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .payload { margin: 2px 0 8px; }
 .payload summary {
   cursor: pointer;
@@ -1101,24 +1221,17 @@ a.frame { text-decoration: none; }
 
 .empty { color: var(--ink-3); padding: 26px 0; text-align: center; }
 
+/* Narrow screens keep the single stacked column they always had: the run list
+   on top, the flow, then whatever is selected. Both rails are forced back on —
+   a state collapsed on a wide screen must not hide the navigation here, where
+   there is no column to collapse into. */
 @media (max-width: 860px) {
   .shell { grid-template-columns: minmax(0, 1fr); }
-  .side { position: static; max-height: none; }
-}
-
-@media (max-width: 760px) {
-  .flame-inspector {
-    display: flex;
-    flex-direction: column;
-    max-height: none;
-  }
-  .inspector-scroll {
-    max-height: 360px;
-    border-left: 0;
-    border-top: 1px solid var(--hairline);
-  }
-  .inspector-empty { display: block; }
-  .inspector-empty-mark { margin-bottom: 14px; }
+  .side, :root[data-side="off"] .side { display: flex; position: static; max-height: none; width: auto; }
+  .rail, :root[data-rail="off"] .rail { display: flex; position: static; max-height: none; width: auto; }
+  .rail:empty { display: none; }
+  .rail-btn { display: none; }
+  .flow { max-width: none; }
 }
 
 @media (max-width: 680px) {

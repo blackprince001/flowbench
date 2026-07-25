@@ -109,6 +109,19 @@ func (d RunDetail) Facts() []Fact {
 	}
 }
 
+// Facts describes a selected failure group. The cause leads because it is what
+// the group is: every iteration below it failed this way, in this step.
+func (g FailureGroup) Facts() []Fact {
+	out := []Fact{
+		{Label: "cause", Value: string(g.Cause), Tone: g.Tone},
+		{Label: "step", Value: g.Step},
+	}
+	if g.Label != "" {
+		out = append(out, Fact{Label: "detail", Value: g.Label})
+	}
+	return append(out, Fact{Label: "iterations", Value: fmt.Sprint(g.Count), Tone: g.Tone})
+}
+
 // Facts describes an inspected series bucket.
 func (d BucketDetail) Facts() []Fact {
 	out := []Fact{

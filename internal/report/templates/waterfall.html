@@ -22,42 +22,16 @@
   </div>
 </section>
 
-<div class="split">
-  <section class="card">
-    <div class="card-head">
-      <h2 class="card-title">Waterfall</h2>
-      <p class="card-note">{{ .TraceOf }} · select a span</p>
-    </div>
-    <div class="card-body">
-      {{ template "legend-outcomes" }}
-      {{ template "waterfall-table" . }}
-    </div>
-  </section>
-
-  <aside class="card panel{{ if not .Detail }} is-empty{{ end }}">
-    {{ if .Detail }}
-    <div class="card-head">
-      <h2 class="card-title">{{ .Detail.Name }}</h2>
-      <p class="card-note"><span class="chip o-{{ .Detail.Outcome }}">{{ .Detail.Outcome }}</span></p>
-    </div>
-    <div class="card-body">
-      {{ template "facts" .Detail.Facts }}
-      {{ if .Detail.Payload }}
-      <h3 class="sub-h">Captured payload{{ if .Detail.Payload.Truncated }} (truncated){{ end }}</h3>
-      {{ with .Detail.Payload.Request }}<p class="hint">request</p><pre class="body">{{ . }}</pre>{{ end }}
-      {{ with .Detail.Payload.Response }}<p class="hint">response</p><pre class="body">{{ . }}</pre>{{ end }}
-      {{ else }}
-      <p class="hint">No payload on this span. Bodies are captured on the call leg of kept traces only, and redacted values are absent rather than masked.</p>
-      {{ end }}
-    </div>
-    {{ else }}
-    <div class="card-head"><h2 class="card-title">No span selected</h2></div>
-    <div class="card-body">
-      <p class="hint">Pick a row to see its timing, its self time, and the request and response captured against it.</p>
-    </div>
-    {{ end }}
-  </aside>
-</div>
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Waterfall</h2>
+    <p class="card-note">{{ .TraceOf }} · select a span</p>
+  </div>
+  <div class="card-body">
+    {{ template "legend-outcomes" }}
+    {{ template "waterfall-table" . }}
+  </div>
+</section>
 {{ else }}
 <section class="card">
   <div class="card-head"><h2 class="card-title">Waterfall</h2></div>
@@ -65,4 +39,37 @@
 </section>
 {{ end }}
 
+{{ end }}
+
+{{ define "detail" }}
+{{ if .Traces }}
+{{ template "rail-head" "The span you picked in the trace: its timing, and what it sent and got back." }}
+<section class="card panel{{ if not .Detail }} is-empty{{ end }}">
+  {{ if .Detail }}
+  <div class="card-head">
+    <h2 class="card-title">{{ .Detail.Name }}</h2>
+    <p class="card-note"><span class="chip o-{{ .Detail.Outcome }}">{{ .Detail.Outcome }}</span></p>
+  </div>
+  <div class="card-body">
+    {{ template "facts" .Detail.Facts }}
+    {{ if .Detail.Payload }}
+    {{ with .Detail.Payload.Failure }}
+    <h3 class="sub-h">Recorded reason</h3>
+    <pre class="body">{{ . }}</pre>
+    {{ end }}
+    <h3 class="sub-h">Captured payload{{ if .Detail.Payload.Truncated }} (truncated){{ end }}</h3>
+    {{ with .Detail.Payload.Request }}<p class="hint">request</p><pre class="body">{{ . }}</pre>{{ end }}
+    {{ with .Detail.Payload.Response }}<p class="hint">response</p><pre class="body">{{ . }}</pre>{{ end }}
+    {{ else }}
+    <p class="hint">No payload on this span. Bodies are captured on the call leg of kept traces only, and redacted values are absent rather than masked.</p>
+    {{ end }}
+  </div>
+  {{ else }}
+  <div class="card-head"><h2 class="card-title">No span selected</h2></div>
+  <div class="card-body">
+    <p class="hint">Pick a row to see its timing, its self time, and the request and response captured against it.</p>
+  </div>
+  {{ end }}
+</section>
+{{ end }}
 {{ end }}

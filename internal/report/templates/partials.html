@@ -1,12 +1,14 @@
 {{ define "run-head" }}
-<h1 class="page-title">{{ .Heading }}</h1>
-<p class="byline">
-  {{ range $i, $f := .Byline }}
-    {{ if $i }}<span class="byline-sep" aria-hidden="true">•</span>{{ end }}<b>{{ $f }}</b>
-  {{ end }}
-  <span class="byline-sep" aria-hidden="true">•</span>
-  <span class="pill t-{{ .Verdict.Tone }}">{{ .Verdict.Label }}</span>
-</p>
+<header class="page-head">
+  <h1 class="page-title">{{ .Heading }}</h1>
+  <p class="byline">
+    {{ range $i, $f := .Byline }}
+      {{ if $i }}<span class="byline-sep" aria-hidden="true">•</span>{{ end }}<b>{{ $f }}</b>
+    {{ end }}
+    <span class="byline-sep" aria-hidden="true">•</span>
+    <span class="pill t-{{ .Verdict.Tone }}">{{ .Verdict.Label }}</span>
+  </p>
+</header>
 {{ end }}
 
 {{ define "tabs" }}
@@ -109,4 +111,70 @@
   </div>
   {{ end }}
 </dl>
+{{ end }}
+
+{{ define "rail-head" }}
+<div class="rail-head">
+  <span class="rail-label">Details</span>
+  <p class="rail-note">{{ . }}</p>
+</div>
+{{ end }}
+
+{{ define "chart-defs" }}
+<!-- One dither tile, shared by every chart's area fill (referenced by url(#…)).
+     White dots on transparent, used as a mask so each area shows its own tone
+     only where the dots fall — a dithered fill, server-side, no client work. -->
+<svg class="chart-defs" width="0" height="0" aria-hidden="true" focusable="false">
+  <defs>
+    <pattern id="dither" width="2.4" height="2.4" patternUnits="userSpaceOnUse">
+      <circle cx="0.55" cy="0.55" r="0.55" fill="#fff"></circle>
+      <circle cx="1.75" cy="1.75" r="0.55" fill="#fff"></circle>
+    </pattern>
+    <mask id="dither-mask" maskContentUnits="userSpaceOnUse">
+      <rect x="0" y="0" width="100" height="40" fill="url(#dither)"></rect>
+    </mask>
+  </defs>
+</svg>
+{{ end }}
+
+{{ define "linechart" }}
+<figure class="chart{{ if .Expanded }} is-expanded{{ end }}">
+  <figcaption class="chart-head">
+    <span class="chart-title">{{ .Title }}</span>
+    <span class="chart-legend">
+      {{ range .Lines }}<span class="chart-key" style="--tone:var(--{{ .Tone }})">{{ .Label }}{{ if .Last }} <b>{{ .Last }}</b>{{ end }}</span>{{ end }}
+    </span>
+  </figcaption>
+  {{ if .Empty }}
+  <div class="chart-plot chart-empty">no data recorded</div>
+  {{ else }}
+  <div class="chart-plot">
+    <span class="chart-ymax">{{ .YTop }}</span>
+    {{ if .Expanded }}<span class="chart-ymid">{{ .YMid }}</span><span class="chart-yzero">0</span>{{ end }}
+    <svg class="chart-svg" viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label="{{ .Title }}">
+      <line class="cgrid" x1="0" y1="20" x2="100" y2="20" vector-effect="non-scaling-stroke"></line>
+      <line class="cbase" x1="0" y1="36" x2="100" y2="36" vector-effect="non-scaling-stroke"></line>
+      {{ if .Expanded }}
+      {{ range .Ticks }}<line class="cgrid ctick" x1="{{ .At }}" y1="4" x2="{{ .At }}" y2="36" vector-effect="non-scaling-stroke"></line>{{ end }}
+      <line class="cpeak" x1="{{ .PeakX }}" y1="4" x2="{{ .PeakX }}" y2="36" vector-effect="non-scaling-stroke"></line>
+      {{ end }}
+      {{ range .Lines }}<polygon class="carea" style="--tone:var(--{{ .Tone }})" points="{{ .Area }}" mask="url(#dither-mask)"></polygon>{{ end }}
+      {{ range .Lines }}<polyline class="cline" style="--tone:var(--{{ .Tone }})" points="{{ .Points }}" vector-effect="non-scaling-stroke"></polyline>{{ end }}
+    </svg>
+  </div>
+  {{ end }}
+  {{ if and .Expanded .Ticks }}
+  <div class="axis axis-ticks">{{ range .Ticks }}<span>{{ .Label }}</span>{{ end }}</div>
+  {{ else }}
+  <div class="axis"><span>0</span><span>{{ .XEnd }}</span></div>
+  {{ end }}
+  {{ if not .Expanded }}
+  <!-- The whole chart is the target, not its title: a 200px card is a big thing
+       to have to aim a click at a word for. -->
+  <a class="chart-hit" href="{{ .Href }}">
+    <span class="chart-expand" aria-hidden="true">&#10530;</span>
+    <span class="sr-only">Open {{ .Title }} full size</span>
+  </a>
+  {{ end }}
+</figure>
 {{ end }}

@@ -8,11 +8,16 @@ package span
 // Status matters as much as the bodies. A span's outcome says `failed`; only the
 // status says whether that was a 500, a 404 or a 403, and on a throttle
 // Retry-After is the server telling you how long it wanted you to wait.
+//
+// Failure carries that distinction one level further down: a status says what
+// the target answered, but a call that never got an answer has no status, and
+// only the recorded reason separates a timeout from a refused connection.
 type Payload struct {
 	Method     string `json:"method,omitempty"`
 	URL        string `json:"url,omitempty"`
 	Status     int    `json:"status,omitempty"`
 	RetryAfter string `json:"retry_after,omitempty"`
+	Failure    string `json:"failure,omitempty"`
 	ReqBytes   int    `json:"req_bytes,omitempty"`
 	RespBytes  int    `json:"resp_bytes,omitempty"`
 	Request    string `json:"request,omitempty"`
@@ -33,6 +38,13 @@ func (s *Span) SetCall(method, url string, status int, retryAfter string) {
 	s.callMethod, s.callURL, s.callStatus, s.retryAfter = method, url, status, retryAfter
 }
 
+// SetFailure records why this span failed. The reason is held by reference and
+// only materialized for kept traces, so it costs a failed span nothing to say
+// what went wrong. It is set on the span the failure is about — the assertion
+// child rather than the step, when an assertion is what failed — so a reader
+// lands on the exact span rather than the one containing it.
+func (s *Span) SetFailure(detail string) { s.failure = detail }
+
 // Finalize turns each captured raw body in the tree into a stored Payload,
 // redacting first (so a secret can't survive being split by the cap) and then
 // truncating at maxBytes. A negative maxBytes captures no bodies; the raw
@@ -41,13 +53,18 @@ func Finalize(root *Span, redact func([]byte) []byte, maxBytes int) {
 	if root == nil {
 		return
 	}
-	if root.callStatus != 0 || root.rawReq != nil || root.rawResp != nil {
+	if root.callStatus != 0 || root.rawReq != nil || root.rawResp != nil || root.failure != "" {
 		p := &Payload{
 			Method:     root.callMethod,
 			Status:     root.callStatus,
 			RetryAfter: root.retryAfter,
 			ReqBytes:   len(root.rawReq),
 			RespBytes:  len(root.rawResp),
+		}
+		// The reason is redacted like a body: a transport error carries the URL
+		// it failed on, and an assertion mismatch quotes the value it saw.
+		if root.failure != "" {
+			p.Failure = string(redact([]byte(root.failure)))
 		}
 		// A URL can carry a credential in its path or query, so it is redacted
 		// like any captured body — and unlike the bodies it is never size-capped
@@ -62,7 +79,7 @@ func Finalize(root *Span, redact func([]byte) []byte, maxBytes int) {
 			p.Truncated = t1 || t2
 		}
 		root.Payload = p
-		root.rawReq, root.rawResp = nil, nil
+		root.rawReq, root.rawResp, root.failure = nil, nil, ""
 	}
 	for _, c := range root.Children {
 		Finalize(c, redact, maxBytes)

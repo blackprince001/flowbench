@@ -3,72 +3,71 @@
 {{ template "run-head" .RunHead }}
 {{ template "tabs" .Tabs }}
 
-<div class="split">
-  <section class="card">
-    <div class="card-head">
-      <h2 class="card-title">Outcomes over time</h2>
-      <p class="card-note">select a bucket</p>
-    </div>
-    <div class="card-body">
-      {{ template "tallies" .Tallies }}
-      {{ template "strip" .Strip }}
-    </div>
-  </section>
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Outcomes over time</h2>
+    <p class="card-note">select a bucket</p>
+  </div>
+  <div class="card-body">
+    {{ template "tallies" .Tallies }}
+    {{ template "strip" .Strip }}
+  </div>
+</section>
 
-  <aside class="card panel{{ if not .Bucket }} is-empty{{ end }}">
-    {{ if .Bucket }}
-    <div class="card-head">
-      <h2 class="card-title">{{ .Bucket.At }}</h2>
-      <p class="card-note">{{ .Bucket.Window }} window</p>
-    </div>
-    <div class="card-body">{{ template "facts" .Bucket.Facts }}</div>
-    {{ else }}
-    <div class="card-head"><h2 class="card-title">No bucket selected</h2></div>
-    <div class="card-body"><p class="hint">Pick a column to see its throughput, its outcome split, and its own percentiles — a slow window a whole-run p95 would average away.</p></div>
-    {{ end }}
-  </aside>
-</div>
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Every flow-run</h2>
+    <p class="card-note">{{ .Note }}</p>
+  </div>
+  <div class="card-body">
+    <nav class="tabs subtle" aria-label="Filter flow-runs">
+      {{ range .Filters }}
+      <a class="tab" href="{{ .Href }}"{{ if .Selected }} aria-current="page"{{ end }}>
+        {{ .Label }} <span class="tab-count">{{ .Count }}</span>
+      </a>
+      {{ end }}
+    </nav>
 
-<div class="split">
-  <section class="card">
-    <div class="card-head">
-      <h2 class="card-title">Every flow-run</h2>
-      <p class="card-note">{{ .Note }}</p>
-    </div>
-    <div class="card-body">
-      <nav class="tabs subtle" aria-label="Filter flow-runs">
-        {{ range .Filters }}
-        <a class="tab" href="{{ .Href }}"{{ if .Selected }} aria-current="page"{{ end }}>
-          {{ .Label }} <span class="tab-count">{{ .Count }}</span>
-        </a>
-        {{ end }}
-      </nav>
-
-      {{ if .Cells }}
-      {{ template "legend-outcomes" }}
-      <div class="grid">
-        {{ range .Cells }}
-        <a class="cell o-{{ .Tone }}{{ if .Selected }} is-selected{{ end }}" href="{{ .Href }}" title="{{ .Title }}"></a>
-        {{ end }}
-      </div>
-      {{ else }}
-      <p class="empty">No flow-runs match this filter.</p>
+    {{ if .Cells }}
+    {{ template "legend-outcomes" }}
+    <div class="grid">
+      {{ range .Cells }}
+      <a class="cell o-{{ .Tone }}{{ if .Selected }} is-selected{{ end }}" href="{{ .Href }}" title="{{ .Title }}"></a>
       {{ end }}
     </div>
-  </section>
-
-  <aside class="card panel{{ if not .Detail }} is-empty{{ end }}">
-    {{ if .Detail }}
-    <div class="card-head">
-      <h2 class="card-title">Flow-run #{{ .Detail.Seq }}</h2>
-      <p class="card-note"><span class="chip o-{{ .Detail.Outcome }}">{{ .Detail.Outcome }}</span></p>
-    </div>
-    <div class="card-body">{{ template "facts" .Detail.Facts }}</div>
     {{ else }}
-    <div class="card-head"><h2 class="card-title">No flow-run selected</h2></div>
-    <div class="card-body"><p class="hint">Pick a square to see one flow-run's latency, its service time, and how long it waited to be dispatched.</p></div>
+    <p class="empty">No flow-runs match this filter.</p>
     {{ end }}
-  </aside>
-</div>
+  </div>
+</section>
 
+{{ end }}
+
+{{ define "detail" }}
+{{ template "rail-head" "The bucket and the flow-run you picked, one window and one iteration." }}
+<section class="card panel{{ if not .Bucket }} is-empty{{ end }}">
+  {{ if .Bucket }}
+  <div class="card-head">
+    <h2 class="card-title">{{ .Bucket.At }}</h2>
+    <p class="card-note">{{ .Bucket.Window }} window</p>
+  </div>
+  <div class="card-body">{{ template "facts" .Bucket.Facts }}</div>
+  {{ else }}
+  <div class="card-head"><h2 class="card-title">No bucket selected</h2></div>
+  <div class="card-body"><p class="hint">Pick a column to see its throughput, its outcome split, and its own percentiles — a slow window a whole-run p95 would average away.</p></div>
+  {{ end }}
+</section>
+
+<section class="card panel{{ if not .Detail }} is-empty{{ end }}">
+  {{ if .Detail }}
+  <div class="card-head">
+    <h2 class="card-title">Flow-run #{{ .Detail.Seq }}</h2>
+    <p class="card-note"><span class="chip o-{{ .Detail.Outcome }}">{{ .Detail.Outcome }}</span></p>
+  </div>
+  <div class="card-body">{{ template "facts" .Detail.Facts }}</div>
+  {{ else }}
+  <div class="card-head"><h2 class="card-title">No flow-run selected</h2></div>
+  <div class="card-body"><p class="hint">Pick a square to see one flow-run's latency, its service time, and how long it waited to be dispatched.</p></div>
+  {{ end }}
+</section>
 {{ end }}

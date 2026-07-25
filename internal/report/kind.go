@@ -28,12 +28,13 @@ var phases = map[string]bool{
 
 // classify maps a span name at a given depth to its kind. Extraction spans are
 // named for the variable they bind, so they are identified by position: any
-// unrecognized name below a step is the flow's own logic.
+// unrecognized name below a step is the flow's own logic. A retry's `attempt N`
+// wrapper is network, not logic — it is the call, made again.
 func classify(name string, depth int) Kind {
 	switch {
 	case depth == 0 || strings.HasPrefix(name, "flow:"):
 		return KindFlow
-	case phases[name]:
+	case phases[name], strings.HasPrefix(name, "attempt "):
 		return KindNet
 	case name == "backoff":
 		return KindRetry
