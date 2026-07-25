@@ -3,13 +3,14 @@ import re
 import pytest
 
 from flowbench.assertions import expect
-from flowbench.context import Context, StepBuilder
+from flowbench.context import Context
+from flowbench.drivers.trace import TraceDriver
 from flowbench.errors import FlowCompileError
 from flowbench.template import TemplateRef
 
 
 def make_ctx(has_data_pool=True, available_vars=None):
-  builder = StepBuilder("step", available_vars if available_vars is not None else set())
+  builder = TraceDriver("step", available_vars if available_vars is not None else set())
   return Context(builder, has_data_pool), builder
 
 

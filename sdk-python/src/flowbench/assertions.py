@@ -1,4 +1,4 @@
-from .context import Subject
+from .drivers.trace import Subject
 from .errors import FlowCompileError
 from .template import TemplateRef
 

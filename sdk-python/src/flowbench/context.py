@@ -1,84 +1,20 @@
+"""Driver-agnostic ctx surface: Http/VarsProxy/UserProxy/EnvProxy delegate
+every operation to whichever driver a Context was built with -- the
+compile-time TraceDriver (drivers/trace.py) or the real-execution LiveDriver
+(drivers/live.py). Neither driver's types leak in here.
+"""
+
 from .errors import FlowCompileError
-from .template import TemplateRef
 
 _METHODS = ("get", "post", "put", "patch", "delete")
 
 
-class StepBuilder:
-  """Accumulates the pieces of one ``ir.Step`` as a step function traces."""
-
-  def __init__(self, step_id, available_vars):
-    self.step_id = step_id
-    self.available_vars = available_vars
-    self.call_spec = None
-    self.extract = []
-    self.assert_ = []
-    self.retry = None
-
-  def set_call(self, call_spec):
-    if self.call_spec is not None:
-      raise FlowCompileError(
-        f"step {self.step_id!r} makes more than one ctx.http call; "
-        "each @flow.step function must make exactly one call "
-        "(split it into two steps)"
-      )
-    self.call_spec = call_spec
-
-  def add_extraction(self, var, path):
-    self.extract.append({"var": var, "path": path})
-    self.available_vars.add(var)
-
-  def add_assertion(self, assertion):
-    self.assert_.append(assertion)
-
-
-class Subject:
-  """An assertable field of a Response: status or a named header."""
-
-  def __init__(self, builder, source, key=None):
-    self._builder = builder
-    self.source = source
-    self.key = key
-
-
-class PendingExtraction:
-  """The result of ``response.json_path(...)``: only valid as the RHS of
-  ``ctx.vars[key] = ...``."""
-
-  def __init__(self, builder, path):
-    self._builder = builder
-    self.path = path
-
-
-class Response:
-  def __init__(self, builder):
-    self._builder = builder
-
-  @property
-  def status(self):
-    return Subject(self._builder, source="status")
-
-  def header(self, name):
-    return Subject(self._builder, source="header", key=name)
-
-  def json_path(self, path):
-    return PendingExtraction(self._builder, path)
-
-
 class Http:
-  def __init__(self, builder):
-    self._builder = builder
+  def __init__(self, driver):
+    self._driver = driver
 
   def _call(self, method, url, *, json=None, headers=None, query=None):
-    spec = {"method": method, "url": url}
-    if headers:
-      spec["headers"] = {k: str(v) for k, v in headers.items()}
-    if query:
-      spec["query"] = {k: str(v) for k, v in query.items()}
-    if json is not None:
-      spec["body"] = json
-    self._builder.set_call(spec)
-    return Response(self._builder)
+    return self._driver.call(method, url, json=json, headers=headers, query=query)
 
 
 def _make_method(verb):
@@ -95,42 +31,38 @@ del _verb
 
 
 class VarsProxy:
-  def __init__(self, builder):
-    self._builder = builder
+  def __init__(self, driver):
+    self._driver = driver
 
   def __setitem__(self, key, value):
-    if not isinstance(value, PendingExtraction):
-      raise FlowCompileError(
-        f"ctx.vars[{key!r}] = ... must be assigned a response.json_path(...) "
-        f"extraction, got {type(value).__name__}"
-      )
-    self._builder.add_extraction(key, value.path)
+    self._driver.set_var(key, value)
 
   def __getitem__(self, key):
-    if key not in self._builder.available_vars:
-      raise FlowCompileError(
-        f"ctx.vars[{key!r}] read before it was extracted by an earlier step "
-        f"(available: {sorted(self._builder.available_vars)!r})"
-      )
-    return TemplateRef(key, builder=self._builder)
+    return self._driver.get_var(key)
 
 
 class UserProxy:
+  def __init__(self, driver):
+    self._driver = driver
+
   def __getitem__(self, field):
-    return TemplateRef(f"user.{field}")
+    return self._driver.get_user_field(field)
 
 
 class EnvProxy:
+  def __init__(self, driver):
+    self._driver = driver
+
   def __getitem__(self, name):
-    return TemplateRef(f"env.{name}")
+    return self._driver.get_env(name)
 
 
 class Context:
-  def __init__(self, builder, has_data_pool):
-    self._builder = builder
-    self.http = Http(builder)
-    self.vars = VarsProxy(builder)
-    self.env = EnvProxy()
+  def __init__(self, driver, has_data_pool):
+    self._driver = driver
+    self.http = Http(driver)
+    self.vars = VarsProxy(driver)
+    self.env = EnvProxy(driver)
     self._has_data_pool = has_data_pool
 
   @property
@@ -139,4 +71,4 @@ class Context:
       raise FlowCompileError(
         "ctx.user is only available when Flow(..., data=...) binds a data pool"
       )
-    return UserProxy()
+    return UserProxy(self._driver)

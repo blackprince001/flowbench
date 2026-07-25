@@ -1,7 +1,8 @@
 import json
 import os
 
-from .context import Context, StepBuilder
+from .context import Context
+from .drivers.trace import TraceDriver
 from .errors import FlowCompileError
 from .ir import build_scenario
 from .profile import Profile
@@ -30,7 +31,7 @@ class Flow:
     steps = []
     for func, retry in self._steps:
       step_id = func.__name__
-      builder = StepBuilder(step_id, available_vars)
+      builder = TraceDriver(step_id, available_vars)
       ctx = Context(builder, has_data_pool=self.data is not None)
       func(ctx)
 
