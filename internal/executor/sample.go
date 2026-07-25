@@ -48,8 +48,8 @@ func Percentile(samples []Sample, q float64) time.Duration {
 	return xs[i]
 }
 
-// tally counts samples by outcome.
-func tally(samples []Sample) map[span.Outcome]int {
+// Tally counts samples by outcome.
+func Tally(samples []Sample) map[span.Outcome]int {
 	m := make(map[span.Outcome]int, 4)
 	for _, s := range samples {
 		m[s.Outcome]++

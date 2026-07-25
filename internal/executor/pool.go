@@ -201,7 +201,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	res := &Result{
 		Duration:   time.Since(p.start),
 		Iterations: p.iterations,
-		Outcomes:   tally(p.samples),
+		Outcomes:   Tally(p.samples),
 		Samples:    p.samples,
 		Traces:     p.traces,
 		Folded:     p.folded,

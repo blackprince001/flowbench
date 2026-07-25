@@ -18,8 +18,13 @@ import (
 	"github.com/blackprince001/flowbench/internal/ir"
 	"github.com/blackprince001/flowbench/internal/parser"
 	"github.com/blackprince001/flowbench/internal/planner"
+	"github.com/blackprince001/flowbench/internal/span"
 	"github.com/blackprince001/flowbench/internal/target"
 )
+
+// integrationBodyCap mirrors pool.go's defaultBodyCap: the captured request/
+// response body size, in bytes, kept in a persisted integration/system trace.
+const integrationBodyCap = 2048
 
 // runScenario is `flowbench run <scenario.yaml> --target <name>`: parse,
 // validate, gate against the target, then execute at one VU — once, or once
@@ -96,7 +101,7 @@ func execute(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pool
 		if watchAddr != "" {
 			fmt.Fprintln(stderr, "flowbench: --watch applies to load/stress/soak runs; ignoring")
 		}
-		return executeOnce(stdout, stderr, sc, tgt, pools)
+		return executeOnce(stdout, stderr, sc, tgt, pools, storeRoot, scenarioPath)
 	}
 }
 
@@ -204,10 +209,21 @@ func printOutcomes(w io.Writer, outcomes []collector.Outcome) bool {
 }
 
 // executeOnce runs each flow at one VU — once per fixture row when the flow
-// binds a pool, otherwise once — and returns the process exit code.
-func executeOnce(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool) int {
+// binds a pool, otherwise once — and returns the process exit code. Unlike
+// load/stress/soak, integration/system previously never persisted a run
+// artifact; it now builds the same executor.Result shape executeLoad does
+// (every iteration kept — the scale here is small enough that sampling would
+// only lose signal) and saves it the same way, so an integration-mode run is
+// inspectable via `flowbench serve` too, and comparable against a
+// Python-driven run of the same flow (ADR 0012's two-producer model).
+func executeOnce(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool, storeRoot, scenarioPath string) int {
 	start := time.Now()
 	iterations, failed := 0, 0
+
+	var samples []executor.Sample
+	var traces []*span.Span
+	folded := span.NewFolded()
+	aborted := false
 
 	fmt.Fprintf(stdout, "running %q against %s (%s)\n", sc.Name, tgt.Config().Name, tgt.BaseURL())
 
@@ -215,6 +231,7 @@ func executeOnce(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 		rows := iterationRows(flow, pools)
 		for i, row := range rows {
 			iterations++
+			iterStart := time.Now()
 			scope := executor.NewScope(flow.Data, row)
 			runner := &executor.Runner{
 				Session: adapters.NewSession(adapters.SessionOptions{}),
@@ -230,22 +247,55 @@ func executeOnce(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 			}
 			if len(it.Failures) == 0 {
 				fmt.Fprintf(stdout, "  %s [%d/%d]  ok\n", flow.Name, i+1, len(rows))
-				continue
+			} else {
+				failed++
+				fmt.Fprintf(stdout, "  %s [%d/%d]  FAIL (%d)\n", flow.Name, i+1, len(rows), len(it.Failures))
+				for _, f := range it.Failures {
+					fmt.Fprintf(stdout, "      %s: %s\n", f.StepID, f.Detail)
+				}
+				if it.Aborted {
+					aborted = true
+					fmt.Fprintf(stderr, "flowbench: run aborted by %q\n", flow.Name)
+				}
 			}
-			failed++
-			fmt.Fprintf(stdout, "  %s [%d/%d]  FAIL (%d)\n", flow.Name, i+1, len(rows), len(it.Failures))
-			for _, f := range it.Failures {
-				fmt.Fprintf(stdout, "      %s: %s\n", f.StepID, f.Detail)
-			}
-			if it.Aborted {
-				fmt.Fprintf(stderr, "flowbench: run aborted by %q\n", flow.Name)
-			}
+
+			dispatch := iterStart.Sub(start)
+			service := time.Since(iterStart)
+			samples = append(samples, executor.Sample{
+				Flow: flow.Name, Intended: dispatch, Actual: dispatch, Service: service,
+				Outcome: it.Outcome, Throttled: it.Throttled,
+			})
+
+			root := span.New("flow:"+flow.Name, dispatch)
+			root.Duration = service
+			root.Outcome = it.Outcome
+			root.Children = it.Spans
+			folded.Add(root)
+			span.Finalize(root, scope.Secrets().RedactBytes, integrationBodyCap)
+			traces = append(traces, root)
 		}
 	}
 
 	passed := iterations - failed
 	fmt.Fprintf(stdout, "%d iteration(s): %d passed, %d failed  (%s)\n",
 		iterations, passed, failed, time.Since(start).Round(time.Millisecond))
+
+	res := &executor.Result{
+		Duration:   time.Since(start),
+		Iterations: iterations,
+		Outcomes:   executor.Tally(samples),
+		Samples:    samples,
+		Traces:     traces,
+		Folded:     folded,
+		Metrics:    []executor.MetricSample{},
+		Aborted:    aborted,
+	}
+	if dir, err := saveRun(storeRoot, scenarioPath, sc, tgt, start, res, nil); err != nil {
+		fmt.Fprintf(stderr, "flowbench: could not save run: %v\n", err)
+	} else {
+		fmt.Fprintf(stdout, "run saved to %s\n", dir)
+	}
+
 	if failed > 0 {
 		return exitFail
 	}
