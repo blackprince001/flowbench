@@ -72,6 +72,8 @@ func (r *Runner) runStep(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 	switch st.Type {
 	case ir.StepCall:
 		return r.runCall(ctx, st, scope, anchor, it)
+	case ir.StepGraphQL:
+		return r.runGraphQL(ctx, st, scope, anchor, it)
 	case ir.StepWait:
 		sp := span.New(st.ID, time.Since(anchor))
 		time.Sleep(time.Duration(st.Wait.Duration))
@@ -87,6 +89,32 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 	if err != nil {
 		return nil, false, fmt.Errorf("step %q: %w", st.ID, err)
 	}
+	return r.request(ctx, st, req, scope, anchor, it, nil)
+}
+
+// runGraphQL executes one GraphQL operation. It is the HTTP path with one
+// extra reading: the operation's own errors, which arrive in the body of a
+// `200 OK` and so cannot be classified from the status.
+func (r *Runner) runGraphQL(ctx context.Context, st *ir.Step, scope *Scope, anchor time.Time, it *Iteration) (*span.Span, bool, error) {
+	req, err := adapters.BuildGraphQLRequest(st.GraphQL, scope.Resolve)
+	if err != nil {
+		return nil, false, fmt.Errorf("step %q: %w", st.ID, err)
+	}
+	return r.request(ctx, st, req, scope, anchor, it, graphQLCheck(st.GraphQL))
+}
+
+// bodyCheck reads an outcome out of a successful response, for a protocol
+// whose payload carries one the transport status does not. It names the span
+// the failure belongs to and the detail, or returns "" when the response is
+// good. GraphQL is the first such protocol; gRPC status codes will be next.
+type bodyCheck func(body []byte) (spanName, detail string)
+
+// request is the shared path every HTTP-shaped step takes: resolve the URL,
+// clear the allow-list, execute (with auth and retry), capture, classify, then
+// extract and assert. check, when set, gets a look at a successful response
+// before extraction — nothing downstream should read a body the protocol has
+// already declared broken.
+func (r *Runner) request(ctx context.Context, st *ir.Step, req *adapters.Request, scope *Scope, anchor time.Time, it *Iteration, check bodyCheck) (*span.Span, bool, error) {
 	req.URL = r.resolveURL(req.URL)
 
 	if r.Allow != nil {
@@ -125,6 +153,17 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 	// from it.
 	if isThrottled(resp.Status, st.Throttle) {
 		return sp, r.recordThrottle(it, sp, st, scope, resp.Status), nil
+	}
+
+	// A protocol that reports failure in the body gets its say before anything
+	// reads that body, so a broken operation is a failed step rather than an
+	// extraction that mysteriously finds nothing.
+	if check != nil {
+		if name, detail := check(resp.Body); detail != "" {
+			child := sp.Child(name, time.Since(anchor))
+			child.Outcome = span.OutcomeFailed
+			return sp, r.record(it, sp, child, st, scope, detail), nil
+		}
 	}
 
 	tgt := target{resp: resp, latency: sp.Duration}

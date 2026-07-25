@@ -23,6 +23,7 @@ import (
 var fixtures = []string{
 	"authenticated_checkout", // the PRD section 11 sample: chaining (#22)
 	"auth_schemes",           // every auth scheme, plus flow default and opt-out (#30)
+	"graphql_operations",     // query, chained mutation, error policy (#26)
 }
 
 func TestTwoSurfaceParity(t *testing.T) {

@@ -3,6 +3,10 @@ from .template import TemplateRef
 
 _METHODS = ("get", "post", "put", "patch", "delete")
 
+# Matches ir.GraphQLErrorPolicy. Unset means "fail", so a broken query is a
+# failed step rather than a pass nobody asserted on.
+_ERROR_POLICIES = ("fail", "allow_partial", "ignore")
+
 
 class StepBuilder:
   """Accumulates the pieces of one ``ir.Step`` as a step function traces."""
@@ -10,19 +14,27 @@ class StepBuilder:
   def __init__(self, step_id, available_vars):
     self.step_id = step_id
     self.available_vars = available_vars
-    self.call_spec = None
+    # kind is the IR step type the traced request compiles to ("call" or
+    # "graphql"); spec is that type's block.
+    self.kind = None
+    self.spec = None
     self.extract = []
     self.assert_ = []
     self.retry = None
 
-  def set_call(self, call_spec):
-    if self.call_spec is not None:
+  @property
+  def call_spec(self):
+    """The traced ``call`` block, or None for a step of another kind."""
+    return self.spec if self.kind == "call" else None
+
+  def set_request(self, kind, spec):
+    if self.spec is not None:
       raise FlowCompileError(
         f"step {self.step_id!r} makes more than one ctx.http call; "
         "each @flow.step function must make exactly one call "
         "(split it into two steps)"
       )
-    self.call_spec = call_spec
+    self.kind, self.spec = kind, spec
 
   def add_extraction(self, var, path):
     self.extract.append({"var": var, "path": path})
@@ -77,7 +89,45 @@ class Http:
       spec["query"] = {k: str(v) for k, v in query.items()}
     if json is not None:
       spec["body"] = json
-    self._builder.set_call(spec)
+    self._builder.set_request("call", spec)
+    return Response(self._builder)
+
+
+class GraphQL:
+  """``ctx.graphql(...)`` — one GraphQL operation.
+
+  It compiles to a ``graphql`` step, not a hand-rolled POST, so the engine
+  reads the ``data``/``errors`` shape and fails the step on an operation
+  error that arrives inside a ``200 OK``.
+  """
+
+  def __init__(self, builder):
+    self._builder = builder
+
+  def __call__(
+    self,
+    url,
+    *,
+    query,
+    variables=None,
+    operation_name=None,
+    headers=None,
+    on_errors=None,
+  ):
+    if on_errors is not None and on_errors not in _ERROR_POLICIES:
+      raise FlowCompileError(
+        f"on_errors must be one of {list(_ERROR_POLICIES)!r}, got {on_errors!r}"
+      )
+    spec = {"url": url, "query": query}
+    if variables:
+      spec["variables"] = variables
+    if operation_name:
+      spec["operation_name"] = operation_name
+    if headers:
+      spec["headers"] = {k: str(v) for k, v in headers.items()}
+    if on_errors:
+      spec["on_errors"] = on_errors
+    self._builder.set_request("graphql", spec)
     return Response(self._builder)
 
 
@@ -129,6 +179,7 @@ class Context:
   def __init__(self, builder, has_data_pool):
     self._builder = builder
     self.http = Http(builder)
+    self.graphql = GraphQL(builder)
     self.vars = VarsProxy(builder)
     self.env = EnvProxy()
     self._has_data_pool = has_data_pool

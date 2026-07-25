@@ -1,0 +1,21 @@
+# A federated graph where one subgraph fails and the rest resolve returns
+# `data` *and* `errors` — a partial success, and a normal response rather than
+# a broken run. `on_errors: allow_partial` accepts it while still failing an
+# operation that resolved nothing at all.
+flow: graphql_partial
+steps:
+  - id: product_with_degraded_reviews
+    graphql:
+      url: /graphql
+      query: |
+        query ProductWithReviews($sku: String!) {
+          product(sku: $sku) { id name }
+          reviews(sku: $sku) { rating }
+        }
+      variables: { sku: "FB-001" }
+      on_errors: allow_partial
+    extract:
+      product_id: $.data.product.id
+    assert:
+      - status == 200
+      - $.errors[0].message contains "reviews"

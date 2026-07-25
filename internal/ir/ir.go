@@ -10,10 +10,11 @@ import (
 type StepType string
 
 const (
-	StepCall   StepType = "call"
-	StepWait   StepType = "wait"
-	StepPoll   StepType = "poll"
-	StepVerify StepType = "verify"
+	StepCall    StepType = "call"
+	StepGraphQL StepType = "graphql"
+	StepWait    StepType = "wait"
+	StepPoll    StepType = "poll"
+	StepVerify  StepType = "verify"
 )
 
 type Mode string
@@ -83,10 +84,11 @@ type Step struct {
 	ID   string   `json:"id"`
 	Type StepType `json:"type"`
 
-	Call   *CallSpec   `json:"call,omitempty"`
-	Wait   *WaitSpec   `json:"wait,omitempty"`
-	Poll   *PollSpec   `json:"poll,omitempty"`
-	Verify *VerifySpec `json:"verify,omitempty"`
+	Call    *CallSpec    `json:"call,omitempty"`
+	GraphQL *GraphQLSpec `json:"graphql,omitempty"`
+	Wait    *WaitSpec    `json:"wait,omitempty"`
+	Poll    *PollSpec    `json:"poll,omitempty"`
+	Verify  *VerifySpec  `json:"verify,omitempty"`
 
 	Extract   []Extraction  `json:"extract,omitempty"`
 	Assert    []Assertion   `json:"assert,omitempty"`
@@ -105,6 +107,43 @@ type CallSpec struct {
 	Headers  map[string]string `json:"headers,omitempty"`
 	Query    map[string]string `json:"query,omitempty"`
 	Body     json.RawMessage   `json:"body,omitempty"`
+}
+
+// GraphQLErrorPolicy decides what a non-empty `errors` array means for the
+// step's outcome. GraphQL answers `200 OK` for a failed operation, so unlike
+// every other adapter the transport status cannot classify it — the body has
+// to. Defaulting to fail is deliberate: the alternative is a flow that forgets
+// an assertion reporting a broken query as a pass.
+type GraphQLErrorPolicy string
+
+const (
+	// GraphQLErrorsFail is the default: any error fails the step.
+	GraphQLErrorsFail GraphQLErrorPolicy = "fail"
+	// GraphQLErrorsAllowPartial fails only when the operation returned no
+	// data — the federated-graph case, where one subgraph erroring while the
+	// rest resolve is a normal, useful response.
+	GraphQLErrorsAllowPartial GraphQLErrorPolicy = "allow_partial"
+	// GraphQLErrorsIgnore leaves errors to the flow's own assertions.
+	GraphQLErrorsIgnore GraphQLErrorPolicy = "ignore"
+)
+
+// GraphQLSpec is one GraphQL operation. It is HTTP underneath — a POST of
+// {query, variables, operationName} — so it shares the HTTP adapter's session,
+// per-phase spans, retry policy, throttle classification, and auth: only the
+// request body shape and the error semantics differ.
+type GraphQLSpec struct {
+	Endpoint string `json:"endpoint,omitempty"`
+	URL      string `json:"url,omitempty"`
+
+	// Query is the operation document. Variables carry the values, so this
+	// stays a constant string rather than something templated per iteration.
+	Query     string          `json:"query"`
+	Variables json.RawMessage `json:"variables,omitempty"`
+
+	// Operation names which operation to run when the document holds several.
+	Operation string             `json:"operation_name,omitempty"`
+	Headers   map[string]string  `json:"headers,omitempty"`
+	OnErrors  GraphQLErrorPolicy `json:"on_errors,omitempty"`
 }
 
 type WaitSpec struct {

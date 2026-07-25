@@ -35,13 +35,13 @@ class Flow:
       ctx = Context(builder, has_data_pool=self.data is not None)
       func(ctx)
 
-      if builder.call_spec is None:
+      if builder.spec is None:
         raise FlowCompileError(
           f"step {step_id!r} never made a ctx.http call; "
           "every @flow.step function must make exactly one"
         )
 
-      step = {"id": step_id, "type": "call", "call": builder.call_spec}
+      step = {"id": step_id, "type": builder.kind, builder.kind: builder.spec}
       if builder.extract:
         step["extract"] = builder.extract
       if builder.assert_:

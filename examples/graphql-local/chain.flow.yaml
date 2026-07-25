@@ -1,0 +1,61 @@
+# A query chained into a mutation, plus the three error policies — against a
+# graph where every response is `200 OK`.
+#
+#   go run ./examples/graphql-local/stub          # in one terminal
+#   flowbench run examples/graphql-local/chain.flow.yaml \
+#     --target examples/graphql-local/target.yaml
+flow: graphql_shop
+steps:
+  # Values reach an operation through `variables`, never spliced into the
+  # document — the server types and escapes them, and an extracted value
+  # carrying a quote cannot rewrite the query.
+  - id: find_product
+    graphql:
+      url: /graphql
+      query: |
+        query FindProduct($sku: String!) {
+          product(sku: $sku) { id name priceCents }
+        }
+      variables: { sku: "FB-001" }
+    extract:
+      product_id: $.data.product.id
+    assert:
+      - status == 200
+      - $.data.product.name == "Flowbench Tee"
+
+  # The extracted id becomes a variable, and quantity stays a number.
+  - id: place_order
+    graphql:
+      url: /graphql
+      query: |
+        mutation PlaceOrder($productId: ID!, $quantity: Int!) {
+          placeOrder(productId: $productId, quantity: $quantity) { id status quantity }
+        }
+      variables: { productId: "{{ product_id }}", quantity: 2 }
+    assert:
+      - status == 200
+      - $.data.placeOrder.status == "PENDING"
+      - $.data.placeOrder.quantity == 2
+
+  # A federated partial: the product resolved, the reviews subgraph did not.
+  # allow_partial accepts a response that still carries data.
+  - id: reviews_degraded
+    graphql:
+      url: /graphql
+      query: |
+        query Reviews($sku: String!) {
+          product(sku: $sku) { id }
+          reviews(sku: $sku) { rating }
+        }
+      variables: { sku: "FB-001" }
+      on_errors: allow_partial
+    assert:
+      - status == 200
+
+profile:
+  mode: load
+  vus: 5
+  hold: 3s
+  thresholds:
+    - error_rate < 1%
+    - p95(latency) < 100ms
