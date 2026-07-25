@@ -57,15 +57,32 @@ func runScenario(stdout, stderr io.Writer, args []string) int {
 	}
 	scenarioPath := positionals[0]
 
-	res, err := parser.ParseFlowFile(scenarioPath, nil)
-	if err != nil {
-		fmt.Fprintf(stderr, "flowbench: %v\n", err)
-		return exitPreRun
+	var sc *ir.Scenario
+	var err error
+	if strings.HasSuffix(scenarioPath, ".py") {
+		// Python that only constructs the IR compiles here and runs entirely
+		// on this engine (ADR 0012) — no different from the YAML path below
+		// once we have a *ir.Scenario in hand.
+		sc, err = compilePythonScenario(scenarioPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "flowbench: %v\n", err)
+			return exitPreRun
+		}
+		if err := sc.Validate(); err != nil {
+			fmt.Fprintf(stderr, "flowbench: %v\n", err)
+			return exitPreRun
+		}
+	} else {
+		res, err := parser.ParseFlowFile(scenarioPath, nil)
+		if err != nil {
+			fmt.Fprintf(stderr, "flowbench: %v\n", err)
+			return exitPreRun
+		}
+		for _, w := range res.Warnings {
+			fmt.Fprintf(stderr, "%s\n", w)
+		}
+		sc = res.Scenario
 	}
-	for _, w := range res.Warnings {
-		fmt.Fprintf(stderr, "%s\n", w)
-	}
-	sc := res.Scenario
 
 	tgt, err := resolveTarget(*targetName, *targetsDir)
 	if err != nil {
