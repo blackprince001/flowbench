@@ -1,0 +1,20 @@
+# The Deck of Cards API (https://deckofcardsapi.com) — free, no key, and
+# genuinely stateful: a shuffled deck lives on the server under an id, and the
+# cards you draw are gone from it. That state is what makes it worth pointing a
+# chained flow at rather than a fixed JSON blob.
+#
+# It is somebody else's free service. The host allow-list here is the only
+# address these scenarios may reach, the VU and rps ceilings are set to
+# demo-scale on purpose, and stress/soak are refused outright — point those at
+# the local stub in examples/load-local instead.
+name: deck-of-cards
+base_urls:
+  - https://deckofcardsapi.com
+max_vus: 10
+max_rps: 20
+
+# Over the public internet a call takes a few hundred milliseconds; past five
+# seconds it is not slow, it is failing.
+request_timeout: 5s
+
+disallowed_modes: [stress, soak]
