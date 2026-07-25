@@ -197,6 +197,90 @@ span path), `traces.json` (sampled raw traces — all failures plus a sample of
 successes, bodies redacted), and `metrics.json` (the generator's own
 CPU/memory). It's a directory you own — no retention machinery.
 
+## `auth-local/` — every auth scheme, against a service that checks
+
+[`schemes.flow.yaml`](auth-local/schemes.flow.yaml) exercises all six schemes —
+bearer, basic, API key (header and query), session cookie, OAuth2
+client-credentials, HMAC signing — against a stub that `401`s anything it does
+not recognise. That's the point: a scheme that quietly sends nothing **fails**
+the run rather than passing it.
+
+Start the stub in one terminal; it prints the credentials it expects:
+
+```
+go run ./examples/auth-local/stub
+```
+
+```
+auth stub listening on :8090 — every endpoint demands a different scheme
+export the credentials it expects:
+  export DEMO_API_TOKEN=tok_demo_bearer_9f8e7d DEMO_USER=reports-service …
+```
+
+Paste that `export` block, then run:
+
+```
+flowbench run examples/auth-local/schemes.flow.yaml --target examples/auth-local/target.yaml
+```
+
+```
+running "auth_schemes" against auth-stub (http://localhost:8090) [load, 5 VUs]
+  20095 iteration(s), 20095 flow-run(s) in 3.001s
+  error_rate=0.00%  throttle_rate=0.00%  p50=702µs p95=1.025ms p99=1.174ms
+  error_rate < 1%: ok   p95(latency) < 100ms: ok
+```
+
+Nine steps × 20k iterations, every one authenticated. Three things that run
+proves:
+
+**One token, not twenty thousand.** The stub logs a line per client-credentials
+grant. Across the whole run there is exactly one:
+
+```
+issued access token (grant 1, scope "payments:write")
+```
+
+The token endpoint is fetched once and the token shared by every VU, refreshed
+30s before expiry. Without that, a 10k-VU run would open by rate-limiting
+itself on its own auth server.
+
+**Credentials declared once.** The `auth:` block at the top of the flow is the
+flow-level default; every step inherits it, `reports` and the rest override it,
+and `health` opts out with `auth: { scheme: none }`. The stub's `/health`
+*refuses* a credential, so a default leaking onto an opted-out step fails the
+run instead of passing unnoticed.
+
+**Nothing reaches the run store.** `/whoami` echoes the credential into its own
+response body, and captured payloads keep response bodies for debugging — so
+there is something to scrub:
+
+```
+grep -rc 'tok_demo_bearer_9f8e7d\|s3cr3t-basic-pw\|at_demo_issued_by_the_stub' runs/
+```
+
+Zero, for every one of them — including the two the engine *derived* rather
+than resolved: the base64 basic blob and the OAuth2 access token. The captured
+body shows what happened instead:
+
+```json
+"response": "{\"seen\":\"Basic [redacted]\"}"
+```
+
+The HMAC signature deliberately isn't redacted: it is per-request and not
+reversible to the secret, and registering one per request would grow the
+redaction set without bound at 10k VUs.
+
+Two more things the stub enforces, worth knowing because they shape the design:
+
+- **The signature is stamped per attempt, not per step.** `/webhooks/replay`
+  rejects a signature older than 30 seconds, which a request signed once and
+  replayed through retry backoff would fall out of.
+- **The OAuth2 token endpoint is inside the host allow-list.** It is a real
+  outbound request carrying the client credentials, so it is gated like any
+  call. Point `token_url` at a host missing from
+  [`target.yaml`](auth-local/target.yaml) and the run refuses it — pre-run if
+  the URL is a literal, at request time if it is templated.
+
 ## Two files, two jobs
 
 The flow says *what* to do; the target says *where*. Notice the flows call

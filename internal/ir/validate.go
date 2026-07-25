@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
+	"sort"
 	"strings"
 )
 
@@ -204,6 +206,13 @@ func (st *Step) validate(path string) []error {
 		errs = append(errs, st.Retry.validate(path)...)
 	}
 
+	if st.Auth != nil {
+		if st.Call == nil && st.Poll == nil {
+			errs = append(errs, errf(path, "auth applies to steps that make a request (call, poll), not %q steps", st.Type))
+		}
+		errs = append(errs, st.Auth.validate(path)...)
+	}
+
 	switch st.OnFailure {
 	case "", FailureAbortFlow, FailureAbortRun, FailureRecord:
 	default:
@@ -224,6 +233,117 @@ func (st *Step) validate(path string) []error {
 		errs = append(errs, a.validate(fmt.Sprintf("%s: assert %d", path, i))...)
 	}
 	return errs
+}
+
+// authFields is the per-scheme field vocabulary. Anything set outside a
+// scheme's own vocabulary is an error rather than a silent no-op, so a
+// `password` under `scheme: bearer` is caught at parse time instead of
+// authenticating as nothing at request time.
+var authFields = map[AuthScheme]struct{ required, optional []string }{
+	AuthNone:   {},
+	AuthBearer: {required: []string{"token"}},
+	AuthBasic:  {required: []string{"username", "password"}},
+	AuthAPIKey: {required: []string{"name", "value"}, optional: []string{"in"}},
+	AuthCookie: {required: []string{"name", "value"}},
+	AuthOAuth2: {
+		required: []string{"token_url", "client_id", "client_secret"},
+		optional: []string{"scopes"},
+	},
+	AuthHMAC: {
+		required: []string{"secret"},
+		optional: []string{"algorithm", "encoding", "header", "key_id", "key_id_header", "timestamp_header", "sign"},
+	},
+}
+
+func (a *AuthSpec) validate(path string) []error {
+	vocab, known := authFields[a.Scheme]
+	if !known {
+		return []error{errf(path, "unknown auth scheme %q (one of %s)", a.Scheme, strings.Join(authSchemeNames(), ", "))}
+	}
+
+	var errs []error
+	set := a.setFields()
+	for _, name := range vocab.required {
+		if !slices.Contains(set, name) {
+			errs = append(errs, errf(path, "auth scheme %q needs %q", a.Scheme, name))
+		}
+	}
+	allowed := append(append([]string{}, vocab.required...), vocab.optional...)
+	for _, name := range set {
+		if !slices.Contains(allowed, name) {
+			errs = append(errs, errf(path, "auth field %q does not apply to the %q scheme", name, a.Scheme))
+		}
+	}
+
+	switch a.In {
+	case "", InHeader, InQuery:
+	default:
+		errs = append(errs, errf(path, "auth in %q must be %q or %q", a.In, InHeader, InQuery))
+	}
+	switch a.Algorithm {
+	case "", "sha256", "sha512":
+	default:
+		errs = append(errs, errf(path, "hmac algorithm %q must be sha256 or sha512", a.Algorithm))
+	}
+	switch a.Encoding {
+	case "", "hex", "base64":
+	default:
+		errs = append(errs, errf(path, "hmac encoding %q must be hex or base64", a.Encoding))
+	}
+
+	// A templated token URL is only known at request time, where the
+	// allow-list gate checks it; a literal one is checked here.
+	if a.TokenURL != "" && !strings.Contains(a.TokenURL, "{{") {
+		if u, err := url.Parse(a.TokenURL); err != nil || u.Scheme == "" || u.Host == "" {
+			errs = append(errs, errf(path, "oauth2 token_url %q must be absolute (scheme and host)", a.TokenURL))
+		}
+	}
+	return errs
+}
+
+// setFields names the fields carrying a value, in a fixed order so errors
+// read the same every run.
+func (a *AuthSpec) setFields() []string {
+	var set []string
+	for _, f := range []struct {
+		name  string
+		value string
+	}{
+		{"token", a.Token},
+		{"username", a.Username},
+		{"password", a.Password},
+		{"name", a.Name},
+		{"value", a.Value},
+		{"in", string(a.In)},
+		{"token_url", a.TokenURL},
+		{"client_id", a.ClientID},
+		{"client_secret", a.ClientSecret},
+		{"secret", a.Secret},
+		{"algorithm", a.Algorithm},
+		{"encoding", a.Encoding},
+		{"header", a.Header},
+		{"key_id", a.KeyID},
+		{"key_id_header", a.KeyIDHeader},
+		{"timestamp_header", a.TimestampHeader},
+		{"sign", a.Sign},
+	} {
+		if f.value != "" {
+			set = append(set, f.name)
+		}
+	}
+	if len(a.Scopes) > 0 {
+		set = append(set, "scopes")
+	}
+	return set
+}
+
+func authSchemeNames() []string {
+	names := make([]string, 0, len(authFields))
+	for s := range authFields {
+		names = append(names, string(s))
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (c *CallSpec) validate(path string) []error {
@@ -412,7 +532,23 @@ func (st *Step) templatedFields() []string {
 	case st.Verify != nil:
 		fields = append(fields, st.Verify.Args...)
 	}
+	if st.Auth != nil {
+		fields = append(fields, st.Auth.templatedFields()...)
+	}
 	return fields
+}
+
+// templatedFields is every auth field resolved through the scope at request
+// time. Sign is excluded: its `{placeholder}` vocabulary is the signer's, not
+// the templater's, and single braces would trip the malformed-template check.
+func (a *AuthSpec) templatedFields() []string {
+	fields := []string{
+		a.Token, a.Username, a.Password, a.Name, a.Value,
+		a.TokenURL, a.ClientID, a.ClientSecret,
+		a.Secret, a.Algorithm, a.Encoding, a.Header,
+		a.KeyID, a.KeyIDHeader, a.TimestampHeader,
+	}
+	return append(fields, a.Scopes...)
 }
 
 func rootOf(ref string) string {

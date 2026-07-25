@@ -15,3 +15,13 @@ class TemplateRef(str):
     obj.ref = ref
     obj._builder = builder
     return obj
+
+
+def env(name):
+  """A ``{{ env.NAME }}`` reference to a process environment variable.
+
+  ``ctx.env[name]`` covers the same ground inside a step function; this is
+  the spelling for credentials declared outside one -- on a Flow or a step
+  decorator, where there is no ``ctx`` yet.
+  """
+  return TemplateRef(f"env.{name}")

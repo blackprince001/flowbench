@@ -106,14 +106,17 @@ func (w *walker) scenario(body ast.Node) *ir.Scenario {
 
 	entries, ok := mapEntries(body)
 	if !ok {
-		w.errAt(body, "a flow file is a mapping with flow/data/steps/profile keys")
+		w.errAt(body, "a flow file is a mapping with flow/auth/data/steps/profile keys")
 		return sc
 	}
+	var flowAuth *ir.AuthSpec
 	for _, e := range entries {
 		key, keyNode := w.key(e)
 		switch key {
 		case "flow":
 			flow.Name, _ = w.str(e.Value, "flow name")
+		case "auth":
+			flowAuth = w.auth(e.Value)
 		case "data":
 			if src, ok := w.str(e.Value, "data"); ok {
 				sc.DataPools = []ir.DataPool{{Name: dataPoolVar, Source: src}}
@@ -128,12 +131,13 @@ func (w *walker) scenario(body ast.Node) *ir.Scenario {
 		case "profile":
 			sc.Profile = w.profile(e.Value)
 		default:
-			w.errAt(keyNode, "unknown key %q in flow file (expected flow, data, steps, profile)", key)
+			w.errAt(keyNode, "unknown key %q in flow file (expected flow, auth, data, steps, profile)", key)
 		}
 	}
 	if flow.Name == "" {
 		w.errAt(body, `missing required key "flow" (the flow's name)`)
 	}
+	flattenAuth(&flow, flowAuth)
 
 	sc.Name = flow.Name
 	sc.Flows = []ir.Flow{flow}
@@ -181,6 +185,8 @@ func (w *walker) step(n ast.Node) ir.Step {
 			st.Retry = w.retry(e.Value)
 		case "throttle":
 			st.Throttle = w.throttle(e.Value)
+		case "auth":
+			st.Auth = w.auth(e.Value)
 		case "on_failure":
 			if s, ok := w.str(e.Value, "on_failure"); ok {
 				st.OnFailure = ir.FailureAction(s)
@@ -302,6 +308,91 @@ func (w *walker) retry(n ast.Node) *ir.RetryPolicy {
 		}
 	}
 	return pol
+}
+
+// flattenAuth pushes a flow-level default onto every request-making step that
+// did not declare its own, then drops explicit opt-outs — so the IR the
+// executor sees carries auth per step and needs no flow context to resolve it.
+// The Python surface flattens identically (sdk-python/src/flowbench/flow.py);
+// the conformance suite holds the two spellings to the same IR.
+func flattenAuth(flow *ir.Flow, flowAuth *ir.AuthSpec) {
+	for i := range flow.Steps {
+		st := &flow.Steps[i]
+		if st.Auth == nil && flowAuth != nil && (st.Call != nil || st.Poll != nil) {
+			st.Auth = flowAuth
+		}
+		if st.Auth != nil && st.Auth.Scheme == ir.AuthNone {
+			st.Auth = nil
+		}
+	}
+}
+
+func (w *walker) auth(n ast.Node) *ir.AuthSpec {
+	spec := &ir.AuthSpec{}
+	entries, ok := mapEntries(n)
+	if !ok {
+		w.errAt(n, "auth is a mapping with a scheme and that scheme's fields")
+		return spec
+	}
+	for _, e := range entries {
+		key, keyNode := w.key(e)
+		switch key {
+		case "scheme":
+			if s, ok := w.str(e.Value, "scheme"); ok {
+				spec.Scheme = ir.AuthScheme(s)
+			}
+		case "token":
+			spec.Token, _ = w.str(e.Value, "token")
+		case "username":
+			spec.Username, _ = w.str(e.Value, "username")
+		case "password":
+			spec.Password, _ = w.str(e.Value, "password")
+		case "name":
+			spec.Name, _ = w.str(e.Value, "name")
+		case "value":
+			spec.Value, _ = w.str(e.Value, "value")
+		case "in":
+			if s, ok := w.str(e.Value, "in"); ok {
+				spec.In = ir.CredentialIn(s)
+			}
+		case "token_url":
+			spec.TokenURL, _ = w.str(e.Value, "token_url")
+		case "client_id":
+			spec.ClientID, _ = w.str(e.Value, "client_id")
+		case "client_secret":
+			spec.ClientSecret, _ = w.str(e.Value, "client_secret")
+		case "scopes":
+			if seq, ok := w.seq(e.Value, "scopes"); ok {
+				for _, item := range seq.Values {
+					if s, ok := w.str(item, "scope"); ok {
+						spec.Scopes = append(spec.Scopes, s)
+					}
+				}
+			}
+		case "secret":
+			spec.Secret, _ = w.str(e.Value, "secret")
+		case "algorithm":
+			spec.Algorithm, _ = w.str(e.Value, "algorithm")
+		case "encoding":
+			spec.Encoding, _ = w.str(e.Value, "encoding")
+		case "header":
+			spec.Header, _ = w.str(e.Value, "header")
+		case "key_id":
+			spec.KeyID, _ = w.str(e.Value, "key_id")
+		case "key_id_header":
+			spec.KeyIDHeader, _ = w.str(e.Value, "key_id_header")
+		case "timestamp_header":
+			spec.TimestampHeader, _ = w.str(e.Value, "timestamp_header")
+		case "sign":
+			spec.Sign, _ = w.str(e.Value, "sign")
+		default:
+			w.errAt(keyNode, "unknown auth key %q", key)
+		}
+	}
+	if spec.Scheme == "" {
+		w.errAt(n, "auth needs a scheme")
+	}
+	return spec
 }
 
 func (w *walker) throttle(n ast.Node) *ir.ThrottleSpec {
