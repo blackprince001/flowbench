@@ -1,0 +1,19 @@
+# The classification decision, made visible. This query asks for a restricted
+# field: the server answers `200 OK` with a null `data` and an `errors` array.
+#
+# Nothing here asserts on `errors`. Under a status-only reading the step would
+# pass; instead it fails, names the message and the field, and exits nonzero.
+#
+#   flowbench run examples/graphql-local/errors.flow.yaml \
+#     --target examples/graphql-local/target.yaml
+flow: graphql_restricted
+steps:
+  - id: restricted_field
+    graphql:
+      url: /graphql
+      query: |
+        query Restricted {
+          product(sku: "FB-001") { id costPriceCents }
+        }
+    assert:
+      - status == 200

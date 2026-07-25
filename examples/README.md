@@ -281,6 +281,76 @@ Two more things the stub enforces, worth knowing because they shape the design:
   [`target.yaml`](auth-local/target.yaml) and the run refuses it — pre-run if
   the URL is a literal, at request time if it is templated.
 
+## `graphql-local/` — operations, and the 200 that isn't a pass
+
+Start the graph in one terminal:
+
+```
+go run ./examples/graphql-local/stub
+```
+
+[`chain.flow.yaml`](graphql-local/chain.flow.yaml) runs a query, extracts a
+product id from the `data` shape, and feeds it to a mutation:
+
+```
+flowbench run examples/graphql-local/chain.flow.yaml --target examples/graphql-local/target.yaml
+```
+
+```
+running "graphql_shop" against graphql-stub (http://localhost:8091) [load, 5 VUs]
+  56305 iteration(s), 56305 flow-run(s) in 3.002s
+  error_rate=0.00%  throttle_rate=0.00%  p50=247µs p95=420µs p99=511µs
+  error_rate < 1%: ok   p95(latency) < 100ms: ok
+```
+
+**Values travel as variables, never spliced into the document.** The extracted
+id goes over the wire in `variables`, so the server types and escapes it — and
+an extracted value full of quotes and braces can't rewrite the query. The
+document itself is sent verbatim; templating it is deliberately not supported.
+
+### The 200 that isn't a pass
+
+GraphQL puts the transport's verdict in the status and the *operation's*
+verdict in the body. [`errors.flow.yaml`](graphql-local/errors.flow.yaml) asks
+for a restricted field and gets this, with `HTTP 200`:
+
+```json
+{"data":null,"errors":[{"message":"field 'costPriceCents' is restricted to internal clients",
+                        "path":["product","costPriceCents"]}]}
+```
+
+The flow asserts only `status == 200` — which is true. It still fails:
+
+```
+running "graphql_restricted" against graphql-stub (http://localhost:8091)
+  graphql_restricted [1/1]  FAIL (1)
+      restricted_field: graphql: field 'costPriceCents' is restricted to internal
+                        clients (at product.costPriceCents)
+1 iteration(s): 0 passed, 1 failed  (3ms)
+```
+
+Exit `1`. A non-empty `errors` array fails the step by default, because the
+alternative is a flow that forgets one assertion and reports a broken query as
+green forever. The error's `path` is kept, so the failure names the field.
+
+Two ways out when that default is wrong, both on the `graphql` block:
+
+- `on_errors: allow_partial` — fails only when the operation resolved **no**
+  data. This is the federated case: one subgraph times out, the rest answer,
+  and the response is still useful. The third step of `chain.flow.yaml` does
+  exactly this, and extraction still runs over the half that resolved.
+- `on_errors: ignore` — hands the judgement back to the flow's own assertions
+  (`- $.errors not_exists`).
+
+### Everything else is just HTTP
+
+A `graphql` step is a POST, so it keeps the machinery that already exists —
+per-phase spans (dns/connect/tls/ttfb/transfer) under the same `http_call`
+child a `call` step gets, `429` still classifies as `throttled`, `retry:`
+works, and auth is declared exactly as [`auth-local/`](auth-local/) shows. A
+GraphQL failure folds under its own `graphql_errors` span, so a run where one
+query kept erroring shows up in the flame graph rather than only in a list.
+
 ## Two files, two jobs
 
 The flow says *what* to do; the target says *where*. Notice the flows call
