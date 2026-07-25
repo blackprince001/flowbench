@@ -286,3 +286,26 @@ def test_vars_setitem_rejects_non_extraction(cfg, server):
   with pytest.raises(FlowExecutionError, match="json_path"):
     step(ctx)
   driver.close()
+
+
+def test_end_step_rejects_step_that_never_called(cfg):
+  driver = LiveDriver(cfg, has_data_pool=False)
+  driver.begin_step("step", None)
+  with pytest.raises(FlowExecutionError, match=r"never made a ctx\.http call"):
+    driver.end_step()
+  driver.close()
+
+
+def test_call_rejects_second_call_in_same_step(cfg, server):
+  server.routes[("GET", "/x")] = lambda h, b: h._respond(200, {})
+
+  def step(ctx):
+    ctx.http.get("/x")
+    ctx.http.get("/x")
+
+  driver = LiveDriver(cfg, has_data_pool=False)
+  driver.begin_step("step", None)
+  ctx = Context(driver, has_data_pool=False)
+  with pytest.raises(FlowExecutionError, match=r"more than one ctx\.http call"):
+    step(ctx)
+  driver.close()

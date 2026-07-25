@@ -173,6 +173,7 @@ class LiveDriver:
     self._current_span = None
     self._current_step_id = None
     self._current_retry = None
+    self._call_made = False
 
     self.spans = []
     self.failures = []  # list of (step_id, detail)
@@ -197,9 +198,16 @@ class LiveDriver:
     self._current_step_id = step_id
     self._current_retry = retry.to_ir() if retry is not None else None
     self._current_span = Span(step_id, self._elapsed())
+    self._call_made = False
 
   def end_step(self):
     step = self._current_span
+    step_id = self._current_step_id
+    if not self._call_made:
+      raise FlowExecutionError(
+        f"step {step_id!r} never made a ctx.http call; "
+        "every @flow.step function must make exactly one"
+      )
     self.spans.append(step)
     self.outcome = _worst(self.outcome, step.outcome)
     self._current_span = None
@@ -209,6 +217,14 @@ class LiveDriver:
   # -- driver protocol: Http/VarsProxy/UserProxy/EnvProxy delegate here ---
 
   def call(self, method, url, *, json=None, headers=None, query=None):
+    if self._call_made:
+      raise FlowExecutionError(
+        f"step {self._current_step_id!r} makes more than one ctx.http call; "
+        "each @flow.step function must make exactly one call "
+        "(split it into two steps)"
+      )
+    self._call_made = True
+
     resolved_url = self._resolve_url(_stringify(_unwrap(url)))
     body = _unwrap(json) if json is not None else None
     live_headers = (
