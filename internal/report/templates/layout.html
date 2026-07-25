@@ -6,16 +6,30 @@
 <link rel="icon" href="data:,">
 <title>{{ .Title }} — flowbench</title>
 <style>{{ css }}</style>
+<script>{{ shellJS }}</script>
 </head>
 <body>
 <div class="shell">
 
-  <nav class="side" aria-label="Runs">
+  <nav class="side" aria-label="Runs and projects">
     <div class="brand"><span class="brand-mark" aria-hidden="true"></span>flowbench</div>
+    {{ if .ProjectNav }}
+    <div class="nav-group">
+      <div class="nav-label" id="nav-projects">Projects</div>
+      <ul class="nav-list" aria-labelledby="nav-projects">
+        {{ range .ProjectNav }}
+        <li><a class="nav-item" href="{{ .Href }}"{{ if .Current }} aria-current="page"{{ end }}>
+          <span class="nav-item-name">{{ .Label }}</span>
+          <span class="nav-item-meta">{{ .Meta }}</span>
+        </a></li>
+        {{ end }}
+      </ul>
+    </div>
+    {{ end }}
     {{ if .Nav }}
     <div class="nav-group">
       <div class="nav-label" id="nav-runs">Runs</div>
-      <ul style="list-style:none;margin:0;padding:0" aria-labelledby="nav-runs">
+      <ul class="nav-list" aria-labelledby="nav-runs">
         {{ range .Nav }}
         <li><a class="nav-item" href="{{ .Href }}"{{ if .Current }} aria-current="page"{{ end }}>
           <span class="nav-item-name">{{ .Label }}</span>
@@ -29,19 +43,36 @@
   </nav>
 
   <main class="main">
-    {{ if .Crumbs }}
-    <nav class="crumbs" aria-label="Breadcrumb">
-      {{ range $i, $c := .Crumbs }}
-        {{ if $i }}<span class="crumbs-sep" aria-hidden="true">&rsaquo;</span>{{ end }}
-        {{ if $c.Href }}<a href="{{ $c.Href }}">{{ $c.Label }}</a>{{ else }}<span aria-current="page">{{ $c.Label }}</span>{{ end }}
+    <div class="topbar">
+      <button class="rail-btn" type="button" data-toggle="side" aria-pressed="true"
+              title="Show or hide the run list" aria-label="Show or hide the run list">
+        <span class="rail-btn-mark side-mark" aria-hidden="true"></span>
+      </button>
+      {{ if .Crumbs }}
+      <nav class="crumbs" aria-label="Breadcrumb">
+        {{ range $i, $c := .Crumbs }}
+          {{ if $i }}<span class="crumbs-sep" aria-hidden="true">&rsaquo;</span>{{ end }}
+          {{ if $c.Href }}<a href="{{ $c.Href }}">{{ $c.Label }}</a>{{ else }}<span aria-current="page">{{ $c.Label }}</span>{{ end }}
+        {{ end }}
+      </nav>
       {{ end }}
-    </nav>
-    {{ end }}
-    {{ template "content" . }}
+      <button class="rail-btn detail-btn" type="button" data-toggle="rail" aria-pressed="true"
+              title="Show or hide the detail panel" aria-label="Show or hide the detail panel">
+        <span class="rail-btn-mark detail-mark" aria-hidden="true"></span>
+      </button>
+    </div>
+    <div class="flow">
+      {{ template "content" . }}
+    </div>
   </main>
 
+  <aside class="rail" aria-label="Details">{{- template "detail" . -}}</aside>
 
 </div>
 </body>
 </html>
 {{ end }}
+
+<!-- Pages that have something to inspect override this; the rest leave the rail
+     empty, and an empty rail takes no width. -->
+{{ define "detail" }}{{ end }}

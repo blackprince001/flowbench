@@ -40,7 +40,9 @@ func New(ws *store.Workspace) *Server {
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/flame", s.flame)
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/waterfall", s.waterfall)
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/outcomes", s.outcomes)
+	s.mux.HandleFunc("GET /p/{project}/runs/{id}/failures", s.failures)
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/compare", s.compare)
+	s.mux.Handle("GET "+report.AssetPrefix+"{file}", report.ServeAssets())
 	return s
 }
 
@@ -84,9 +86,9 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 
 	render(w, report.RenderIndex, report.IndexPage{
 		Shell: report.Shell{
-			Title:  "Projects",
-			Crumbs: []report.Crumb{{Label: "flowbench"}, {Label: "projects"}},
-			Nav:    s.projectNav(""),
+			Title:      "Projects",
+			Crumbs:     []report.Crumb{{Label: "flowbench"}, {Label: "projects"}},
+			ProjectNav: s.projectNav(""),
 		},
 		Projects: cards,
 	})
@@ -127,9 +129,10 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 
 	render(w, report.RenderRuns, report.RunsPage{
 		Shell: report.Shell{
-			Title:  p.Name,
-			Crumbs: s.crumbs(p, ""),
-			Nav:    s.nav(p, index, ""),
+			Title:      p.Name,
+			Crumbs:     s.crumbs(p, ""),
+			ProjectNav: s.projectNav(p.Slug),
+			Nav:        s.nav(p, index, ""),
 		},
 		Project: p.Name,
 		Store:   p.Store.Root(),
@@ -138,6 +141,9 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// run is the run itself: the summary numbers, the run as time-series, where its
+// time went, its gates, and a way into each detail view. Overview and dashboard
+// were two tabs of one question, so they are one page.
 func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 	p, m, index, ok := s.runContext(w, r)
 	if !ok {
@@ -151,14 +157,25 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 	traces, _ := p.Store.LoadTraces(id)
 	series, _ := p.Store.LoadSeries(id)
 	samples, _ := p.Store.LoadSamples(id)
+	metrics, _ := p.Store.LoadMetrics(id)
 
 	peak := ""
 	if at, n, found := report.PeakThrottle(series); found {
 		peak = fmt.Sprintf("throttling peaks at %s (%d flow-runs)", at.Round(100*time.Millisecond), n)
 	}
 
-	render(w, report.RenderRun, report.RunPage{
-		Shell:   s.shell(p, m, index, "overview", len(report.FlameFrames(folded)), len(traces), samples.Kept),
+	base := s.runBase(p, id)
+	charts := report.LinkCharts([]report.LineChart{
+		report.ThroughputChart(series),
+		report.LatencyChart(series),
+		report.RatesChart(series),
+		vuChart(series, metrics),
+	}, base)
+	chart, charts := report.SelectChart(charts, r.URL.Query().Get("chart"))
+	bucket := intParam(r, "at", -1)
+
+	page := report.RunPage{
+		Shell:   s.shell(p, m, index, "overview", len(report.FlameFrames(folded)), traces, samples.Kept),
 		RunHead: head(m),
 		Tiles: []report.Tile{
 			{Label: "flow-runs", Value: fmt.Sprint(m.FlowRuns), Sub: fmt.Sprintf("%d iterations", m.Iterations)},
@@ -169,12 +186,25 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 			{Label: "p95", Value: m.P95.Round(time.Microsecond).String()},
 			{Label: "p99", Value: m.P99.Round(time.Microsecond).String()},
 		},
+		Charts:  charts,
+		Chart:   chart,
+		All:     base,
 		Tallies: report.Tallies(series),
-		Strip:   report.StripView{Cells: report.Strip(series), End: report.SeriesSpan(series).Round(100 * time.Millisecond).String()},
-		Peak:    peak,
-		Gates:   gates(m),
-		Links:   jumps(s.runBase(p, id), folded, len(traces), samples),
-	})
+		Strip: report.StripView{
+			Cells: report.StripLinks(report.Strip(series), base, bucket),
+			End:   report.SeriesSpan(series).Round(100 * time.Millisecond).String(),
+		},
+		Peak:   peak,
+		Bucket: report.InspectBucket(series, bucket),
+		Steps:  report.StepRows(folded),
+		Gates:  gates(m),
+		Agent:  "no agent attached — target CPU/memory overlay lands with #32",
+		Links:  jumps(base, folded, len(traces), samples),
+	}
+	if m.Mode == "soak" {
+		page.Trend = report.TrendFrom(series, m.Thresholds)
+	}
+	render(w, report.RenderRun, page)
 }
 
 func (s *Server) flame(w http.ResponseWriter, r *http.Request) {
@@ -204,7 +234,7 @@ func (s *Server) flame(w http.ResponseWriter, r *http.Request) {
 	}
 
 	render(w, report.RenderFlame, report.FlamePage{
-		Shell:    s.shell(p, m, index, "flame", len(report.FlameFrames(folded)), len(traces), samples.Kept),
+		Shell:    s.shell(p, m, index, "flame", len(report.FlameFrames(folded)), traces, samples.Kept),
 		RunHead:  head(m),
 		Frames:   frames,
 		Detail:   detail,
@@ -239,7 +269,7 @@ func (s *Server) waterfall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	render(w, report.RenderWaterfall, report.WaterfallPage{
-		Shell:   s.shell(p, m, index, "waterfall", len(report.FlameFrames(folded)), len(traces), samples.Kept),
+		Shell:   s.shell(p, m, index, "waterfall", len(report.FlameFrames(folded)), traces, samples.Kept),
 		RunHead: head(m),
 		Traces:  report.Summarize(traces, at),
 		Rows:    rows,
@@ -273,7 +303,7 @@ func (s *Server) outcomes(w http.ResponseWriter, r *http.Request) {
 	cells, omitted := report.Cells(samples, filter, run, cellBase)
 
 	render(w, report.RenderOutcomes, report.OutcomesPage{
-		Shell:   s.shell(p, m, index, "outcomes", len(report.FlameFrames(folded)), len(traces), samples.Kept),
+		Shell:   s.shell(p, m, index, "outcomes", len(report.FlameFrames(folded)), traces, samples.Kept),
 		RunHead: head(m),
 		Tallies: report.Tallies(series),
 		Strip: report.StripView{
@@ -289,11 +319,11 @@ func (s *Server) outcomes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// dashboard is the run's time-series view: throughput, latency percentiles, and
-// outcome rates over the run, the per-step table, the thresholds, and — for a
-// soak — the drift trend. The target-resource overlay is an empty slot until an
-// agent is attached (#32).
-func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
+// failures is the drill-down: every failure across the kept traces grouped by
+// the step it happened in and its cause, each group opening onto the iterations
+// behind it — and each of those onto its own waterfall, so a count is two links
+// from the request that produced it.
+func (s *Server) failures(w http.ResponseWriter, r *http.Request) {
 	p, m, index, ok := s.runContext(w, r)
 	if !ok {
 		return
@@ -301,28 +331,35 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	id := m.ID
 
 	folded, _ := p.Store.LoadFolded(id)
-	series, _ := p.Store.LoadSeries(id)
 	traces, _ := p.Store.LoadTraces(id)
 	samples, _ := p.Store.LoadSamples(id)
-	metrics, _ := p.Store.LoadMetrics(id)
 
-	page := report.DashboardPage{
-		Shell:   s.shell(p, m, index, "dashboard", len(report.FlameFrames(folded)), len(traces), samples.Kept),
-		RunHead: head(m),
-		Charts: []report.LineChart{
-			report.ThroughputChart(series),
-			report.LatencyChart(series),
-			report.RatesChart(series),
-			vuChart(series, metrics),
-		},
-		Steps: report.StepRows(folded),
-		Gates: gates(m),
-		Agent: "no agent attached — target CPU/memory overlay lands with #32",
+	base := s.runBase(p, id)
+	groups := report.FailureGroups(traces, base+"/failures", base+"/waterfall")
+	selected, groups := report.SelectGroup(groups, r.URL.Query().Get("group"))
+
+	render(w, report.RenderFailures, report.FailuresPage{
+		Shell:    s.shell(p, m, index, "failures", len(report.FlameFrames(folded)), traces, samples.Kept),
+		RunHead:  head(m),
+		Groups:   groups,
+		Selected: selected,
+		Note:     report.FailureNote(samples, traces),
+	})
+}
+
+// dashboard was the run's time-series tab before the two were merged. It stays
+// as a redirect so links and bookmarks into it still land somewhere real,
+// carrying any ?chart= with them.
+func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
+	p, m, _, ok := s.runContext(w, r)
+	if !ok {
+		return
 	}
-	if m.Mode == "soak" {
-		page.Trend = report.TrendFrom(series, m.Thresholds)
+	to := s.runBase(p, m.ID)
+	if q := r.URL.RawQuery; q != "" {
+		to += "?" + q
 	}
-	render(w, report.RenderDashboard, page)
+	http.Redirect(w, r, to, http.StatusMovedPermanently)
 }
 
 // vuChart plots active virtual users over time from the generator's own metric
@@ -345,10 +382,9 @@ func vuChart(series collector.Series, metrics []executor.MetricSample) report.Li
 		pts = append(pts, report.ChartPoint{X: x, Y: float64(mm.ActiveVUs)})
 		last = mm.ActiveVUs
 	}
-	end := span.Round(100 * time.Millisecond).String()
-	return report.LineChartOf("Virtual users", []report.ChartSeries{{
+	return report.LineChartOf("vus", "Virtual users", []report.ChartSeries{{
 		Label: "VUs", Tone: "kind-retry", Points: pts, Last: fmt.Sprint(last),
-	}}, func(v float64) string { return fmt.Sprintf("%.0f", v) }, end)
+	}}, func(v float64) string { return fmt.Sprintf("%.0f", v) }, span)
 }
 
 // compare sets a run beside a baseline — the previous run of the same scenario
@@ -381,7 +417,7 @@ func (s *Server) compare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := report.ComparePage{
-		Shell:     s.shell(p, m, index, "compare", len(report.FlameFrames(folded)), len(traces), samples.Kept),
+		Shell:     s.shell(p, m, index, "compare", len(report.FlameFrames(folded)), traces, samples.Kept),
 		RunHead:   head(m),
 		Cur:       s.compareRef(p, m),
 		Baselines: baselineOptions(peers, base, bm.ID),
@@ -530,21 +566,22 @@ func (s *Server) crumbs(p store.Project, runID string) []report.Crumb {
 	)
 }
 
-func (s *Server) shell(p store.Project, m store.Meta, index []store.Meta, view string, frames, traces, runs int) report.Shell {
+func (s *Server) shell(p store.Project, m store.Meta, index []store.Meta, view string, frames int, traces []*span.Span, runs int) report.Shell {
 	base := s.runBase(p, m.ID)
 	tabs := []report.Tab{
-		{Label: "Overview", Href: base, Selected: view == "overview"},
-		{Label: "Dashboard", Href: base + "/dashboard", Selected: view == "dashboard"},
+		{Label: "Run", Href: base, Selected: view == "overview"},
 		{Label: "Flame graph", Href: base + "/flame", Count: frames, Selected: view == "flame"},
-		{Label: "Waterfall", Href: base + "/waterfall", Count: traces, Selected: view == "waterfall"},
+		{Label: "Waterfall", Href: base + "/waterfall", Count: len(traces), Selected: view == "waterfall"},
+		{Label: "Failures", Href: base + "/failures", Count: report.FailingTraces(traces), Selected: view == "failures"},
 		{Label: "Outcomes", Href: base + "/outcomes", Count: runs, Selected: view == "outcomes"},
 		{Label: "Compare", Href: base + "/compare", Selected: view == "compare"},
 	}
 	return report.Shell{
-		Title:  m.Scenario,
-		Crumbs: s.crumbs(p, m.ID),
-		Nav:    s.nav(p, index, m.ID),
-		Tabs:   tabs,
+		Title:      m.Scenario,
+		Crumbs:     s.crumbs(p, m.ID),
+		ProjectNav: s.projectNav(p.Slug),
+		Nav:        s.nav(p, index, m.ID),
+		Tabs:       tabs,
 	}
 }
 
@@ -572,8 +609,13 @@ func (s *Server) nav(p store.Project, index []store.Meta, current string) []repo
 	return out
 }
 
-// projectNav lists the workspace's projects for the sidebar.
+// projectNav lists the workspace's projects for the sidebar, so switching
+// between them is a click from anywhere rather than a trip back to the root. A
+// single-project workspace has nothing to switch to, so it lists nothing.
 func (s *Server) projectNav(current string) []report.NavRun {
+	if _, single := s.ws.Single(); single && current != "" {
+		return nil
+	}
 	out := make([]report.NavRun, 0, len(s.ws.Projects()))
 	for _, p := range s.ws.Projects() {
 		runs, _ := p.Runs()

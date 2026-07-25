@@ -25,12 +25,12 @@ func seriesFixture() collector.Series {
 }
 
 func TestLineChartScalesToMax(t *testing.T) {
-	lc := report.LineChartOf("t", []report.ChartSeries{{
+	lc := report.LineChartOf("t", "T", []report.ChartSeries{{
 		Label:  "a",
 		Tone:   "net",
 		Points: []report.ChartPoint{{X: 0, Y: 0}, {X: 0.5, Y: 5}, {X: 1, Y: 10}},
 		Last:   "10",
-	}}, intFmt, "5s")
+	}}, intFmt, 5*time.Second)
 
 	if lc.Empty {
 		t.Fatal("a series with points is not empty")
@@ -49,7 +49,7 @@ func TestLineChartScalesToMax(t *testing.T) {
 }
 
 func TestLineChartEmptyState(t *testing.T) {
-	lc := report.LineChartOf("t", []report.ChartSeries{{Label: "a"}}, intFmt, "0s")
+	lc := report.LineChartOf("t", "T", []report.ChartSeries{{Label: "a"}}, intFmt, 0)
 	if !lc.Empty || len(lc.Lines) != 0 {
 		t.Errorf("a series with no points should render an empty state, got %+v", lc)
 	}
@@ -139,21 +139,23 @@ func TestTrendFromNilWhenTooShort(t *testing.T) {
 	}
 }
 
-func TestRenderDashboard(t *testing.T) {
+// The run page carries what the dashboard used to: overview and time-series are
+// one page now, so the numbers and the shape that produced them read together.
+func TestRenderRunPageCharts(t *testing.T) {
 	var sb strings.Builder
-	err := report.RenderDashboard(&sb, report.DashboardPage{
+	err := report.RenderRun(&sb, report.RunPage{
 		Shell:   shell(),
 		RunHead: runHead(),
-		Charts:  []report.LineChart{report.ThroughputChart(seriesFixture()), report.LatencyChart(seriesFixture()), report.RatesChart(seriesFixture())},
+		Charts:  report.LinkCharts([]report.LineChart{report.ThroughputChart(seriesFixture()), report.LatencyChart(seriesFixture()), report.RatesChart(seriesFixture())}, "/run"),
 		Steps:   report.StepRows(folded()),
 		Gates:   []report.Gate{{Expr: "error_rate < 2%", Pass: true, Tone: "ok", Detail: "error_rate = 1%, want < 2%"}},
 		Agent:   "no agent attached — target CPU/memory overlay lands with #32",
 	})
 	if err != nil {
-		t.Fatalf("RenderDashboard: %v", err)
+		t.Fatalf("RenderRun: %v", err)
 	}
 	check(t, sb.String(),
-		"Charts",
+		"Over the run",
 		"<polyline",                      // the line geometry rendered
 		"<polygon",                       // and the area under it
 		"dither-mask",                    // filled through the shared dither mask
@@ -161,6 +163,7 @@ func TestRenderDashboard(t *testing.T) {
 		"chart-in",                       // the entrance animation shipped in the inlined CSS
 		"prefers-reduced-motion: reduce", // guarded for reduced motion
 		"req/s",                          // throughput legend
+		"chart-hit",                      // the whole chart is the target, not its title
 		"Steps", "checkout",              // per-step table
 		"error_rate", "want", // thresholds
 		"target CPU/memory overlay lands with #32", // the deferred agent slot

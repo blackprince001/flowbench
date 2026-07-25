@@ -1,10 +1,12 @@
 package server_test
 
 import (
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -191,9 +193,12 @@ func TestDetailPanelsRenderCompactEmptyStates(t *testing.T) {
 	if got := strings.Count(oc, `class="card panel is-empty"`); got != 2 {
 		t.Errorf("outcomes should have two reserved empty panels, got %d", got)
 	}
+	if !strings.Contains(oc, `class="rail-label"`) {
+		t.Error("the rail should say what it is above the panels")
+	}
 
 	_, fl := get(t, s, runBase+"/flame")
-	if !strings.Contains(fl, `class="flame-inspector is-empty"`) {
+	if !strings.Contains(fl, "flame-inspector is-empty") {
 		t.Error("flame inspector should reserve space when no frame is selected")
 	}
 
@@ -238,7 +243,7 @@ func TestFlamePageSelectsAFrame(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("flame page returned %d", code)
 	}
-	if !strings.Contains(body, "ttfb") || !strings.Contains(body, "Inspect a frame") {
+	if !strings.Contains(body, "ttfb") || !strings.Contains(body, "No frame selected") {
 		t.Error("flame page should render frames and an empty panel")
 	}
 
@@ -258,7 +263,7 @@ func TestFlamePageSelectsAFrame(t *testing.T) {
 	}
 
 	// A stale link must degrade to the plain view, not 500.
-	if code, body := get(t, s, base+"?frame=nope.nope"); code != http.StatusOK || !strings.Contains(body, "Inspect a frame") {
+	if code, body := get(t, s, base+"?frame=nope.nope"); code != http.StatusOK || !strings.Contains(body, "No frame selected") {
 		t.Errorf("unknown frame should fall back cleanly, got %d", code)
 	}
 }
@@ -544,10 +549,12 @@ func runWithStep(stepDur time.Duration) *executor.Result {
 
 // Issue #37: the dashboard renders the time-series charts and the per-step table
 // for a stored run.
-func TestDashboardRendersChartsAndSteps(t *testing.T) {
+// Overview and dashboard are one page: the numbers and the shape that produced
+// them, read together.
+func TestRunPageCarriesChartsAndSteps(t *testing.T) {
 	s, runBase := serve(t)
 
-	code, body := get(t, s, runBase+"/dashboard")
+	code, body := get(t, s, runBase)
 	if code != http.StatusOK {
 		t.Fatalf("dashboard returned %d", code)
 	}
@@ -585,7 +592,7 @@ func TestDashboardShowsSoakTrend(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, body := get(t, server.New(ws), "/p/svc/runs/"+filepath.Base(rd)+"/dashboard")
+	_, body := get(t, server.New(ws), "/p/svc/runs/"+filepath.Base(rd))
 	if !strings.Contains(body, "Soak trend") {
 		t.Error("a soak run should show the trend section")
 	}
@@ -658,5 +665,405 @@ func TestComparePageHighlightsTheRegressedStep(t *testing.T) {
 	// The oldest run has nothing earlier: the empty state, never a 500.
 	if code, body := get(t, s, "/p/checkout/runs/"+baseID+"/compare"); code != http.StatusOK || !strings.Contains(body, "no earlier run") {
 		t.Errorf("the oldest run should show the empty state, got %d", code)
+	}
+}
+
+// mixedFailureRun is issue #38's shape: one run whose flow-runs fail for
+// different reasons in different steps — a refused status, a wrong body, a
+// target that never answered — alongside throttles the mode counts as errors.
+func mixedFailureRun() *executor.Result {
+	folded := span.NewFolded()
+	var samples []executor.Sample
+	var traces []*span.Span
+
+	step := func(root *span.Span, name string, p *span.Payload, outcome span.Outcome) *span.Span {
+		st := root.Child(name, 0)
+		st.Duration = 12 * time.Millisecond
+		st.Outcome = outcome
+		st.Payload = p
+		return st
+	}
+
+	for i := range 24 {
+		at := time.Duration(i) * 20 * time.Millisecond
+		root := span.New("flow:checkout", at)
+		root.Duration = 15 * time.Millisecond
+		root.Outcome = span.OutcomeFailed
+		s := executor.Sample{Flow: "checkout", Actual: at, Service: 15 * time.Millisecond, Outcome: span.OutcomeFailed}
+
+		switch i % 4 {
+		case 0: // the target refused: an assertion noticed the status
+			a := step(root, "checkout", &span.Payload{Method: "POST", Status: 503}, span.OutcomeFailed).
+				Child("assert_status", 11*time.Millisecond)
+			a.Outcome = span.OutcomeFailed
+			a.Payload = &span.Payload{Failure: "status: want 200, got 503"}
+		case 1: // it answered, and the answer was wrong
+			a := step(root, "checkout", &span.Payload{Method: "POST", Status: 200}, span.OutcomeFailed).
+				Child("assert_body_paid", 11*time.Millisecond)
+			a.Outcome = span.OutcomeFailed
+			a.Payload = &span.Payload{Failure: "body $.paid: want true, got false"}
+		case 2: // it never answered
+			leg := step(root, "login", &span.Payload{
+				Method:  "POST",
+				Failure: "call failed: POST http://svc/login: context deadline exceeded",
+			}, span.OutcomeFailed).Child("http_call", time.Millisecond)
+			leg.Outcome = span.OutcomeFailed
+		case 3: // it asked to be left alone, and this mode calls that an error
+			step(root, "checkout", &span.Payload{
+				Method: "POST", Status: 429, RetryAfter: "1", Failure: "throttled: HTTP 429",
+			}, span.OutcomeThrottled)
+			s.Throttled = true
+		}
+
+		folded.Add(root)
+		samples = append(samples, s)
+		traces = append(traces, root)
+	}
+
+	return &executor.Result{
+		Duration:   time.Second,
+		Iterations: len(samples),
+		Samples:    samples,
+		Folded:     folded,
+		Traces:     traces,
+	}
+}
+
+// serveFailures serves a one-project workspace holding one mixed-failure run.
+func serveFailures(t *testing.T) (*server.Server, string) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "checkout")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rd, err := st.Save(store.RunInfo{
+		Scenario:  "checkout.flow.yaml",
+		Mode:      "integration",
+		Target:    "local-stub",
+		StartedAt: time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC),
+	}, mixedFailureRun(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := store.NewWorkspace([]string{"checkout=" + dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return server.New(ws), "/p/checkout/runs/" + filepath.Base(rd)
+}
+
+var hrefPat = regexp.MustCompile(`href="([^"]+)"`)
+
+// hrefsIn returns the page's links that contain want, in document order, with
+// the entity escaping html/template applied undone.
+func hrefsIn(body, want string) []string {
+	out := []string{}
+	for _, m := range hrefPat.FindAllStringSubmatch(body, -1) {
+		if href := html.UnescapeString(m[1]); strings.Contains(href, want) {
+			out = append(out, href)
+		}
+	}
+	return out
+}
+
+// Issue #38's acceptance: from a mixed-failure run, two clicks reach a specific
+// failing iteration's waterfall.
+func TestFailuresDrillDownReachesAnIterationInTwoClicks(t *testing.T) {
+	s, runBase := serveFailures(t)
+
+	code, body := get(t, s, runBase+"/failures")
+	if code != http.StatusOK {
+		t.Fatalf("failures page returned %d", code)
+	}
+	for _, want := range []string{"Failures by step and cause", "No group selected", "flow-runs"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("failures page missing %q", want)
+		}
+	}
+
+	// Click one: a group.
+	groups := hrefsIn(body, "/failures?group=")
+	if len(groups) < 4 {
+		t.Fatalf("want a group per step and cause, got %v", groups)
+	}
+	code, body = get(t, s, groups[0])
+	if code != http.StatusOK {
+		t.Fatalf("group returned %d", code)
+	}
+	if !strings.Contains(body, "Recorded reason") || !strings.Contains(body, "Iterations") {
+		t.Error("a selected group should show the reason and its iterations")
+	}
+
+	// Click two: an iteration, which lands on its waterfall with the span that
+	// failed already selected.
+	runs := hrefsIn(body, "/waterfall?trace=")
+	if len(runs) == 0 {
+		t.Fatal("a selected group should link to each of its iterations")
+	}
+	code, body = get(t, s, runs[0])
+	if code != http.StatusOK {
+		t.Fatalf("iteration waterfall returned %d", code)
+	}
+	if !strings.Contains(body, `<tr class="is-selected">`) {
+		t.Error("the iteration's failing span should arrive selected")
+	}
+	if strings.Contains(body, "No span selected") {
+		t.Error("the waterfall opened with nothing selected")
+	}
+}
+
+// The acceptance's second half: throttled never appears inside generic errors.
+// This run counts throttles as errors, so every flow-run below failed — and the
+// throttles are still their own group, in their own colour and their own word.
+func TestFailuresKeepThrottlesOutOfGenericErrors(t *testing.T) {
+	s, runBase := serveFailures(t)
+
+	_, body := get(t, s, runBase+"/failures")
+	if !strings.Contains(body, `<span class="chip o-throttled">throttled</span>`) {
+		t.Error("throttles should be grouped as throttles, in the throttle tone")
+	}
+	for _, want := range []string{"status", "assertion", "timeout"} {
+		if !strings.Contains(body, `<span class="chip o-failed">`+want+`</span>`) {
+			t.Errorf("no %q group — the causes should be separated", want)
+		}
+	}
+
+	// Selecting the throttle group lists throttled iterations only.
+	var throttle string
+	for _, href := range hrefsIn(body, "/failures?group=") {
+		if strings.Contains(href, "throttled") {
+			throttle = href
+		}
+	}
+	if throttle == "" {
+		t.Fatal("no throttle group to select")
+	}
+	_, body = get(t, s, throttle)
+	if !strings.Contains(body, "throttled: HTTP 429") {
+		t.Error("the throttle group should show what the target answered")
+	}
+	if strings.Contains(body, "context deadline exceeded") {
+		t.Error("a timeout leaked into the throttle group")
+	}
+}
+
+// The tab carries the number that says whether the drill-down is worth opening.
+func TestFailuresTabCountsFailingTraces(t *testing.T) {
+	s, runBase := serveFailures(t)
+	_, body := get(t, s, runBase)
+	if !strings.Contains(body, `href="`+runBase+`/failures"`) {
+		t.Fatal("every run page should offer the failures tab")
+	}
+	if !strings.Contains(body, `Failures <span class="tab-count">24</span>`) {
+		t.Error("the failures tab should count the failing traces")
+	}
+}
+
+// A clean run has nothing to drill into, and says so rather than 500ing.
+func TestFailuresPageOnACleanRun(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "clean")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := mixedFailureRun()
+	res.Traces = nil
+	rd, err := st.Save(store.RunInfo{Scenario: "clean.flow.yaml", Mode: "load", StartedAt: time.Now()}, res, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := store.NewWorkspace([]string{"clean=" + dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, body := get(t, server.New(ws), "/p/clean/runs/"+filepath.Base(rd)+"/failures")
+	if code != http.StatusOK {
+		t.Fatalf("returned %d", code)
+	}
+	if !strings.Contains(body, "no failing traces were kept") {
+		t.Error("an empty drill-down should explain itself")
+	}
+}
+
+// The stylesheet is inlined into every page, but the web fonts are files: they
+// have to be reachable, cacheable, and typed, or every page silently falls back
+// to the system faces.
+func TestFontsAreServedAndCacheable(t *testing.T) {
+	s, runBase := serve(t)
+
+	_, body := get(t, s, runBase)
+	if !strings.Contains(body, `url("/assets/OpenRunde-Regular.woff2")`) {
+		t.Error("pages should ask for the embedded sans")
+	}
+
+	for _, name := range []string{
+		"OpenRunde-Regular.woff2", "OpenRunde-Medium.woff2", "OpenRunde-Semibold.woff2",
+	} {
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/"+name, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s returned %d", name, rec.Code)
+			continue
+		}
+		if got := rec.Header().Get("Content-Type"); got != "font/woff2" {
+			t.Errorf("%s served as %q", name, got)
+		}
+		if !strings.Contains(rec.Header().Get("Cache-Control"), "immutable") {
+			t.Errorf("%s should be cacheable across navigations", name)
+		}
+		// wOF2 — the file is the font, not a stray text asset.
+		if b := rec.Body.Bytes(); len(b) < 4 || string(b[:4]) != "wOF2" {
+			t.Errorf("%s is not a woff2", name)
+		}
+	}
+}
+
+// The asset route serves fonts and nothing else: the templates and stylesheet
+// are inlined by the renderer, never reachable as files.
+func TestAssetRouteServesOnlyFonts(t *testing.T) {
+	s, _ := serve(t)
+	for _, path := range []string{
+		"/assets/report.css",
+		"/assets/flame.js",
+		"/assets/nope.woff2",
+		// The mux normalizes this to /assets/report.css before the handler sees
+		// it; either way it must not reach a file.
+		"/assets/OpenRunde-Regular.woff2/../report.css",
+	} {
+		if code, _ := get(t, s, path); code == http.StatusOK {
+			t.Errorf("%s was served; the asset route is fonts only", path)
+		}
+	}
+}
+
+// A small multiple is a summary; opening one has to give it the whole card plus
+// the detail there was no room for at four-up.
+func TestRunPageExpandsOneChart(t *testing.T) {
+	s, runBase := serve(t)
+	base := runBase
+
+	_, body := get(t, s, base)
+	if !strings.Contains(body, `href="`+base+`?chart=latency"`) {
+		t.Fatal("each chart should link to its own full-size view")
+	}
+	// Match the class attribute, not the bare word: the stylesheet is inlined
+	// and mentions every state class.
+	if strings.Contains(body, `class="chart is-expanded"`) {
+		t.Error("the grid of small multiples has nothing expanded")
+	}
+
+	code, body := get(t, s, base+"?chart=latency")
+	if code != http.StatusOK {
+		t.Fatalf("expanded chart returned %d", code)
+	}
+	for _, want := range []string{
+		"is-expanded",        // the chart takes the card
+		"cpeak",              // with a rule at its highest point
+		"peak ",              // stated in words, never the rule alone
+		"chart-ymid",         // a labelled y axis, not just the maximum
+		"axis-ticks",         // and quarter marks across the run
+		"Min", "Mean", "Max", // the per-series summary a small multiple cannot carry
+		"all charts", // and the way back
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expanded chart missing %q", want)
+		}
+	}
+	// The other charts stay one click away.
+	if !strings.Contains(body, `?chart=throughput"`) {
+		t.Error("the expanded view should offer the other charts")
+	}
+	// A stale chart key degrades to the grid rather than erroring.
+	if code, body := get(t, s, base+"?chart=nope"); code != http.StatusOK || strings.Contains(body, `class="chart is-expanded"`) {
+		t.Errorf("an unknown chart should fall back to all of them, got %d", code)
+	}
+}
+
+// The shell is three columns: runs and projects on the left, the flow in the
+// middle, whatever is selected on the right. Both outer columns collapse, and
+// the state is written on <html> so the stylesheet owns the layout.
+func TestShellHasThreeColumns(t *testing.T) {
+	s, runBase := serve(t)
+
+	_, body := get(t, s, runBase)
+	for _, want := range []string{
+		`<nav class="side"`,                        // left: runs
+		`<div class="flow">`,                       // middle: the flow, at a reading width
+		`<aside class="rail"`,                      // right: details
+		`data-toggle="side"`, `data-toggle="rail"`, // both collapsible
+		`[data-side="off"]`, `[data-rail="off"]`, // and the CSS that does it
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("shell missing %q", want)
+		}
+	}
+
+	// A page with nothing to inspect leaves the rail literally empty, so `:empty`
+	// can collapse the column rather than leaving a 340px gap.
+	if !strings.Contains(body, ".rail:empty { display: none; }") {
+		t.Error("an empty rail should collapse itself")
+	}
+	if _, list := get(t, s, projectOf(runBase)); !strings.Contains(list, `<aside class="rail" aria-label="Details"></aside>`) {
+		t.Error("the run list has nothing to inspect, so its rail should be empty")
+	}
+}
+
+// The left column switches projects as well as runs, so moving between them
+// does not mean a trip back to the workspace root.
+func TestSidebarSwitchesProjects(t *testing.T) {
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "checkout"), filepath.Join(dir, "billing")
+	saveRun(t, a, nil)
+	id := saveRun(t, b, nil)
+	ws, err := store.NewWorkspace([]string{"Checkout=" + a, "Billing=" + b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := server.New(ws)
+
+	_, body := get(t, s, "/p/billing/runs/"+id)
+	if !strings.Contains(body, `id="nav-projects"`) {
+		t.Fatal("a multi-project workspace should list its projects in the sidebar")
+	}
+	if !strings.Contains(body, `href="/p/checkout/"`) {
+		t.Error("the other project should be one click away")
+	}
+
+	// One project is not a choice, so it is not offered inside a run.
+	s2, runBase := serve(t)
+	if _, single := get(t, s2, runBase); strings.Contains(single, `id="nav-projects"`) {
+		t.Error("a single-project workspace has nothing to switch between")
+	}
+}
+
+// Overview and dashboard were two tabs of one question. The merged page carries
+// both, and the old URL still lands on it.
+func TestDashboardRedirectsIntoTheRunPage(t *testing.T) {
+	s, runBase := serve(t)
+
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, runBase+"/dashboard?chart=latency", nil))
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("dashboard returned %d, want a redirect", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != runBase+"?chart=latency" {
+		t.Errorf("redirected to %q, want the run page carrying the chart", got)
+	}
+
+	_, body := get(t, s, runBase)
+	for _, want := range []string{"Summary", "Over the run", "Steps", "Thresholds", "error rate", "req/s"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("merged run page missing %q", want)
+		}
+	}
+	if strings.Contains(body, `>Dashboard<`) {
+		t.Error("the dashboard tab should be gone, not merely redirected")
 	}
 }

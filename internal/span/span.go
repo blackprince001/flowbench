@@ -33,6 +33,10 @@ type Span struct {
 	callURL    string
 	callStatus int
 	retryAfter string
+
+	// failure is why this span failed, in the engine's own words. Held by
+	// reference like the rest and materialized only for kept traces.
+	failure string
 }
 
 func New(name string, start time.Duration) *Span {

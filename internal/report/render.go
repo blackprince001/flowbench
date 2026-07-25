@@ -5,25 +5,52 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"net/http"
+	"path"
+	"strings"
 	"time"
 )
 
-//go:embed assets/report.css assets/flame.js assets/live.js templates/*.html
+//go:embed assets/report.css assets/flame.js assets/live.js assets/shell.js assets/fonts/*.woff2 templates/*.html
 var assets embed.FS
+
+// AssetPrefix is the URL space the embedded binary assets live under. The
+// stylesheet and scripts are inlined into every page, but a web font is a file
+// the browser caches across navigations, so it needs a URL of its own —
+// inlining one would re-send it with every page.
+const AssetPrefix = "/assets/"
+
+// ServeAssets serves the embedded web fonts. They ship in the binary and change
+// only when it does, so they are served immutable; anything else 404s rather
+// than exposing the template and stylesheet sources under a second name.
+func ServeAssets() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := path.Base(r.URL.Path)
+		b, err := assets.ReadFile("assets/fonts/" + name)
+		if err != nil || !strings.HasSuffix(name, ".woff2") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "font/woff2")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.Write(b)
+	})
+}
 
 // rowHeight is the flame-graph row pitch: 34px of frame plus a 2px gap, so
 // depth maps to a bottom offset by multiplication alone.
 const rowHeight = 36
 
-// Shell is the chrome every page wears: the sidebar's run list, the breadcrumb
-// trail, and — inside a run — the tabs between its views. Runs are the only
-// entity the server has, so the sidebar navigates between them rather than
-// between sections.
+// Shell is the chrome every page wears: the left rail's projects and runs, the
+// breadcrumb trail, and — inside a run — the tabs between its views. The right
+// rail is filled by each page's own "detail" template, not from here, because
+// what is worth inspecting is the page's business.
 type Shell struct {
-	Title  string
-	Crumbs []Crumb
-	Nav    []NavRun
-	Tabs   []Tab
+	Title      string
+	Crumbs     []Crumb
+	ProjectNav []NavRun
+	Nav        []NavRun
+	Tabs       []Tab
 }
 
 // Tab is one view of a run. Count is shown when the view has a natural size
@@ -133,15 +160,25 @@ type Gate struct {
 	Tone   string
 }
 
-// RunPage is a run's overview: the numbers, and a way into each detail view.
+// RunPage is the run: the numbers, the run as time-series, where its time went,
+// its gates, and a way into each detail view. Summary and time-series used to be
+// two tabs, which meant reading a run in two places — the rates in one and the
+// shape that produced them in the other.
 type RunPage struct {
 	Shell
 	RunHead
 	Tiles   []Tile
+	Charts  []LineChart
+	Chart   *LineChart // the one opened full size, when ?chart= names it
+	All     string     // the link back to every chart at once
 	Tallies []Tally
 	Strip   StripView
 	Peak    string
+	Bucket  *BucketDetail // the selected strip column, shown in the rail
+	Steps   []StepRow
 	Gates   []Gate
+	Agent   string        // the empty-state note for the deferred overlay lane
+	Trend   *TrendSection // soak runs only; nil otherwise
 	Links   []Jump
 }
 
@@ -199,6 +236,16 @@ type OutcomesPage struct {
 	Base    string
 }
 
+// FailuresPage is the failure drill-down: every failure across the kept traces
+// grouped by step and cause, with one group's iterations open beside it.
+type FailuresPage struct {
+	Shell
+	RunHead
+	Groups   []FailureGroup
+	Selected *FailureGroup
+	Note     string
+}
+
 type Tile struct {
 	Label string
 	Value string
@@ -213,8 +260,8 @@ var (
 	flameTmpl     = parse("templates/flame.html")
 	waterfallTmpl = parse("templates/waterfall.html")
 	outcomesTmpl  = parse("templates/outcomes.html")
+	failuresTmpl  = parse("templates/failures.html")
 	compareTmpl   = parse("templates/compare.html")
-	dashboardTmpl = parse("templates/dashboard.html")
 	liveTmpl      = parse("templates/live.html")
 )
 
@@ -227,6 +274,7 @@ var funcs = template.FuncMap{
 	"css":       func() template.CSS { return template.CSS(mustRead("assets/report.css")) },
 	"flameJS":   func() template.JS { return template.JS(mustRead("assets/flame.js")) },
 	"liveJS":    func() template.JS { return template.JS(mustRead("assets/live.js")) },
+	"shellJS":   func() template.JS { return template.JS(mustRead("assets/shell.js")) },
 	"dur":       humanDur,
 	"framePos":  framePos,
 	"barPos":    barPos,
@@ -268,14 +316,14 @@ func RenderOutcomes(w io.Writer, p OutcomesPage) error {
 	return outcomesTmpl.ExecuteTemplate(w, "layout", p)
 }
 
+// RenderFailures writes the failure drill-down page.
+func RenderFailures(w io.Writer, p FailuresPage) error {
+	return failuresTmpl.ExecuteTemplate(w, "layout", p)
+}
+
 // RenderCompare writes the run-versus-baseline comparison page.
 func RenderCompare(w io.Writer, p ComparePage) error {
 	return compareTmpl.ExecuteTemplate(w, "layout", p)
-}
-
-// RenderDashboard writes the time-series dashboard page.
-func RenderDashboard(w io.Writer, p DashboardPage) error {
-	return dashboardTmpl.ExecuteTemplate(w, "layout", p)
 }
 
 // RenderLive writes the live view of an in-progress run.

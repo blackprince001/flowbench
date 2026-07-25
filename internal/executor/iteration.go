@@ -90,7 +90,7 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 			if err != nil {
 				detail = fmt.Sprintf("host allow-list check failed for %s: %v", req.URL, err)
 			}
-			return sp, r.record(it, sp, st, scope, detail), nil
+			return sp, r.record(it, sp, sp, st, scope, detail), nil
 		}
 	}
 
@@ -109,7 +109,7 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 		sp.SetCall(req.Method, req.URL, status, retryAfter)
 	}
 	if err != nil {
-		cont := r.record(it, sp, st, scope, fmt.Sprintf("call failed: %v", err))
+		cont := r.record(it, sp, sp, st, scope, fmt.Sprintf("call failed: %v", err))
 		return sp, cont, nil
 	}
 
@@ -131,7 +131,7 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 			if err != nil {
 				detail = fmt.Sprintf("extract %q: %v", ex.Var, err)
 			}
-			return sp, r.record(it, sp, st, scope, detail), nil
+			return sp, r.record(it, sp, child, st, scope, detail), nil
 		}
 		scope.Set(ex.Var, v)
 	}
@@ -142,12 +142,12 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 		child := sp.Child(assertName(a), time.Since(anchor))
 		if err != nil {
 			child.Outcome = span.OutcomeFailed
-			cont = r.record(it, sp, st, scope, fmt.Sprintf("assert %s: %v", assertName(a), err))
+			cont = r.record(it, sp, child, st, scope, fmt.Sprintf("assert %s: %v", assertName(a), err))
 			break
 		}
 		if !res.Pass {
 			child.Outcome = span.OutcomeFailed
-			cont = r.record(it, sp, st, scope, res.Detail)
+			cont = r.record(it, sp, child, st, scope, res.Detail)
 			if !cont {
 				break
 			}
@@ -167,9 +167,15 @@ func (r *Runner) resolveURL(u string) string {
 // whether the flow should continue given the step's effective on_failure
 // action. Details pass through the scope's secrets so an env-sourced value
 // echoed into a response can never reach a stored failure.
-func (r *Runner) record(it *Iteration, sp *span.Span, st *ir.Step, sc *Scope, detail string) bool {
+//
+// at is the span the failure is about, which is not always the step: an
+// assertion or extraction failure belongs to its own child span, so a kept
+// trace points at the span that failed rather than the one around it.
+func (r *Runner) record(it *Iteration, sp, at *span.Span, st *ir.Step, sc *Scope, detail string) bool {
+	detail = sc.Secrets().Redact(detail)
 	sp.Outcome = span.OutcomeFailed
-	it.Failures = append(it.Failures, Failure{StepID: st.ID, Detail: sc.Secrets().Redact(detail)})
+	at.SetFailure(detail)
+	it.Failures = append(it.Failures, Failure{StepID: st.ID, Detail: detail})
 	switch effectiveAction(st.OnFailure, r.Mode) {
 	case ir.FailureAbortRun:
 		it.Aborted = true
@@ -192,6 +198,7 @@ func (r *Runner) recordThrottle(it *Iteration, sp *span.Span, st *ir.Step, sc *S
 		return true // data: classified, not a failure — keep going
 	}
 	detail := sc.Secrets().Redact(fmt.Sprintf("throttled: HTTP %d", status))
+	sp.SetFailure(detail)
 	it.Failures = append(it.Failures, Failure{StepID: st.ID, Detail: detail})
 	switch effectiveAction(st.OnFailure, r.Mode) {
 	case ir.FailureAbortRun:

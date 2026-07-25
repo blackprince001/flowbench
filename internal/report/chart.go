@@ -2,6 +2,8 @@ package report
 
 import (
 	"fmt"
+	"math"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -44,38 +46,69 @@ type ChartSeries struct {
 // and Area closes that line down to the baseline for the dithered fill beneath
 // it. Both are plain coordinate text, so they interpolate into the SVG attribute
 // without tripping the escaper.
+//
+// Min/Mean/Max are the line's own summary, formatted in the chart's unit. A
+// small multiple has no room for them; the expanded view is where a reader asks
+// "how bad did it get, and was that typical".
 type ChartLine struct {
 	Label  string
 	Tone   string
 	Points string
 	Area   string
 	Last   string
+	Min    string
+	Mean   string
+	Max    string
 }
 
-// LineChart is one titled chart of one or more lines over a shared axis.
+// AxisTick is one labelled position on the time axis, 0..1 across the run.
+type AxisTick struct {
+	At    float64
+	Label string
+}
+
+// LineChart is one titled chart of one or more lines over a shared axis. Key
+// addresses it in a URL, so a chart can be opened on its own; Href is that link
+// and Expanded says this is the opened one.
 type LineChart struct {
+	Key   string
 	Title string
 	Lines []ChartLine
 	YTop  string // the y-axis maximum, labelled
+	YMid  string // half of it — the gridline the plot already draws
 	XEnd  string // the time span, the x-axis end label
 	Empty bool
+
+	Href     string
+	Expanded bool
+
+	// The extended view's additions: a labelled time axis, and where in the run
+	// the highest point of any line fell.
+	Ticks  []AxisTick
+	PeakX  float64
+	Peak   string
+	PeakAt string
 }
 
 // LineChartOf scales every series to one shared y-maximum — so lines in the same
 // chart are visually comparable — and lays each out as a polyline. unit formats
-// the axis maximum from the computed max; an all-empty input renders an explicit
-// empty state rather than a flat line at zero.
-func LineChartOf(title string, series []ChartSeries, unit func(float64) string, xEnd string) LineChart {
+// the axis labels and the per-line summaries from raw values; an all-empty input
+// renders an explicit empty state rather than a flat line at zero.
+func LineChartOf(key, title string, series []ChartSeries, unit func(float64) string, span time.Duration) LineChart {
 	max, any := 0.0, false
+	peakX := 0.0
 	for _, s := range series {
 		for _, p := range s.Points {
+			if !any || p.Y > max {
+				peakX = p.X
+			}
 			any = true
 			if p.Y > max {
 				max = p.Y
 			}
 		}
 	}
-	lc := LineChart{Title: title, XEnd: xEnd}
+	lc := LineChart{Key: key, Title: title, XEnd: humanDur(span)}
 	if !any {
 		lc.Empty = true
 		return lc
@@ -83,11 +116,15 @@ func LineChartOf(title string, series []ChartSeries, unit func(float64) string, 
 	if max <= 0 {
 		max = 1
 	}
-	lc.YTop = unit(max)
+	lc.YTop, lc.YMid = unit(max), unit(max/2)
+	lc.PeakX, lc.Peak = peakX*chartW, unit(max)
+	lc.PeakAt = humanDur(time.Duration(peakX * float64(span)))
+	lc.Ticks = axisTicks(span)
 
 	for _, s := range series {
 		var b strings.Builder
 		var firstX, lastX float64
+		lo, hi, sum := 0.0, 0.0, 0.0
 		for i, p := range s.Points {
 			if i > 0 {
 				b.WriteByte(' ')
@@ -96,19 +133,57 @@ func LineChartOf(title string, series []ChartSeries, unit func(float64) string, 
 			y := chartTop + (1-p.Y/max)*(chartH-chartTop-chartBottom)
 			fmt.Fprintf(&b, "%.2f,%.2f", x, y)
 			if i == 0 {
-				firstX = x
+				firstX, lo, hi = x, p.Y, p.Y
 			}
 			lastX = x
+			lo, hi, sum = math.Min(lo, p.Y), math.Max(hi, p.Y), sum+p.Y
 		}
 		cl := ChartLine{Label: s.Label, Tone: s.Tone, Points: b.String(), Last: s.Last}
 		if len(s.Points) > 0 {
 			// The filled area is the line carried down to the baseline and back,
 			// so the dither sits under the line.
 			cl.Area = fmt.Sprintf("%s %.2f,%.2f %.2f,%.2f", b.String(), lastX, chartH, firstX, chartH)
+			cl.Min, cl.Max = unit(lo), unit(hi)
+			cl.Mean = unit(sum / float64(len(s.Points)))
 		}
 		lc.Lines = append(lc.Lines, cl)
 	}
 	return lc
+}
+
+// axisTicks labels the time axis at quarters of the run — enough to read when a
+// spike happened without crowding the axis at any width.
+func axisTicks(span time.Duration) []AxisTick {
+	out := make([]AxisTick, 0, 5)
+	for i := range 5 {
+		at := float64(i) / 4
+		out = append(out, AxisTick{At: at * 100, Label: humanDur(time.Duration(at * float64(span)))})
+	}
+	return out
+}
+
+// LinkCharts gives each chart the URL that opens it on its own.
+func LinkCharts(charts []LineChart, base string) []LineChart {
+	for i := range charts {
+		charts[i].Href = base + "?chart=" + url.QueryEscape(charts[i].Key)
+	}
+	return charts
+}
+
+// SelectChart marks the chart at key as expanded and returns it. An unknown key
+// expands nothing, so a stale link degrades to the grid of small multiples.
+func SelectChart(charts []LineChart, key string) (*LineChart, []LineChart) {
+	if key == "" {
+		return nil, charts
+	}
+	for i := range charts {
+		if charts[i].Key == key {
+			charts[i].Expanded = true
+			sel := charts[i]
+			return &sel, charts
+		}
+	}
+	return nil, charts
 }
 
 // timeFrac positions a bucket on the 0..1 axis by its start time, so an empty
@@ -135,9 +210,9 @@ func ThroughputChart(s collector.Series) LineChart {
 		pts = append(pts, ChartPoint{X: timeFrac(p.At, span), Y: rps})
 		last = rps
 	}
-	return LineChartOf("Throughput", []ChartSeries{{
+	return LineChartOf("throughput", "Throughput", []ChartSeries{{
 		Label: "req/s", Tone: "kind-net", Points: pts, Last: fmt.Sprintf("%.0f/s", last),
-	}}, func(v float64) string { return fmt.Sprintf("%.0f/s", v) }, humanDur(span))
+	}}, func(v float64) string { return fmt.Sprintf("%.0f/s", v) }, span)
 }
 
 // LatencyChart plots p50/p95/p99 over time. Empty buckets carry zero percentiles
@@ -160,8 +235,8 @@ func LatencyChart(s collector.Series) LineChart {
 		l50, l95, l99 = p.P50, p.P95, p.P99
 	}
 	p50.Last, p95.Last, p99.Last = humanDur(l50), humanDur(l95), humanDur(l99)
-	return LineChartOf("Latency", []ChartSeries{p50, p95, p99},
-		func(v float64) string { return humanDur(time.Duration(v)) }, humanDur(span))
+	return LineChartOf("latency", "Latency", []ChartSeries{p50, p95, p99},
+		func(v float64) string { return humanDur(time.Duration(v)) }, span)
 }
 
 // RatesChart plots error rate and throttle rate over time. Throttle keeps its own
@@ -183,7 +258,7 @@ func RatesChart(s collector.Series) LineChart {
 		le, lt = e, t
 	}
 	errs.Last, thr.Last = ratePctText(le), ratePctText(lt)
-	return LineChartOf("Outcome rates", []ChartSeries{errs, thr}, ratePctText, humanDur(span))
+	return LineChartOf("rates", "Outcome rates", []ChartSeries{errs, thr}, ratePctText, span)
 }
 
 // StepRow is one authored step in the per-step table.
@@ -234,19 +309,6 @@ func StepRows(f *span.Folded) []StepRow {
 		})
 	}
 	return out
-}
-
-// DashboardPage is a run's time-series view: the charts, the per-step table, the
-// thresholds, and — for a soak — the drift trend. The target-resource overlay is
-// an empty slot until an agent is attached (#32).
-type DashboardPage struct {
-	Shell
-	RunHead
-	Charts []LineChart
-	Steps  []StepRow
-	Gates  []Gate
-	Agent  string        // the empty-state note for the deferred overlay lane
-	Trend  *TrendSection // soak runs only; nil otherwise
 }
 
 // TrendSection is the soak drift view: the run's second half measured against its

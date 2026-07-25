@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -92,6 +93,11 @@ func (ls *liveServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/live/stream":
 		ls.stream(w, r)
+		return
+	case strings.HasPrefix(r.URL.Path, report.AssetPrefix):
+		// The live page wears the same stylesheet, so it needs the same fonts —
+		// from the first tick, not only once the read-only server takes over.
+		report.ServeAssets().ServeHTTP(w, r)
 		return
 	case r.URL.Path == "/abort" && r.Method == http.MethodPost:
 		ls.cancel() // the server's one write path: cancel the run's context

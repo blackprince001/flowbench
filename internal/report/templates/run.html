@@ -2,9 +2,10 @@
 
 {{ template "run-head" .RunHead }}
 {{ template "tabs" .Tabs }}
+{{ template "chart-defs" }}
 
 <section class="card">
-  <div class="card-head"><h2 class="card-title">Overview</h2></div>
+  <div class="card-head"><h2 class="card-title">Summary</h2></div>
   <div class="tiles">
     {{ range .Tiles }}
     <div class="tile">
@@ -25,6 +26,110 @@
   <div class="card-body">
     {{ template "tallies" .Tallies }}
     {{ template "strip" .Strip }}
+  </div>
+</section>
+{{ end }}
+
+{{ if .Chart }}
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">{{ .Chart.Title }}</h2>
+      <p class="card-kicker">peak {{ .Chart.Peak }} at {{ .Chart.PeakAt }}</p>
+    </div>
+    <p class="card-note"><a class="span-link" href="{{ .All }}">&lsaquo; all charts</a></p>
+  </div>
+  <div class="card-body">
+    {{ template "linechart" .Chart }}
+    {{ if .Chart.Lines }}
+    <table class="table compact chart-stats">
+      <thead>
+        <tr><th>Series</th><th class="num">Min</th><th class="num">Mean</th><th class="num">Max</th><th class="num">Last</th></tr>
+      </thead>
+      <tbody>
+        {{ range .Chart.Lines }}
+        <tr>
+          <td><span class="chart-key" style="--tone:var(--{{ .Tone }})">{{ .Label }}</span></td>
+          <td class="num">{{ .Min }}</td>
+          <td class="num">{{ .Mean }}</td>
+          <td class="num">{{ .Max }}</td>
+          <td class="num">{{ .Last }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ end }}
+    <nav class="picker chart-picker" aria-label="Other charts">
+      {{ range .Charts }}
+      <a class="pick{{ if .Expanded }} is-selected{{ end }}" href="{{ .Href }}" style="--tone:var(--kind-net)">
+        <span class="pick-seq">{{ .Title }}</span>
+      </a>
+      {{ end }}
+    </nav>
+  </div>
+</section>
+{{ else if .Charts }}
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Over the run</h2>
+    <p class="card-note">click a chart to open it full size</p>
+  </div>
+  <div class="card-body">
+    <div class="charts">
+      {{ range .Charts }}{{ template "linechart" . }}{{ end }}
+    </div>
+  </div>
+</section>
+{{ end }}
+
+{{ if .Trend }}
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Soak trend</h2>
+    <p class="card-note">second half vs first</p>
+  </div>
+  <div class="tiles">
+    {{ range .Trend.Tiles }}
+    <div class="tile">
+      <div class="tile-label">{{ .Label }}</div>
+      <div class="tile-value"{{ if .Tone }} style="--tone:var(--{{ .Tone }})"{{ end }}>{{ .Value }}</div>
+      {{ if .Sub }}<div class="tile-sub">{{ .Sub }}</div>{{ end }}
+    </div>
+    {{ end }}
+  </div>
+  <div class="card-body">
+    {{ if .Trend.Flags }}
+    <ul class="drift">
+      {{ range .Trend.Flags }}<li><span class="chip o-failed">drift</span> {{ . }}</li>{{ end }}
+    </ul>
+    {{ else }}
+    <p class="hint">{{ .Trend.Note }}</p>
+    {{ end }}
+  </div>
+</section>
+{{ end }}
+
+{{ if .Steps }}
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Steps</h2>
+    <p class="card-note">where the time goes, biggest first</p>
+  </div>
+  <div class="card-body">
+    <table class="table">
+      <thead><tr><th>Step</th><th class="num">Total</th><th class="num">Calls</th><th class="num">Mean</th><th class="num">Share</th></tr></thead>
+      <tbody>
+        {{ range .Steps }}
+        <tr>
+          <td class="mono">{{ .Name }}</td>
+          <td class="num">{{ .Total }}</td>
+          <td class="num">{{ .Count }}</td>
+          <td class="num">{{ .Mean }}</td>
+          <td class="num">{{ .Share }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
   </div>
 </section>
 {{ end }}
@@ -52,6 +157,16 @@
 </section>
 {{ end }}
 
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Target resources</h2>
+    <p class="card-note">agent overlay</p>
+  </div>
+  <div class="card-body">
+    <p class="hint">{{ .Agent }}</p>
+  </div>
+</section>
+
 {{ if .Links }}
 <div class="jumps">
   {{ range .Links }}
@@ -64,4 +179,22 @@
 </div>
 {{ end }}
 
+{{ end }}
+
+{{ define "detail" }}
+{{ template "rail-head" "The strip column you picked: what happened in that window of the run." }}
+<section class="card panel{{ if not .Bucket }} is-empty{{ end }}">
+  {{ if .Bucket }}
+  <div class="card-head">
+    <h2 class="card-title">{{ .Bucket.At }}</h2>
+    <p class="card-note">{{ .Bucket.Window }} window</p>
+  </div>
+  <div class="card-body">{{ template "facts" .Bucket.Facts }}</div>
+  {{ else }}
+  <div class="card-head"><h2 class="card-title">No bucket selected</h2></div>
+  <div class="card-body">
+    <p class="hint">Pick a column of the outcome strip to see its throughput, its outcome split, and its own percentiles — a slow window a whole-run p95 would average away.</p>
+  </div>
+  {{ end }}
+</section>
 {{ end }}
