@@ -1,0 +1,82 @@
+# Every way a step can fail, in one run — the scenario the failure drill-down
+# was built for. Each step below produces a different *cause*, so the Failures
+# tab groups them separately instead of reporting one undifferentiated pile of
+# errors:
+#
+#   step             cause        because
+#   gateway          status       the target answered 500
+#   declined         status       the target answered 402
+#   rate_limited     throttled    429: never counted with the errors (ADR 0006)
+#   shedding         throttled    503, mapped to a throttle by this step
+#   wrong_shape      assertion    it answered fine, the answer was wrong
+#   missing_receipt  extraction   it answered fine, the value was not there
+#   never_answers    timeout      it accepted the call and said nothing
+#   unreachable      connection   there is no host to accept it
+#
+#   flowbench run examples/httpbingo/faults.flow.yaml --target examples/httpbingo/target.yaml
+#   flowbench serve --store runs      # then open Failures
+#
+# In load mode a failure is data, not a test failure, so the flow runs all the
+# way through every iteration and each step contributes its own group.
+flow: every_failure
+steps:
+  # A server error. The status is the finding, even though it is an assertion
+  # that noticed it.
+  - id: gateway
+    call: GET /status/500
+    assert:
+      - status == 200
+
+  # A different status is a different group: "it returned 402" and "it returned
+  # 500" are not one problem.
+  - id: declined
+    call: GET /status/402
+    assert:
+      - status == 202
+
+  # 429 is always a throttle, in every mode. In load mode it is not an error at
+  # all, and it still gets its own group rather than hiding inside one.
+  - id: rate_limited
+    call: GET /status/429
+
+  # A service shedding load says 503. That is this author's throttle, declared
+  # here rather than guessed at by the engine.
+  - id: shedding
+    call: GET /status/503
+    throttle:
+      statuses: [503]
+
+  # A clean 200 whose body is not what the flow expects.
+  - id: wrong_shape
+    call: GET /json
+    assert:
+      - status == 200
+      - $.slideshow.author == "Somebody Else"
+
+  # A clean 200 that simply does not carry the field the next step would need.
+  # The extraction is what fails, and it is named for the variable it wanted.
+  - id: missing_receipt
+    call: GET /uuid
+    extract:
+      receipt: $.receipt
+    assert:
+      - status == 200
+
+  # Accepted, then silence. The target's request_timeout (2s) is what ends it,
+  # which is why that budget belongs to the target and not to the flow.
+  - id: never_answers
+    call: GET /delay/5
+
+  # No host to accept the call at all. `.invalid` never resolves, so this fails
+  # at DNS without troubling any server.
+  - id: unreachable
+    call: GET https://nothing.invalid/health
+
+profile:
+  mode: load
+  vus: 4
+  hold: 25s
+  thresholds:
+    # Stated so the run reads as a breach, which is honest: this scenario is
+    # nothing but failures.
+    - error_rate < 5%

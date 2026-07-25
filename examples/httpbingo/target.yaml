@@ -1,0 +1,19 @@
+# httpbingo.org — an HTTP request-and-response service that exists to be tested
+# against: it will return any status you ask for, wait as long as you ask, and
+# echo back whatever you send. That makes it the one public API it is reasonable
+# to point failure scenarios at, because every failure is one you asked for.
+#
+# nothing.invalid is on the allow-list on purpose. `.invalid` is reserved by
+# RFC 2606 and never resolves, so a call to it fails at DNS — a real connection
+# failure with no server anywhere to bother.
+name: httpbingo
+base_urls:
+  - https://httpbingo.org
+  - https://nothing.invalid
+max_vus: 20
+max_rps: 40
+
+# The lever the fault scenarios turn: /delay/5 answers after five seconds, so a
+# two-second budget turns it into a timeout the engine records as one. Without a
+# bound here every hung call would hold its VU for the adapter's 30s default.
+request_timeout: 2s

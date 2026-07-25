@@ -1,0 +1,52 @@
+# Data-driven: one iteration per row of players.csv, each player dealt a
+# different number of cards. The row is bound as {{ user.* }} and injected into
+# the query, so the fixture drives what the flow does rather than just what it
+# says.
+#
+#   flowbench run examples/deck-of-cards/deal.flow.yaml --target examples/deck-of-cards/target.yaml
+#
+# Integration mode runs the flow once per row and stops, which is what the
+# default unique-per-vu pool is for: every iteration gets a row of its own and
+# the run ends when the rows do. (A load profile bound to a pool would exhaust
+# it and then fail every iteration after — point load at a pool-free scenario,
+# or size the fixture to the run.)
+flow: deal_a_hand
+data: players.csv
+steps:
+  - id: shuffle_deck
+    call: GET /api/deck/new/shuffle/
+    query:
+      deck_count: "1"
+    extract:
+      deck_id: $.deck_id
+    assert:
+      - status == 200
+      - $.success == true
+
+  # The fixture decides the hand size. `remaining` is asserted as a bound, not
+  # an equality, because it differs per row.
+  - id: deal
+    call: GET /api/deck/{{ deck_id }}/draw/
+    query:
+      count: "{{ user.cards }}"
+    extract:
+      top_card: $.cards[0].code
+    assert:
+      - status == 200
+      - $.success == true
+      - $.remaining < 52
+      - $.cards[0].code != null
+
+  - id: settle
+    wait: 300ms
+
+  - id: table_pile
+    call: GET /api/deck/{{ deck_id }}/pile/table/add/
+    query:
+      cards: "{{ top_card }}"
+    assert:
+      - status == 200
+      - $.piles.table.remaining == 1
+
+profile:
+  mode: integration

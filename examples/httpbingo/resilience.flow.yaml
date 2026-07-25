@@ -1,0 +1,46 @@
+# Retry and backoff against a service that fails about a quarter of the time.
+# /status/200:3,503:1 is a weighted roll — three 200s to every 503 — so a single
+# attempt fails often and a retried one usually does not.
+#
+#   flowbench run examples/httpbingo/resilience.flow.yaml --target examples/httpbingo/target.yaml
+#   flowbench serve --store runs
+#
+# What to look at afterwards: open the Waterfall on a kept trace and the retried
+# step is not one bar but several — `attempt 1`, `backoff`, `attempt 2` — nested
+# under it, with the step's own duration covering all of them. Retries add to
+# measured latency rather than hiding inside it, which is the point: a call that
+# succeeds on its third try took as long as three tries.
+#
+# Note the 503 here is *not* declared as a throttle, unlike faults.flow.yaml.
+# The same status is load-shedding in one service and a plain fault in another,
+# and only the author knows which — so the engine never guesses (ADR 0006).
+flow: flaky_upstream
+steps:
+  - id: flaky_read
+    call: GET /status/200:3,503:1
+    retry:
+      on_status: [503]
+      backoff: exponential
+      base_delay: 100ms
+      max_attempts: 4
+    assert:
+      - status == 200
+
+  # A second call with no retry policy at all, as the control: same odds, but
+  # every 503 it sees is a recorded failure. The Failures tab shows the two
+  # steps side by side — one nearly clean, one failing about a quarter of the
+  # time — which is the whole argument for the retry above.
+  - id: unguarded_read
+    call: GET /status/200:3,503:1
+    assert:
+      - status == 200
+
+profile:
+  mode: load
+  vus: 3
+  arrival_cap: 4/s
+  hold: 12s
+  thresholds:
+    - p95(latency) < 8s
+    # Generous, because the unguarded step is expected to contribute failures.
+    - error_rate < 40%

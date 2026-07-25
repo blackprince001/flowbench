@@ -205,12 +205,19 @@ type Profile struct {
 }
 
 type TargetConfig struct {
-	Name            string   `json:"name"`
-	BaseURLs        []string `json:"base_urls"`
-	MaxVUs          int      `json:"max_vus,omitempty"`
-	MaxRPS          int      `json:"max_rps,omitempty"`
-	AgentAddr       string   `json:"agent_addr,omitempty"`
-	DisallowedModes []Mode   `json:"disallowed_modes,omitempty"`
+	Name     string   `json:"name"`
+	BaseURLs []string `json:"base_urls"`
+	MaxVUs   int      `json:"max_vus,omitempty"`
+	MaxRPS   int      `json:"max_rps,omitempty"`
+
+	// RequestTimeout bounds a single call. It belongs to the target rather than
+	// the scenario because it is a property of what is being called: a target
+	// that never answers inside 2s is failing, whatever the flow asks of it.
+	// Zero uses the adapter's default.
+	RequestTimeout Duration `json:"request_timeout,omitempty"`
+
+	AgentAddr       string `json:"agent_addr,omitempty"`
+	DisallowedModes []Mode `json:"disallowed_modes,omitempty"`
 }
 
 type PoolFormat string

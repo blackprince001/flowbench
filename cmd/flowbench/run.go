@@ -136,11 +136,12 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 
 	startedAt := time.Now()
 	res, err := executor.Run(ctx, executor.Options{
-		Schedule: sched,
-		Flows:    sc.Flows,
-		Pools:    pools,
-		BaseURL:  tgt.BaseURL(),
-		Allow:    tgt.Allows,
+		Schedule:       sched,
+		Flows:          sc.Flows,
+		Pools:          pools,
+		BaseURL:        tgt.BaseURL(),
+		Allow:          tgt.Allows,
+		RequestTimeout: tgt.RequestTimeout(),
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "flowbench: %v\n", err)
@@ -217,7 +218,7 @@ func executeOnce(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 			iterations++
 			scope := executor.NewScope(flow.Data, row)
 			runner := &executor.Runner{
-				Session: adapters.NewSession(adapters.SessionOptions{}),
+				Session: adapters.NewSession(adapters.SessionOptions{Timeout: tgt.RequestTimeout()}),
 				BaseURL: tgt.BaseURL(),
 				Mode:    sc.Profile.Mode,
 				Allow:   tgt.Allows,
