@@ -1,0 +1,18 @@
+# A match nothing on the wire satisfies. The feed answers — heartbeat, ack,
+# tick — but none of it is a "settlement", so the step waits out its timeout
+# and the failure has to say what it was waiting for and what turned up.
+flow: ws_mismatch
+steps:
+  - id: connect
+    ws:
+      url: /feed
+
+  - id: await_settlement
+    ws:
+      send: { op: subscribe, symbol: FB-001 }
+      receive:
+        match: $.type == "settlement"
+        timeout: 300ms
+
+profile:
+  mode: integration

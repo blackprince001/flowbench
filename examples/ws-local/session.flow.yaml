@@ -1,0 +1,55 @@
+# One session, four steps. The connection opened by the first step is still
+# open for the last, and closes when the iteration ends — nothing in the flow
+# says so, because that is what "iteration-scoped" means.
+#
+#   go run ./examples/ws-local/stub          # in one terminal
+#   flowbench run examples/ws-local/session.flow.yaml \
+#     --target examples/ws-local/target.yaml
+flow: market_feed
+steps:
+  - id: connect
+    ws:
+      url: /feed
+      subprotocols: [flowbench.v1]
+
+  # The feed greets every session with a heartbeat, so the ack this step wants
+  # is never the first frame on the wire. `match` says which frame the step is
+  # about; the heartbeat is skipped rather than failed on.
+  - id: subscribe
+    ws:
+      send: { op: subscribe, symbol: FB-001 }
+      receive:
+        match: $.type == "ack"
+        timeout: 2s
+    extract:
+      subscription: $.id
+    assert:
+      - $.status == "ok"
+
+  # A second step on the same session. Heartbeats keep arriving between ticks;
+  # this one waits for a tick however many of them turn up first.
+  - id: first_tick
+    ws:
+      receive:
+        match: $.type == "tick"
+        timeout: 2s
+    assert:
+      - $.symbol == "FB-001"
+      - $.price > 0
+
+  # The id extracted three steps ago rides back out in a frame, JSON-escaped
+  # by the same templating a call step's body uses.
+  - id: unsubscribe
+    ws:
+      send: { op: unsubscribe, subscription: "{{ subscription }}" }
+      receive:
+        match: $.type == "unsubscribed"
+        timeout: 2s
+
+profile:
+  mode: load
+  vus: 20
+  hold: 3s
+  thresholds:
+    - error_rate < 1%
+    - p95(latency) < 1s

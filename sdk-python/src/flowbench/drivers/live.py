@@ -58,17 +58,18 @@ class LiveValue:
     return f"LiveValue({self.value!r})"
 
 
-class _PendingLiveExtraction:
+class PendingLiveExtraction:
   """The result of a live response's json_path(...): the value is already
   resolved, but span/failure recording waits for ctx.vars[key] = ... to
   supply the destination var name (the child span's name, matching Go's
-  sp.Child(ex.Var, ...)).
+  sp.Child(ex.Var, ...)) -- or for expect(...) to assert on it in place.
   """
 
-  def __init__(self, value, found, path):
+  def __init__(self, value, found, path, driver):
     self.value = value
     self.found = found
     self.path = path
+    self._driver = driver
 
 
 class LiveResponse:
@@ -87,7 +88,7 @@ class LiveResponse:
 
   def json_path(self, path):
     value, found = query_json(self._resp.content, path)
-    return _PendingLiveExtraction(value, found, path)
+    return PendingLiveExtraction(value, found, path, self._driver)
 
 
 class LiveAssertionBuilder:
@@ -269,8 +270,24 @@ class LiveDriver:
       "`flowbench run <file>.py` instead (the Go engine supports GraphQL steps)"
     )
 
+  def ws(
+    self,
+    url=None,
+    *,
+    session=None,
+    send=None,
+    receive=None,
+    timeout=None,
+    headers=None,
+    subprotocols=None,
+  ):
+    raise FlowExecutionError(
+      "ctx.ws() is not yet supported by live execution -- run "
+      "`flowbench run <file>.py` instead (the Go engine supports ws steps)"
+    )
+
   def set_var(self, key, value):
-    if not isinstance(value, _PendingLiveExtraction):
+    if not isinstance(value, PendingLiveExtraction):
       raise FlowExecutionError(
         f"ctx.vars[{key!r}] = ... must be assigned a response.json_path(...) "
         f"extraction, got {type(value).__name__}"
@@ -395,10 +412,8 @@ def _stringify(value):
 
 
 def _assert_name(kind, key):
-  if kind == "header":
-    return "assert_header_" + _sanitize(key)
-  if kind == "var":
-    return "assert_var_" + _sanitize(key)
+  if kind in ("header", "var", "body"):
+    return f"assert_{kind}_" + _sanitize(key)
   return "assert_" + kind  # "assert_status"
 
 

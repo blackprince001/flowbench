@@ -148,14 +148,14 @@ func (w *walker) step(n ast.Node) ir.Step {
 	st := ir.Step{Pos: w.pos(n)}
 	entries, ok := mapEntries(n)
 	if !ok {
-		w.errAt(n, "a step is a mapping with an id and one of call, graphql, wait, poll")
+		w.errAt(n, "a step is a mapping with an id and one of call, graphql, ws, wait, poll")
 		return st
 	}
 
-	var callNode, graphqlNode, waitNode, pollNode ast.Node
+	var callNode, graphqlNode, wsNode, waitNode, pollNode ast.Node
 	var headers, query map[string]string
 	var body json.RawMessage
-	var queryNode, bodyNode ast.Node
+	var headersNode, queryNode, bodyNode ast.Node
 	var callOnlyNodes []ast.Node
 
 	for _, e := range entries {
@@ -167,19 +167,22 @@ func (w *walker) step(n ast.Node) ir.Step {
 			callNode = e.Value
 		case "graphql":
 			graphqlNode = e.Value
+		case "ws":
+			wsNode = e.Value
 		case "wait":
 			waitNode = e.Value
 		case "poll":
 			pollNode = e.Value
 		case "headers":
 			headers = w.strMap(e.Value, "headers")
+			headersNode = keyNode
 			callOnlyNodes = append(callOnlyNodes, keyNode)
 		case "query":
 			query = w.strMap(e.Value, "query")
 			queryNode = keyNode
 			callOnlyNodes = append(callOnlyNodes, keyNode)
 		case "body":
-			body = w.bodyJSON(e.Value)
+			body = w.bodyJSON(e.Value, "body")
 			bodyNode = keyNode
 			callOnlyNodes = append(callOnlyNodes, keyNode)
 		case "extract":
@@ -202,16 +205,16 @@ func (w *walker) step(n ast.Node) ir.Step {
 	}
 
 	kinds := 0
-	for _, kn := range []ast.Node{callNode, graphqlNode, waitNode, pollNode} {
+	for _, kn := range []ast.Node{callNode, graphqlNode, wsNode, waitNode, pollNode} {
 		if kn != nil {
 			kinds++
 		}
 	}
 	switch {
 	case kinds == 0:
-		w.errAt(n, "step %q needs one of call, graphql, wait, poll", st.ID)
+		w.errAt(n, "step %q needs one of call, graphql, ws, wait, poll", st.ID)
 	case kinds > 1:
-		w.errAt(n, "step %q sets more than one of call, graphql, wait, poll", st.ID)
+		w.errAt(n, "step %q sets more than one of call, graphql, ws, wait, poll", st.ID)
 	case callNode != nil:
 		st.Type = ir.StepCall
 		spec := w.callShorthand(callNode)
@@ -231,6 +234,23 @@ func (w *walker) step(n ast.Node) ir.Step {
 			}
 		}
 		st.GraphQL = spec
+	case wsNode != nil:
+		st.Type = ir.StepWS
+		spec := w.ws(wsNode)
+		// Headers are handshake headers on the HTTP request that opens the
+		// session, so they stay where a call step puts them. A query string or
+		// a body of its own has nowhere to go: a ws step's payload is the
+		// frame it sends.
+		spec.Headers = headers
+		if headersNode != nil && !spec.Opens() {
+			w.errAt(headersNode, "headers ride on the handshake, so they belong to the ws step that opens the session")
+		}
+		for _, kn := range []ast.Node{queryNode, bodyNode} {
+			if kn != nil {
+				w.errAt(kn, "a ws step carries its payload in the frame it sends, not query or body")
+			}
+		}
+		st.WS = spec
 	case waitNode != nil:
 		st.Type = ir.StepWait
 		d := w.duration(waitNode, "wait")
@@ -280,7 +300,7 @@ func (w *walker) graphql(n ast.Node) *ir.GraphQLSpec {
 		case "query":
 			spec.Query, _ = w.text(e.Value, "query")
 		case "variables":
-			spec.Variables = w.bodyJSON(e.Value)
+			spec.Variables = w.bodyJSON(e.Value, "variables")
 		case "operation_name":
 			spec.Operation, _ = w.str(e.Value, "operation_name")
 		case "on_errors":
@@ -292,6 +312,88 @@ func (w *walker) graphql(n ast.Node) *ir.GraphQLSpec {
 		}
 	}
 	return spec
+}
+
+// ws reads one step's worth of WebSocket work. A `url` opens a session; its
+// absence means the step joins one an earlier step opened.
+func (w *walker) ws(n ast.Node) *ir.WSSpec {
+	spec := &ir.WSSpec{}
+	entries, ok := mapEntries(n)
+	if !ok {
+		w.errAt(n, "ws is a mapping with url (to open a session), session, send, receive")
+		return spec
+	}
+	for _, e := range entries {
+		key, keyNode := w.key(e)
+		switch key {
+		case "url":
+			spec.URL, _ = w.str(e.Value, "url")
+		case "endpoint":
+			spec.Endpoint, _ = w.str(e.Value, "endpoint")
+		case "session":
+			spec.Session, _ = w.str(e.Value, "session")
+		case "subprotocols":
+			if seq, ok := w.seq(e.Value, "subprotocols"); ok {
+				for _, item := range seq.Values {
+					if s, ok := w.str(item, "subprotocol"); ok {
+						spec.Subprotocols = append(spec.Subprotocols, s)
+					}
+				}
+			}
+		case "send":
+			spec.Send = w.bodyJSON(e.Value, "send")
+		case "receive":
+			spec.Receive = w.wsReceive(e.Value)
+		default:
+			w.errAt(keyNode, "unknown ws key %q", key)
+		}
+	}
+	return spec
+}
+
+// wsReceive reads the frame a step waits for. A bare `receive:` — no keys at
+// all — is the shorthand for "the next frame, whatever it is".
+func (w *walker) wsReceive(n ast.Node) *ir.WSReceive {
+	rec := &ir.WSReceive{}
+	if _, null := n.(*ast.NullNode); null {
+		return rec
+	}
+	entries, ok := mapEntries(n)
+	if !ok {
+		w.errAt(n, "receive is a mapping with match and timeout, or empty for the next frame")
+		return rec
+	}
+	for _, e := range entries {
+		key, keyNode := w.key(e)
+		switch key {
+		case "match":
+			rec.Match = w.matchConditions(e.Value)
+		case "timeout":
+			rec.Timeout = w.duration(e.Value, "timeout")
+		default:
+			w.errAt(keyNode, "unknown receive key %q", key)
+		}
+	}
+	return rec
+}
+
+// matchConditions reads the frame filter, written either as one expression or
+// as a list of them. One condition is the overwhelming case, and a `match:`
+// should not have to be a list to say so.
+func (w *walker) matchConditions(n ast.Node) []ir.Assertion {
+	if _, seq := n.(*ast.SequenceNode); seq {
+		return w.assertions(n)
+	}
+	expr, ok := w.str(n, "match")
+	if !ok {
+		return nil
+	}
+	a, err := parseAssertion(expr)
+	if err != nil {
+		w.errAt(n, "%v", err)
+		return nil
+	}
+	return []ir.Assertion{a}
 }
 
 func (w *walker) poll(n ast.Node) *ir.PollSpec {
@@ -311,7 +413,7 @@ func (w *walker) poll(n ast.Node) *ir.PollSpec {
 		case "query":
 			spec.Call.Query = w.strMap(e.Value, "query")
 		case "body":
-			spec.Call.Body = w.bodyJSON(e.Value)
+			spec.Call.Body = w.bodyJSON(e.Value, "body")
 		case "until":
 			spec.Until = w.assertions(e.Value)
 		case "interval":
@@ -703,15 +805,15 @@ func (w *walker) strMap(n ast.Node, what string) map[string]string {
 	return m
 }
 
-func (w *walker) bodyJSON(n ast.Node) json.RawMessage {
+func (w *walker) bodyJSON(n ast.Node, what string) json.RawMessage {
 	var v any
 	if err := yaml.NodeToValue(n, &v); err != nil {
-		w.errAt(n, "body is not decodable: %v", err)
+		w.errAt(n, "%s is not decodable: %v", what, err)
 		return nil
 	}
 	b, err := json.Marshal(v)
 	if err != nil {
-		w.errAt(n, "body does not convert to JSON: %v", err)
+		w.errAt(n, "%s does not convert to JSON: %v", what, err)
 		return nil
 	}
 	return b

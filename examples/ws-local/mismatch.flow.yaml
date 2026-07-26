@@ -1,0 +1,18 @@
+# The failure a WebSocket flow actually hits: a match nothing on the wire
+# satisfies. The feed is answering — heartbeats, an ack, ticks — so the target
+# is healthy and the flow is wrong, and the failure has to say which.
+#
+#   flowbench run examples/ws-local/mismatch.flow.yaml \
+#     --target examples/ws-local/target.yaml
+flow: feed_mismatch
+steps:
+  - id: connect
+    ws:
+      url: /feed
+
+  - id: await_settlement
+    ws:
+      send: { op: subscribe, symbol: FB-001 }
+      receive:
+        match: $.type == "settlement"
+        timeout: 1s

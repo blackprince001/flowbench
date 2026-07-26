@@ -123,6 +123,11 @@ func (f *Flow) validate(path string, pools map[string]bool) []error {
 		available[f.Data] = true
 	}
 
+	// Sessions resolve the same way variables do: an earlier step opens one,
+	// later steps work on it, and a reference to one nothing opens is a
+	// pre-run error rather than a connection refused at request time.
+	open := map[string]bool{}
+
 	ids := map[string]bool{}
 	for i, st := range f.Steps {
 		sp := fmt.Sprintf("%s: %sstep %d (%q)", path, posPrefix(st.Pos), i, st.ID)
@@ -132,6 +137,16 @@ func (f *Flow) validate(path string, pools map[string]bool) []error {
 		ids[st.ID] = true
 
 		errs = append(errs, st.validate(sp)...)
+		if st.WS != nil {
+			switch {
+			case !st.WS.Opens() && !open[st.WS.Session]:
+				errs = append(errs, errf(sp, "works on %s, which no earlier step opens", st.WS.describeSession()))
+			case st.WS.Opens() && open[st.WS.Session]:
+				errs = append(errs, errf(sp, "opens %s, which is already open in this flow (a session lives until the iteration ends)", st.WS.describeSession()))
+			case st.WS.Opens():
+				open[st.WS.Session] = true
+			}
+		}
 
 		for _, ref := range st.templateRefs() {
 			if !available[rootOf(ref)] {
@@ -163,7 +178,7 @@ func (st *Step) validate(path string) []error {
 	}
 
 	specs := 0
-	for _, set := range []bool{st.Call != nil, st.GraphQL != nil, st.Wait != nil, st.Poll != nil, st.Verify != nil} {
+	for _, set := range []bool{st.Call != nil, st.GraphQL != nil, st.WS != nil, st.Wait != nil, st.Poll != nil, st.Verify != nil} {
 		if set {
 			specs++
 		}
@@ -175,6 +190,7 @@ func (st *Step) validate(path string) []error {
 	specFor := map[StepType]bool{
 		StepCall:    st.Call != nil,
 		StepGraphQL: st.GraphQL != nil,
+		StepWS:      st.WS != nil,
 		StepWait:    st.Wait != nil,
 		StepPoll:    st.Poll != nil,
 		StepVerify:  st.Verify != nil,
@@ -182,7 +198,7 @@ func (st *Step) validate(path string) []error {
 	matches, known := specFor[st.Type]
 	switch {
 	case !known:
-		errs = append(errs, errf(path, "unknown step type %q (v0 executes call, graphql, wait, poll, verify)", st.Type))
+		errs = append(errs, errf(path, "unknown step type %q (v0 executes call, graphql, ws, wait, poll, verify)", st.Type))
 	case !matches:
 		errs = append(errs, errf(path, "type is %q but the %q spec is not set", st.Type, st.Type))
 	}
@@ -192,6 +208,9 @@ func (st *Step) validate(path string) []error {
 		errs = append(errs, st.Call.validate(path)...)
 	case st.GraphQL != nil:
 		errs = append(errs, st.GraphQL.validate(path)...)
+	case st.WS != nil:
+		errs = append(errs, st.WS.validate(path)...)
+		errs = append(errs, st.wsFrameChecks(path)...)
 	case st.Wait != nil && st.Wait.Duration <= 0:
 		errs = append(errs, errf(path, "wait duration must be positive"))
 	case st.Poll != nil:
@@ -204,6 +223,9 @@ func (st *Step) validate(path string) []error {
 
 	if st.Retry != nil {
 		if st.Type != StepCall && st.Type != StepGraphQL {
+			// A ws step is deliberately excluded: the retry loop re-sends a
+			// request and reads a status, and neither has a meaning on a
+			// session that is already open.
 			errs = append(errs, errf(path, "retry policies apply to call and graphql steps only (poll bounds itself)"))
 		}
 		errs = append(errs, st.Retry.validate(path)...)
@@ -211,7 +233,7 @@ func (st *Step) validate(path string) []error {
 
 	if st.Auth != nil {
 		if !st.MakesRequest() {
-			errs = append(errs, errf(path, "auth applies to steps that make a request (call, graphql, poll), not %q steps", st.Type))
+			errs = append(errs, errf(path, "auth applies to steps that make a request (call, graphql, poll, and the ws step that opens a session), not %q steps", st.Type))
 		}
 		errs = append(errs, st.Auth.validate(path)...)
 	}
@@ -372,8 +394,89 @@ func (c *CallSpec) validate(path string) []error {
 // what decides whether auth has anything to attach itself to, so the parser
 // and the validator have to agree on it — a new protocol adapter that forgets
 // this line silently loses its credentials.
+//
+// A ws step counts only when it opens the session: credentials go on the
+// handshake, which is an ordinary HTTP request, and a step working on a
+// session someone else opened has no request left to decorate.
 func (st *Step) MakesRequest() bool {
-	return st.Call != nil || st.GraphQL != nil || st.Poll != nil
+	return st.Call != nil || st.GraphQL != nil || st.Poll != nil ||
+		(st.WS != nil && st.WS.Opens())
+}
+
+func (w *WSSpec) validate(path string) []error {
+	var errs []error
+	if w.Endpoint != "" && w.URL != "" {
+		errs = append(errs, errf(path, "ws is either an endpoint reference or an inline url, not both"))
+	}
+	if w.Endpoint != "" && !identRe.MatchString(w.Endpoint) {
+		errs = append(errs, errf(path, "endpoint reference %q must match %s", w.Endpoint, identRe))
+	}
+	if w.Session != "" && !identRe.MatchString(w.Session) {
+		errs = append(errs, errf(path, "session name %q must match %s", w.Session, identRe))
+	}
+
+	if !w.Opens() && len(w.Send) == 0 && w.Receive == nil {
+		errs = append(errs, errf(path, "a ws step must open a session (url), send a frame, or receive one"))
+	}
+	if !w.Opens() {
+		if len(w.Headers) > 0 {
+			errs = append(errs, errf(path, "ws headers ride on the handshake, so they belong to the step that opens the session"))
+		}
+		if len(w.Subprotocols) > 0 {
+			errs = append(errs, errf(path, "ws subprotocols are negotiated in the handshake, so they belong to the step that opens the session"))
+		}
+	}
+
+	if len(w.Send) > 0 && !json.Valid(w.Send) {
+		errs = append(errs, errf(path, "ws send frame is not valid JSON"))
+	}
+	if w.Receive != nil {
+		if w.Receive.Timeout < 0 {
+			errs = append(errs, errf(path, "ws receive timeout must not be negative"))
+		}
+		for i, m := range w.Receive.Match {
+			errs = append(errs, m.validate(fmt.Sprintf("%s: match %d", path, i))...)
+			errs = append(errs, wsFrameSource(fmt.Sprintf("%s: match %d", path, i), m.Source)...)
+		}
+	}
+	return errs
+}
+
+// wsFrameChecks holds a ws step's extractions and assertions to what a frame
+// actually is. A step that receives nothing has no frame to read, and a frame
+// is a payload — it has no status line and no headers, however much the
+// handshake that opened the session did.
+func (st *Step) wsFrameChecks(path string) []error {
+	var errs []error
+	if st.WS.Receive == nil {
+		if len(st.Extract) > 0 {
+			errs = append(errs, errf(path, "this ws step receives nothing, so there is no frame to extract from"))
+		}
+		if len(st.Assert) > 0 {
+			errs = append(errs, errf(path, "this ws step receives nothing, so there is no frame to assert on"))
+		}
+		return errs
+	}
+	for i, ex := range st.Extract {
+		switch ex.From {
+		case ExtractHeader, ExtractStatus:
+			errs = append(errs, errf(fmt.Sprintf("%s: extract %d", path, i),
+				"a WebSocket frame has no %s; extract from the frame body (the handshake's status is classified by the engine)", ex.From))
+		}
+	}
+	for i, a := range st.Assert {
+		errs = append(errs, wsFrameSource(fmt.Sprintf("%s: assert %d", path, i), a.Source)...)
+	}
+	return errs
+}
+
+func wsFrameSource(path string, source AssertionSource) []error {
+	switch source {
+	case AssertStatus, AssertHeader:
+		return []error{errf(path,
+			"a WebSocket frame has no %s; assert on the frame body or its latency (the handshake's status is classified by the engine)", source)}
+	}
+	return nil
 }
 
 func (g *GraphQLSpec) validate(path string) []error {
@@ -587,6 +690,14 @@ func (st *Step) templatedFields() []string {
 		}
 		if len(st.GraphQL.Variables) > 0 {
 			fields = append(fields, string(st.GraphQL.Variables))
+		}
+	case st.WS != nil:
+		fields = append(fields, st.WS.URL)
+		for _, v := range st.WS.Headers {
+			fields = append(fields, v)
+		}
+		if len(st.WS.Send) > 0 {
+			fields = append(fields, string(st.WS.Send))
 		}
 	}
 	if st.Auth != nil {

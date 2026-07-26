@@ -1,0 +1,60 @@
+# WebSocket on the YAML surface, paired with ws_session.py — the two
+# spellings must compile to the same IR (ADR 0002; internal/conformance).
+#
+# Covers a session opened with handshake headers and a subprotocol, an
+# exchange split across two steps, a match written both ways (one condition
+# and several), a receive that takes whatever arrives next, a second named
+# session, and the auth only the opening step inherits.
+flow: ws_session
+auth:
+  scheme: bearer
+  token: "{{ env.FEED_TOKEN }}"
+steps:
+  - id: open_feed
+    ws:
+      url: /feed
+      subprotocols: [flowbench.v1]
+    headers: { X-Client: flowbench }
+
+  # The send and the reply it expects are one step; the session stays open
+  # for the next one.
+  - id: subscribe
+    ws:
+      send: { op: subscribe, symbol: FB-001 }
+      receive:
+        match: $.type == "ack"
+        timeout: 2s
+    extract:
+      subscription_id: $.id
+    assert:
+      - $.status == "ok"
+
+  # A second step on the same session. Ticks and heartbeats interleave, so
+  # the step says which frame it is about; the rest are skipped.
+  - id: first_tick
+    ws:
+      receive:
+        match:
+          - $.type == "tick"
+          - $.symbol == "FB-001"
+        timeout: 5s
+    assert:
+      - $.price != null
+
+  - id: open_control
+    ws:
+      url: /control
+      session: control
+
+  # No match: whatever the control channel answers is the answer.
+  - id: ping_control
+    ws:
+      session: control
+      send: { op: ping, subscription: "{{ subscription_id }}" }
+      receive:
+        timeout: 1s
+    assert:
+      - $.op == "pong"
+
+profile:
+  mode: integration

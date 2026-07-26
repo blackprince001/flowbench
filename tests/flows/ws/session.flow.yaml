@@ -1,0 +1,33 @@
+# The issue #27 acceptance: a session opened as a step, messages exchanged and
+# matched across two later steps, and an assertion on a received frame.
+flow: ws_feed
+steps:
+  - id: connect
+    ws:
+      url: /feed
+      subprotocols: [flowbench.v1]
+
+  - id: subscribe
+    ws:
+      send: { op: subscribe, symbol: FB-001 }
+      receive:
+        match: $.type == "ack"
+        timeout: 2s
+    extract:
+      subscription: $.id
+    assert:
+      - $.status == "ok"
+
+  # A second step on the same session, which is still open because a session
+  # lives until the iteration ends.
+  - id: first_tick
+    ws:
+      receive:
+        match: $.type == "tick"
+        timeout: 2s
+    assert:
+      - $.symbol == "FB-001"
+      - $.price == 42
+
+profile:
+  mode: integration

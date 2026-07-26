@@ -1,0 +1,26 @@
+# More sessions than the feed carries. It accepts every upgrade and then
+# closes the surplus with 1013 — "try again later", RFC 6455's own throttle —
+# so the pressure shows up as throttle_rate, not error_rate, exactly as a 429
+# does over HTTP.
+#
+#   flowbench run examples/ws-local/capacity.flow.yaml \
+#     --target examples/ws-local/target.yaml
+flow: feed_capacity
+steps:
+  - id: connect
+    ws:
+      url: /feed
+
+  - id: subscribe
+    ws:
+      send: { op: subscribe, symbol: FB-001 }
+      receive:
+        match: $.type == "ack"
+        timeout: 2s
+
+profile:
+  mode: stress
+  vus: 120
+  hold: 5s
+  thresholds:
+    - error_rate < 1%

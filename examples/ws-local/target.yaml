@@ -1,0 +1,8 @@
+# --target for the ws-local example. The allow-list is one host, and it is
+# written as http:// even though the flows open ws:// URLs — a WebSocket opens
+# with an HTTP request to the same origin, so the two are one host here.
+name: ws-stub
+base_urls:
+  - http://localhost:8092
+max_vus: 200
+max_rps: 2000

@@ -91,6 +91,42 @@ func TestAllowsRuntime(t *testing.T) {
 	}
 }
 
+// A WebSocket connection opens with an HTTP request to the same host, so a
+// target that already allows the host allows a socket on it — pre-run and at
+// request time — without having to list it twice.
+func TestWebSocketSchemesFoldIntoTheirHTTPOrigin(t *testing.T) {
+	g := localTarget(t)
+	cases := map[string]bool{
+		"ws://localhost:8080/feed":  true,
+		"/feed":                     true,
+		"wss://localhost:8080/feed": false, // wss is https, which the target does not allow
+		"ws://evil.example/feed":    false,
+	}
+	for u, want := range cases {
+		got, err := g.Allows(u)
+		if err != nil {
+			t.Errorf("Allows(%q): %v", u, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("Allows(%q) = %v, want %v", u, got, want)
+		}
+	}
+
+	allowed := scenario(ir.ModeIntegration, wsStep("open", "ws://localhost:8080/feed"))
+	if err := g.Check(allowed); err != nil {
+		t.Errorf("a ws:// URL on an allowed host should pass pre-run: %v", err)
+	}
+	refused := scenario(ir.ModeIntegration, wsStep("open", "ws://evil.example/feed"))
+	if err := g.Check(refused); err == nil {
+		t.Error("a ws:// URL outside the allow-list should be refused pre-run")
+	}
+}
+
+func wsStep(id, url string) ir.Step {
+	return ir.Step{ID: id, Type: ir.StepWS, WS: &ir.WSSpec{URL: url}}
+}
+
 func TestDisallowedModeRefused(t *testing.T) {
 	cfg := &ir.TargetConfig{
 		Name:            "prod",
