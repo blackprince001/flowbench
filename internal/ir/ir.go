@@ -12,6 +12,7 @@ type StepType string
 const (
 	StepCall    StepType = "call"
 	StepGraphQL StepType = "graphql"
+	StepWS      StepType = "ws"
 	StepWait    StepType = "wait"
 	StepPoll    StepType = "poll"
 	StepVerify  StepType = "verify"
@@ -86,6 +87,7 @@ type Step struct {
 
 	Call    *CallSpec    `json:"call,omitempty"`
 	GraphQL *GraphQLSpec `json:"graphql,omitempty"`
+	WS      *WSSpec      `json:"ws,omitempty"`
 	Wait    *WaitSpec    `json:"wait,omitempty"`
 	Poll    *PollSpec    `json:"poll,omitempty"`
 	Verify  *VerifySpec  `json:"verify,omitempty"`
@@ -144,6 +146,59 @@ type GraphQLSpec struct {
 	Operation string             `json:"operation_name,omitempty"`
 	Headers   map[string]string  `json:"headers,omitempty"`
 	OnErrors  GraphQLErrorPolicy `json:"on_errors,omitempty"`
+}
+
+// WSSpec is one step's worth of work on a WebSocket session.
+//
+// It is the first step type that is not call-shaped. A session outlives the
+// step that opened it — it is closed when the iteration ends, not when the
+// step returns — so a step either opens one (URL set), works on one already
+// open (URL empty), or does both. Session names it in every case: on an
+// opening step the name later steps reference, on the others which session to
+// use. Empty is a name like any other: the flow's single unnamed session.
+//
+// v0 speaks JSON text frames. That is what makes the rest of the engine work
+// on a frame unchanged — Match, Extract and Assert are the same JSONPath
+// evaluator the HTTP body path uses.
+type WSSpec struct {
+	Endpoint string `json:"endpoint,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Session  string `json:"session,omitempty"`
+
+	// Headers and Subprotocols ride on the handshake, so they say something
+	// only on a step that opens a session.
+	Headers      map[string]string `json:"headers,omitempty"`
+	Subprotocols []string          `json:"subprotocols,omitempty"`
+
+	// Send is the frame to send, in the shape a call step's body takes.
+	Send json.RawMessage `json:"send,omitempty"`
+
+	Receive *WSReceive `json:"receive,omitempty"`
+}
+
+// Opens reports whether the step opens the session rather than joining one an
+// earlier step opened.
+func (w *WSSpec) Opens() bool { return w.URL != "" || w.Endpoint != "" }
+
+// describeSession names the session for a human. The unnamed session is the
+// common case, and quoting "" at a reader helps nobody.
+func (w *WSSpec) describeSession() string {
+	if w.Session == "" {
+		return "the flow's ws session"
+	}
+	return fmt.Sprintf("ws session %q", w.Session)
+}
+
+// WSReceive is the frame the step waits for.
+//
+// Match is a filter, not an assertion: a duplex connection carries frames this
+// step never asked for — heartbeats, other subscriptions' traffic — and
+// skipping them is not the same as failing on them. The step's own Assert
+// judges the frame Match selected. An empty Match takes the next frame,
+// whatever it is.
+type WSReceive struct {
+	Match   []Assertion `json:"match,omitempty"`
+	Timeout Duration    `json:"timeout,omitempty"`
 }
 
 type WaitSpec struct {

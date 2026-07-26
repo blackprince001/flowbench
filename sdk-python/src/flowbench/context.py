@@ -56,6 +56,65 @@ class GraphQL:
     )
 
 
+class WS:
+  """``ctx.ws(...)`` — one step's worth of work on a WebSocket session.
+
+  A ``url`` opens a session; without one the step joins the one an earlier
+  step opened, and ``session=`` names it in both cases. The session is closed
+  when the *iteration* ends rather than when the step returns, which is what
+  lets an exchange span several steps.
+
+  ``receive=True`` takes the next frame; ``receive=frame(...)`` (or a list of
+  them) says which frame the step is waiting for, and the ones that arrive
+  meanwhile are skipped rather than failed on.
+  """
+
+  def __init__(self, driver):
+    self._driver = driver
+
+  def __call__(
+    self,
+    url=None,
+    *,
+    session=None,
+    send=None,
+    receive=None,
+    timeout=None,
+    headers=None,
+    subprotocols=None,
+  ):
+    if url is None and send is None and receive is None:
+      raise FlowCompileError(
+        "ctx.ws() must open a session (a url), send a frame, or receive one"
+      )
+    if url is None and (headers or subprotocols):
+      raise FlowCompileError(
+        "ctx.ws() headers and subprotocols ride on the handshake, so they "
+        "belong to the call that opens the session"
+      )
+    if timeout is not None and receive is None:
+      raise FlowCompileError(
+        "ctx.ws(timeout=...) bounds a receive, and this step receives nothing"
+      )
+    if receive is not None and receive is not True:
+      conditions = receive if isinstance(receive, list) else [receive]
+      for condition in conditions:
+        if not isinstance(condition, dict):
+          raise FlowCompileError(
+            "ctx.ws(receive=...) takes True for the next frame, or frame(...) "
+            f"conditions selecting which one, got {type(condition).__name__}"
+          )
+    return self._driver.ws(
+      url,
+      session=session,
+      send=send,
+      receive=receive,
+      timeout=timeout,
+      headers=headers,
+      subprotocols=subprotocols,
+    )
+
+
 def _make_method(verb):
   def method(self, url, *, json=None, headers=None, query=None):
     return self._call(verb.upper(), url, json=json, headers=headers, query=query)
@@ -101,6 +160,7 @@ class Context:
     self._driver = driver
     self.http = Http(driver)
     self.graphql = GraphQL(driver)
+    self.ws = WS(driver)
     self.vars = VarsProxy(driver)
     self.env = EnvProxy(driver)
     self._has_data_pool = has_data_pool

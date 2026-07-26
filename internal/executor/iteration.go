@@ -43,6 +43,34 @@ type Iteration struct {
 	Failures  []Failure
 	Throttled bool // any step saw a throttle (feeds throttle_rate regardless of mode)
 	Aborted   bool // an abort_run failure asks the whole run to stop
+
+	// ws holds the WebSocket sessions this iteration opened, by name. They are
+	// the one piece of state that outlives a step, and RunFlow closes them when
+	// the iteration ends — which is what "iteration-scoped" means.
+	ws map[string]*wsSession
+}
+
+// closeSessions ends every session the iteration opened. Teardown, not
+// measurement: it is unspanned, best effort, and runs however the iteration
+// ended.
+func (it *Iteration) closeSessions() {
+	for _, s := range it.ws {
+		if s.conn != nil {
+			s.conn.Close()
+		}
+	}
+	it.ws = nil
+}
+
+// markSession records a session by name, dead or alive. A name that failed to
+// open is still registered — with why — so a later step naming it records an
+// ordinary failure explaining itself, rather than tripping the never-opened
+// backstop that only hand-written IR should reach.
+func (it *Iteration) markSession(name string, sess *wsSession) {
+	if it.ws == nil {
+		it.ws = make(map[string]*wsSession, 1)
+	}
+	it.ws[name] = sess
 }
 
 // RunFlow runs flow's steps in order against the runner's session, mutating
@@ -51,6 +79,7 @@ type Iteration struct {
 func (r *Runner) RunFlow(ctx context.Context, flow ir.Flow, scope *Scope) (*Iteration, error) {
 	anchor := time.Now()
 	it := &Iteration{Outcome: span.OutcomeOK}
+	defer it.closeSessions()
 	for i := range flow.Steps {
 		st := &flow.Steps[i]
 		sp, cont, err := r.runStep(ctx, st, scope, anchor, it)
@@ -74,6 +103,8 @@ func (r *Runner) runStep(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 		return r.runCall(ctx, st, scope, anchor, it)
 	case ir.StepGraphQL:
 		return r.runGraphQL(ctx, st, scope, anchor, it)
+	case ir.StepWS:
+		return r.runWS(ctx, st, scope, anchor, it)
 	case ir.StepWait:
 		sp := span.New(st.ID, time.Since(anchor))
 		time.Sleep(time.Duration(st.Wait.Duration))
@@ -152,7 +183,7 @@ func (r *Runner) request(ctx context.Context, st *ir.Step, req *adapters.Request
 	// own outcome, not an assertion failure, and there is nothing to extract
 	// from it.
 	if isThrottled(resp.Status, st.Throttle) {
-		return sp, r.recordThrottle(it, sp, st, scope, resp.Status), nil
+		return sp, r.recordThrottle(it, sp, st, scope, fmt.Sprintf("throttled: HTTP %d", resp.Status)), nil
 	}
 
 	// A protocol that reports failure in the body gets its say before anything
@@ -166,8 +197,14 @@ func (r *Runner) request(ctx context.Context, st *ir.Step, req *adapters.Request
 		}
 	}
 
-	tgt := target{resp: resp, latency: sp.Duration}
+	return sp, r.evaluate(it, sp, st, scope, target{resp: resp, latency: sp.Duration}, anchor), nil
+}
 
+// evaluate runs the step's extractions and assertions against whatever the step
+// produced — an HTTP response, or the WebSocket frame a receive matched — and
+// reports whether the flow continues. Each extraction and assertion gets its
+// own child span, so a kept trace points at the one that failed.
+func (r *Runner) evaluate(it *Iteration, sp *span.Span, st *ir.Step, scope *Scope, tgt eval.Target, anchor time.Time) bool {
 	for _, ex := range st.Extract {
 		v, found, err := eval.Extract(ex, tgt)
 		child := sp.Child(ex.Var, time.Since(anchor))
@@ -177,7 +214,7 @@ func (r *Runner) request(ctx context.Context, st *ir.Step, req *adapters.Request
 			if err != nil {
 				detail = fmt.Sprintf("extract %q: %v", ex.Var, err)
 			}
-			return sp, r.record(it, sp, child, st, scope, detail), nil
+			return r.record(it, sp, child, st, scope, detail)
 		}
 		scope.Set(ex.Var, v)
 	}
@@ -199,7 +236,7 @@ func (r *Runner) request(ctx context.Context, st *ir.Step, req *adapters.Request
 			}
 		}
 	}
-	return sp, cont, nil
+	return cont
 }
 
 // applyAuth attaches the step's declared credentials to req, resolving their
@@ -262,13 +299,16 @@ func (r *Runner) record(it *Iteration, sp, at *span.Span, st *ir.Step, sc *Scope
 // marked throttled and the iteration flagged so it feeds throttle_rate in every
 // mode. Whether it also counts as a failure — recorded and subject to
 // on_failure — follows the mode default unless the step overrides it.
-func (r *Runner) recordThrottle(it *Iteration, sp *span.Span, st *ir.Step, sc *Scope, status int) bool {
+//
+// detail names the signal, because throttling does not always arrive as a
+// status: a WebSocket peer says it with close code 1013.
+func (r *Runner) recordThrottle(it *Iteration, sp *span.Span, st *ir.Step, sc *Scope, detail string) bool {
 	it.Throttled = true
 	sp.Outcome = span.OutcomeThrottled
 	if !throttleIsError(st.Throttle, r.Mode) {
 		return true // data: classified, not a failure — keep going
 	}
-	detail := sc.Secrets().Redact(fmt.Sprintf("throttled: HTTP %d", status))
+	detail = sc.Secrets().Redact(detail)
 	sp.SetFailure(detail)
 	it.Failures = append(it.Failures, Failure{StepID: st.ID, Detail: detail})
 	switch effectiveAction(st.OnFailure, r.Mode) {

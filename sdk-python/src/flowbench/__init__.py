@@ -2,7 +2,7 @@
 the canonical IR (ADR 0002), executed by the Go engine at full VU scale.
 """
 
-from .assertions import expect
+from .assertions import expect, frame
 from .auth import (
   ApiKey,
   Basic,
@@ -33,4 +33,5 @@ __all__ = [
   "Retry",
   "env",
   "expect",
+  "frame",
 ]

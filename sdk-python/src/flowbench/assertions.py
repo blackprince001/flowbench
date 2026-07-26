@@ -1,5 +1,5 @@
-from .drivers.live import LiveAssertionBuilder, LiveValue
-from .drivers.trace import Subject
+from .drivers.live import LiveAssertionBuilder, LiveValue, PendingLiveExtraction
+from .drivers.trace import PendingExtraction, Subject
 from .errors import FlowCompileError, FlowExecutionError
 from .template import TemplateRef
 
@@ -16,7 +16,7 @@ class AssertionBuilder:
       assertion["key"] = self._key
     if has_value:
       assertion["value"] = value
-    self._builder.add_assertion(assertion)
+    return self._builder.add_assertion(assertion)
 
   def to_be(self, value):
     if value is None:
@@ -63,6 +63,15 @@ def expect(subject):
     return AssertionBuilder(subject._builder, source="var", key=subject.ref)
   if isinstance(subject, Subject):
     return AssertionBuilder(subject._builder, source=subject.source, key=subject.key)
+  # r.json_path(...) reads as an assertion subject as readily as an extraction
+  # target, and for a ws step the body is the only thing there is to assert on
+  # -- a frame has no status line and no headers.
+  if isinstance(subject, PendingExtraction):
+    return AssertionBuilder(subject._builder, source="body", key=subject.path)
+  if isinstance(subject, PendingLiveExtraction):
+    return LiveAssertionBuilder(
+      LiveValue(subject.value, kind="body", driver=subject._driver, key=subject.path)
+    )
   if isinstance(subject, LiveValue):
     if subject.kind in ("user", "env"):
       raise FlowExecutionError(
@@ -71,6 +80,29 @@ def expect(subject):
       )
     return LiveAssertionBuilder(subject)
   raise FlowCompileError(
-    f"expect() only accepts a response field (r.status, r.header(...)) or an "
-    f"extracted ctx.vars value, got {type(subject).__name__}"
+    f"expect() only accepts a response field (r.status, r.header(...), "
+    f"r.json_path(...)) or an extracted ctx.vars value, "
+    f"got {type(subject).__name__}"
   )
+
+
+class _MatchSink:
+  """Collects an assertion instead of appending it to a step.
+
+  ``frame(...)`` builds a condition to hand to ``ctx.ws(receive=...)``, so its
+  builder has no step to append to — it returns the assertion to the caller.
+  """
+
+  def add_assertion(self, assertion):
+    return assertion
+
+
+def frame(path):
+  """A condition on a received WebSocket frame, for ``ctx.ws(receive=...)``.
+
+  A match is a filter, not an assertion: a duplex connection carries frames
+  this step never asked for, and one that does not satisfy the condition is
+  skipped rather than failed on. Use ``expect(...)`` on the returned frame to
+  judge the one the step actually matched.
+  """
+  return AssertionBuilder(_MatchSink(), source="body", key=path)

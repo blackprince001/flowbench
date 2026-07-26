@@ -351,6 +351,127 @@ works, and auth is declared exactly as [`auth-local/`](auth-local/) shows. A
 GraphQL failure folds under its own `graphql_errors` span, so a run where one
 query kept erroring shows up in the flame graph rather than only in a list.
 
+## `ws-local/` — a session that outlives its step
+
+Start the feed in one terminal:
+
+```
+go run ./examples/ws-local/stub
+```
+
+It greets every session with a heartbeat, keeps sending them, answers a
+subscribe with an ack and then a stream of ticks — and carries 40 sessions at a
+time, closing the surplus with RFC 6455's close code `1013`.
+
+[`session.flow.yaml`](ws-local/session.flow.yaml) opens a session, subscribes,
+reads a tick, and unsubscribes — four steps, one connection:
+
+```
+flowbench run examples/ws-local/session.flow.yaml --target examples/ws-local/target.yaml
+```
+
+```
+running "market_feed" against ws-stub (http://localhost:8092) [load, 20 VUs]
+  940 iteration(s), 940 flow-run(s) in 3.015s
+  error_rate=0.00%  throttle_rate=0.00%  p50=63.963ms p95=66.551ms p99=68.221ms
+  error_rate < 1%: ok   p95(latency) < 1s: ok
+```
+
+**The session is iteration-scoped.** The first step opens it, three more use it,
+and nothing closes it — the engine does, when the iteration ends. That is the
+one thing a `ws` step has that no other step type does: state that outlives the
+step. A later step names the session it wants (`session:`), and a flow that
+names one no step opens is refused before the run starts, the same way an
+undefined `{{ variable }}` is.
+
+### A frame is not a response
+
+Nothing correlates an arriving frame to the message that preceded it. The feed
+greets you with a heartbeat, so the `ack` a subscribe wants is never the first
+frame on the wire, and a step that took "the next frame" would extract from the
+wrong one. So a receive says which frame it is about:
+
+```yaml
+- id: subscribe
+  ws:
+    send: { op: subscribe, symbol: FB-001 }
+    receive:
+      match: $.type == "ack"     # a filter, not an assertion
+      timeout: 2s
+  extract:
+    subscription: $.id
+  assert:
+    - $.status == "ok"           # judges the frame that matched
+```
+
+`match` and `assert` look alike and do opposite things. **`match` selects** —
+frames that fail it are skipped, because traffic this step never asked for is
+not a failure. **`assert` judges** the frame `match` selected. Everything
+downstream (`extract`, `assert`, `latency`) reads that one frame; a frame has
+no status line and no headers, so asserting on those is refused at parse time
+rather than answered with a zero.
+
+When a match never arrives, the failure has to say so in the flow's own words —
+otherwise a healthy target looks like a hang.
+[`mismatch.flow.yaml`](ws-local/mismatch.flow.yaml) waits for a settlement the
+feed never sends:
+
+```
+  feed_mismatch [1/1]  FAIL (1)
+      await_settlement: no frame matching $.type == "settlement" arrived within 1s;
+      skipped {"type":"heartbeat","at":1785084177757},
+              {"type":"ack","id":"sub_25243","status":"ok","symbol":"FB-001"},
+              {"type":"tick","symbol":"FB-001","price":2763}
+```
+
+Exit `1`, and the frames it passed over are right there — which is the
+difference between "my match is wrong" and "the feed is down". A receive that
+times out also ends the session (a half-read message cannot be resumed), so the
+next step naming it says *that* rather than failing on a closed socket.
+
+### Throttling arrives after the connection is open
+
+[`capacity.flow.yaml`](ws-local/capacity.flow.yaml) asks for 120 concurrent
+sessions from a feed that carries 40. It accepts every upgrade and then closes
+the surplus with `1013` — "try again later", the WebSocket's own `429`:
+
+```
+running "feed_capacity" against ws-stub (http://localhost:8092) [stress, 120 VUs]
+  44715 iteration(s), 44715 flow-run(s) in 5.006s
+  error_rate=0.00%  throttle_rate=45.66%  p50=6.627ms p95=53.513ms p99=61.925ms
+  error_rate < 1%: ok
+```
+
+**45% throttled, 0% errors.** A server shedding load is a signal, not a failure
+([ADR 0006](../docs/decisions/0006-rate-limiting-first-class-signal.md)) — and
+it reads the same whether it arrives as an HTTP `429` on the handshake (which
+also classifies as `throttled`, `Retry-After` and all) or as a close code once
+the socket is up. Every other close code fails and names itself: `1011 internal
+error` is not the same event as `1013 try again later`, and the run says which.
+
+### The handshake is just HTTP
+
+A WebSocket opens with a `GET` carrying `Upgrade: websocket`, and FlowBench
+runs it through everything a call goes through — which is why the flame graph
+shows this:
+
+```
+connect
+  ws_open           1.82s / 940 calls
+    http_call       1.78s
+      dns           641ms
+      connect       357ms
+      ttfb          494ms
+```
+
+The same phase breakdown a `call` step gets, from the same code. Auth is
+declared exactly as [`auth-local/`](auth-local/) shows and rides on the
+handshake; the target's `base_urls` gate it, with `ws://host` counting as the
+same origin as `http://host`, so [`target.yaml`](ws-local/target.yaml) lists the
+host once. Frames get their own spans (`ws_send`, `ws_receive`), and a
+`ws_receive`'s duration is real waiting — the time the feed took to say the
+thing the step was waiting for.
+
 ## Two files, two jobs
 
 The flow says *what* to do; the target says *where*. Notice the flows call

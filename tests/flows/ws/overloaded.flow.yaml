@@ -1,0 +1,20 @@
+# A server shedding load in-band: it accepts the upgrade and then closes with
+# RFC 6455's 1013 "try again later" — the WebSocket's 429. In load mode that
+# is data, not an error, so it feeds throttle_rate and the flow carries on.
+flow: ws_overloaded
+steps:
+  - id: connect
+    ws:
+      url: /busy
+
+  - id: subscribe
+    ws:
+      send: { op: subscribe, symbol: FB-001 }
+      receive:
+        match: $.type == "ack"
+        timeout: 2s
+
+profile:
+  mode: load
+  vus: 1
+  iterations: 1

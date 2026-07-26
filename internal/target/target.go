@@ -59,7 +59,7 @@ func (t *Target) Allows(rawURL string) (bool, error) {
 	if u.Scheme == "" && u.Host == "" {
 		return true, nil
 	}
-	return t.origins[strings.ToLower(u.Scheme)+"://"+strings.ToLower(u.Host)], nil
+	return t.origins[origin(u.Scheme, u.Host)], nil
 }
 
 // Check is the pre-run gate: it refuses a scenario whose statically-knowable
@@ -79,8 +79,7 @@ func (t *Target) Check(sc *ir.Scenario) error {
 				if strings.Contains(auth, "{{") {
 					continue // dynamic host, enforced at request time
 				}
-				origin := strings.ToLower(schemeOf(raw)) + "://" + strings.ToLower(auth)
-				if !t.origins[origin] {
+				if !t.origins[origin(schemeOf(raw), auth)] {
 					problems = append(problems, fmt.Sprintf("flow %q step %q calls %s", f.Name, st.ID, raw))
 				}
 			}
@@ -120,6 +119,8 @@ func stepURLs(st *ir.Step) []string {
 		urls = append(urls, st.Call.URL)
 	case st.GraphQL != nil:
 		urls = append(urls, st.GraphQL.URL)
+	case st.WS != nil:
+		urls = append(urls, st.WS.URL)
 	case st.Poll != nil:
 		urls = append(urls, st.Poll.Call.URL)
 	}
@@ -137,7 +138,25 @@ func originOf(raw string) (string, error) {
 	if u.Scheme == "" || u.Host == "" {
 		return "", fmt.Errorf("%q is not an absolute URL", raw)
 	}
-	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), nil
+	return origin(u.Scheme, u.Host), nil
+}
+
+// origin is the allow-list key for a scheme and host.
+//
+// ws and wss fold into http and https: a WebSocket connection opens with an
+// HTTP request to the same host, so `ws://api.example.com` and
+// `http://api.example.com` are one origin — and a target that already lists
+// the host it calls should not have to list it a second time to open a socket
+// on it.
+func origin(scheme, host string) string {
+	scheme = strings.ToLower(scheme)
+	switch scheme {
+	case "ws":
+		scheme = "http"
+	case "wss":
+		scheme = "https"
+	}
+	return scheme + "://" + strings.ToLower(host)
 }
 
 // hasScheme reports whether raw begins with "scheme://" (an absolute URL),

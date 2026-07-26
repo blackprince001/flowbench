@@ -47,10 +47,10 @@ class Response:
 class TraceDriver:
   """Accumulates the pieces of one ``ir.Step`` as a step function traces.
 
-  Implements the driver protocol Http/GraphQL/VarsProxy/UserProxy/EnvProxy
-  call into: call(), graphql(), set_var(), get_var(), get_user_field(),
+  Implements the driver protocol Http/GraphQL/WS/VarsProxy/UserProxy/EnvProxy
+  call into: call(), graphql(), ws(), set_var(), get_var(), get_user_field(),
   get_env(). kind/spec is the IR step type the traced request compiles to
-  ("call" or "graphql") and that type's block.
+  ("call", "graphql" or "ws") and that type's block.
   """
 
   def __init__(self, step_id, available_vars):
@@ -98,6 +98,38 @@ class TraceDriver:
     if on_errors:
       spec["on_errors"] = on_errors
     self.set_request("graphql", spec)
+    return Response(self)
+
+  def ws(
+    self,
+    url=None,
+    *,
+    session=None,
+    send=None,
+    receive=None,
+    timeout=None,
+    headers=None,
+    subprotocols=None,
+  ):
+    spec = {}
+    if url is not None:
+      spec["url"] = url
+    if session:
+      spec["session"] = session
+    if headers:
+      spec["headers"] = {k: str(v) for k, v in headers.items()}
+    if subprotocols:
+      spec["subprotocols"] = list(subprotocols)
+    if send is not None:
+      spec["send"] = send
+    if receive is not None:
+      block = {}
+      if receive is not True:
+        block["match"] = list(receive) if isinstance(receive, list) else [receive]
+      if timeout:
+        block["timeout"] = timeout
+      spec["receive"] = block
+    self.set_request("ws", spec)
     return Response(self)
 
   def set_request(self, kind, spec):

@@ -66,7 +66,7 @@ class Flow:
       # opt-outs, exactly as the YAML parser does (internal/parser's
       # flattenAuth), so both surfaces hand the executor the same IR.
       effective = self.auth if auth is None else auth
-      if effective is not None:
+      if effective is not None and _makes_request(builder.kind, builder.spec):
         spec = effective.to_ir()
         if spec["scheme"] != "none":
           step["auth"] = spec
@@ -220,6 +220,20 @@ class Flow:
     if main_file:
       return Path(main_file).resolve().parent
     return Path.cwd()
+
+
+def _makes_request(kind, spec):
+  """Mirrors ir.Step.MakesRequest (internal/ir/validate.go): whether the step
+  puts a request on the wire, and so whether a flow-level auth default has
+  anything to attach itself to.
+
+  A ws step counts only when it opens the session — credentials ride on the
+  handshake, and a step working on a session someone else opened has no
+  request left to decorate.
+  """
+  if kind == "ws":
+    return "url" in spec
+  return kind in ("call", "graphql", "poll")
 
 
 def _git_info(directory, file):
