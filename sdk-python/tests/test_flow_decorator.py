@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from flowbench import Flow, FlowCompileError, Profile, Retry
+from flowbench import Flow, FlowCompileError, FlowExecutionError, Profile, Retry
 
 
 def test_bare_decorator_registers_step_in_order():
@@ -113,7 +113,7 @@ def test_data_bound_flow_sets_pool_fields():
   assert ir["flows"][0]["steps"][0]["call"]["url"] == "/u/{{ user.email }}"
 
 
-def test_run_without_compile_only_env_raises_not_implemented(monkeypatch):
+def test_run_load_mode_directly_needs_go_engine(monkeypatch):
   monkeypatch.delenv("FLOWBENCH_COMPILE_ONLY", raising=False)
   flow = Flow("f")
 
@@ -121,8 +121,8 @@ def test_run_without_compile_only_env_raises_not_implemented(monkeypatch):
   def a(ctx):
     ctx.http.get("/a")
 
-  with pytest.raises(NotImplementedError, match="issue #25"):
-    flow.run(Profile(mode="integration"))
+  with pytest.raises(FlowExecutionError, match="Go engine"):
+    flow.run(Profile(mode="stress"))
 
 
 def test_run_with_compile_only_env_prints_json(monkeypatch, capsys):

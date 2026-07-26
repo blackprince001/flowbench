@@ -12,7 +12,7 @@ from .auth import (
   NoAuth,
   OAuth2ClientCredentials,
 )
-from .errors import FlowCompileError
+from .errors import FlowCompileError, FlowExecutionError
 from .flow import Flow
 from .profile import Profile
 from .retry import Retry
@@ -25,6 +25,7 @@ __all__ = [
   "Cookie",
   "Flow",
   "FlowCompileError",
+  "FlowExecutionError",
   "Hmac",
   "NoAuth",
   "OAuth2ClientCredentials",

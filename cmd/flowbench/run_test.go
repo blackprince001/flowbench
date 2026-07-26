@@ -78,7 +78,7 @@ func TestRunChainedFlowPasses(t *testing.T) {
 	scenario, targetPath := writeScenario(t, checkoutFlow, srv.URL)
 
 	var stdout, stderr strings.Builder
-	code := run(&stdout, &stderr, []string{"run", scenario, "--target", targetPath})
+	code := run(&stdout, &stderr, []string{"run", scenario, "--target", targetPath, "--store", t.TempDir()})
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
@@ -93,7 +93,7 @@ func TestRunFailingAssertionExitsNonzero(t *testing.T) {
 	scenario, targetPath := writeScenario(t, checkoutFlow, srv.URL)
 
 	var stdout, stderr strings.Builder
-	code := run(&stdout, &stderr, []string{"run", scenario, "--target", targetPath})
+	code := run(&stdout, &stderr, []string{"run", scenario, "--target", targetPath, "--store", t.TempDir()})
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1 (a failing assertion)\nstdout:\n%s", code, stdout.String())
 	}

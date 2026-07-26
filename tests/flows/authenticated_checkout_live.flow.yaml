@@ -1,0 +1,31 @@
+# Live-execution conformance fixture (issue #25): the same chained flow as
+# authenticated_checkout.flow.yaml, but integration-mode and pointed at a
+# dedicated users_live.csv, so internal/conformance's live-execution parity
+# test can run this through `flowbench run` and diff it against the Python
+# direct-execution entry point running authenticated_checkout_live.py.
+flow: authenticated_checkout_live
+data: users_live.csv
+steps:
+  - id: login
+    call: POST /auth/login
+    body: { email: "{{ user.email }}", password: "{{ user.password }}" }
+    extract: { token: $.data.access_token }
+    assert: [ status == 200, token != null ]
+
+  - id: create_order
+    call: POST /orders
+    headers: { Authorization: "Bearer {{ token }}" }
+    body: { items: "{{ user.cart }}" }
+    extract: { order_id: $.data.id }
+    retry:
+      on_status: [429, 503]
+      backoff: honor_retry_after
+      max_attempts: 5
+
+  - id: pay
+    call: POST /orders/{{ order_id }}/pay
+    headers: { Authorization: "Bearer {{ token }}" }
+    assert: [ status == 202 ]
+
+profile:
+  mode: integration

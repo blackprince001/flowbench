@@ -3,13 +3,14 @@ import re
 import pytest
 
 from flowbench import Flow, FlowCompileError, Profile, expect
-from flowbench.context import Context, StepBuilder
+from flowbench.context import Context
+from flowbench.drivers.trace import TraceDriver
 
 QUERY = "query FindProduct($sku: String!) { product(sku: $sku) { id } }"
 
 
 def build(step_id="s"):
-  builder = StepBuilder(step_id, set())
+  builder = TraceDriver(step_id, set())
   return builder, Context(builder, has_data_pool=False)
 
 

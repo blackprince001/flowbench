@@ -1,5 +1,6 @@
-from .context import Subject
-from .errors import FlowCompileError
+from .drivers.live import LiveAssertionBuilder, LiveValue
+from .drivers.trace import Subject
+from .errors import FlowCompileError, FlowExecutionError
 from .template import TemplateRef
 
 
@@ -62,6 +63,13 @@ def expect(subject):
     return AssertionBuilder(subject._builder, source="var", key=subject.ref)
   if isinstance(subject, Subject):
     return AssertionBuilder(subject._builder, source=subject.source, key=subject.key)
+  if isinstance(subject, LiveValue):
+    if subject.kind in ("user", "env"):
+      raise FlowExecutionError(
+        f"expect() cannot assert on {subject.kind}.{subject.key} directly; "
+        "only extracted ctx.vars values support assertions"
+      )
+    return LiveAssertionBuilder(subject)
   raise FlowCompileError(
     f"expect() only accepts a response field (r.status, r.header(...)) or an "
     f"extracted ctx.vars value, got {type(subject).__name__}"
