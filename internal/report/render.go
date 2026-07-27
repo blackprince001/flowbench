@@ -138,10 +138,12 @@ type RunHead struct {
 	Verdict Verdict
 }
 
-// StripView is the outcome strip plus the label closing its axis.
+// StripView is the outcome graph plus the label closing its axis. Cells are
+// still the per-bucket links; the stream is what is drawn from them.
 type StripView struct {
-	Cells []StripCell
-	End   string
+	Cells  []StripCell
+	Stream Stream
+	End    string
 }
 
 // Fact is one label/value pair in a detail panel. Tone names a status colour
@@ -173,6 +175,7 @@ type RunPage struct {
 	All     string     // the link back to every chart at once
 	Tallies []Tally
 	Strip   StripView
+	Funnels []Funnel // where flow-runs stopped, one per flow
 	Peak    string
 	Bucket  *BucketDetail // the selected strip column, shown in the rail
 	Steps   []StepRow
@@ -271,14 +274,22 @@ func parse(page string) *template.Template {
 }
 
 var funcs = template.FuncMap{
-	"css":       func() template.CSS { return template.CSS(mustRead("assets/report.css")) },
-	"flameJS":   func() template.JS { return template.JS(mustRead("assets/flame.js")) },
-	"liveJS":    func() template.JS { return template.JS(mustRead("assets/live.js")) },
-	"shellJS":   func() template.JS { return template.JS(mustRead("assets/shell.js")) },
-	"dur":       humanDur,
-	"framePos":  framePos,
-	"barPos":    barPos,
-	"segHeight": func(v float64) template.CSS { return template.CSS(fmt.Sprintf("height:%.4f%%", v)) },
+	"css":        func() template.CSS { return template.CSS(mustRead("assets/report.css")) },
+	"flameJS":    func() template.JS { return template.JS(mustRead("assets/flame.js")) },
+	"liveJS":     func() template.JS { return template.JS(mustRead("assets/live.js")) },
+	"shellJS":    func() template.JS { return template.JS(mustRead("assets/shell.js")) },
+	"dur":        humanDur,
+	"framePos":   framePos,
+	"barPos":     barPos,
+	"humanCount": humanCount,
+	// leftAt positions an overlay against the plot's own box in percentage
+	// terms, so it tracks the SVG as the browser scales it.
+	"leftAt": func(x float64) template.CSS {
+		return template.CSS(fmt.Sprintf("left:%.3f%%", x/ribbonW*100))
+	},
+	"markAt": func(x, y float64) template.CSS {
+		return template.CSS(fmt.Sprintf("left:%.3f%%;top:%.3f%%", x/ribbonW*100, y/ribbonH*100))
+	},
 	"flameTall": func(fs []Frame) template.CSS {
 		return template.CSS(fmt.Sprintf("height:%dpx", FlameDepth(fs)*rowHeight))
 	},

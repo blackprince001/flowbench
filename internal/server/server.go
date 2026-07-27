@@ -190,16 +190,14 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		Chart:   chart,
 		All:     base,
 		Tallies: report.Tallies(series),
-		Strip: report.StripView{
-			Cells: report.StripLinks(report.Strip(series), base, bucket),
-			End:   report.SeriesSpan(series).Round(100 * time.Millisecond).String(),
-		},
-		Peak:   peak,
-		Bucket: report.InspectBucket(series, bucket),
-		Steps:  report.StepRows(folded),
-		Gates:  gates(m),
-		Agent:  "no agent attached — target CPU/memory overlay lands with #32",
-		Links:  jumps(base, folded, len(traces), samples),
+		Strip:   stripView(series, base, bucket),
+		Funnels: report.Funnels(folded, traces),
+		Peak:    peak,
+		Bucket:  report.InspectBucket(series, bucket),
+		Steps:   report.StepRows(folded),
+		Gates:   gates(m),
+		Agent:   "no agent attached — target CPU/memory overlay lands with #32",
+		Links:   jumps(base, folded, len(traces), samples),
 	}
 	if m.Mode == "soak" {
 		page.Trend = report.TrendFrom(series, m.Thresholds)
@@ -306,10 +304,7 @@ func (s *Server) outcomes(w http.ResponseWriter, r *http.Request) {
 		Shell:   s.shell(p, m, index, "outcomes", len(report.FlameFrames(folded)), traces, samples.Kept),
 		RunHead: head(m),
 		Tallies: report.Tallies(series),
-		Strip: report.StripView{
-			Cells: report.StripLinks(report.Strip(series), base, bucket),
-			End:   report.SeriesSpan(series).Round(100 * time.Millisecond).String(),
-		},
+		Strip:   stripView(series, base, bucket),
 		Bucket:  report.InspectBucket(series, bucket),
 		Filters: report.Filters(samples, filter, base),
 		Cells:   cells,
@@ -744,4 +739,16 @@ func render[T any](w http.ResponseWriter, fn func(io.Writer, T) error, page T) {
 
 func fail(w http.ResponseWriter, what string, err error) {
 	http.Error(w, fmt.Sprintf("flowbench: %s: %v", what, err), http.StatusInternalServerError)
+}
+
+// stripView lays out the outcomes-over-time graph. The per-bucket cells carry
+// the links, tooltips and selection; the stream is drawn from those same cells,
+// so the graph and its hit areas cannot drift apart.
+func stripView(series collector.Series, base string, bucket int) report.StripView {
+	cells := report.StripLinks(report.Strip(series), base, bucket)
+	return report.StripView{
+		Cells:  cells,
+		Stream: report.StreamOf(cells),
+		End:    report.SeriesSpan(series).Round(100 * time.Millisecond).String(),
+	}
 }
