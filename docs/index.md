@@ -28,6 +28,7 @@ Entry point for the FlowBench knowledge bundle. Read this index first; open docu
   * [0014 Build the renderers in-house](decisions/0014-build-renderers-in-house.md) - Flame graph and waterfall are server-side HTML sharing one vocabulary, not vendored speedscope.
   * [0015 Live view and abort in one process](decisions/0015-live-view-and-abort.md) - `flowbench run --watch` streams an in-progress run over SSE and owns the one write path.
   * [0016 coder/websocket for the ws adapter](decisions/0016-websocket-coder-library.md) - Its handshake is an `http.Client` request, so auth, the allow-list and the phase spans carry over unchanged.
+  * [0017 Target-metrics agent is scraped over HTTP, Linux-first](decisions/0017-agent-scrape-transport.md) - `flowbench-agent` serves `GET /metrics`; the CLI polls it on a ticker into the run store's own `agent.json` tier.
 
 ## Planning
 
