@@ -5,13 +5,18 @@
    breadcrumbs, timestamps, tile labels — and a sans for everything a person
    wrote. Anything the engine produced is set in mono.
 
-   The sans is Open Runde, a soft cut of Inter, shipped in the binary (SIL OFL
-   1.1, licence beside the files) and served as files under /assets/ rather than
-   inlined — the stylesheet is inlined into every page, so an inlined font would
-   be re-sent with it. The mono stays the platform's own: a terminal face is
-   what machine facts should look like, and it costs nothing to ship. The
-   system stack sits behind Open Runde too, so a glyph outside its latin subset
-   falls back per glyph instead of failing. */
+   Both faces ship in the binary (SIL OFL 1.1, licences beside the files) and
+   are served as files under /assets/ rather than inlined — the stylesheet is
+   inlined into every page, so an inlined font would be re-sent with it. The
+   sans is Open Runde, a soft cut of Inter. The mono is JetBrains Mono, which
+   replaces the platform stack the report used to borrow: leaving it to the
+   platform meant the same run id had a different width, weight and figure
+   shape on every machine it was read on, and a column of ids that lines up on
+   a Mac and not on Linux is a table that only works where it was written.
+   Both are cut to latin/latin-ext plus the seventeen symbols the report
+   actually draws — about 330 KB together — and the system stack sits behind
+   each, so a glyph outside the subset falls back per glyph instead of
+   failing. */
 
 @font-face {
   font-family: "Open Runde";
@@ -30,6 +35,28 @@
 @font-face {
   font-family: "Open Runde";
   src: url("/assets/OpenRunde-Semibold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/assets/JetBrainsMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/assets/JetBrainsMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/assets/JetBrainsMono-SemiBold.woff2") format("woff2");
   font-weight: 600;
   font-style: normal;
   font-display: swap;
@@ -69,7 +96,7 @@
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 
   --sans: "Open Runde", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   color-scheme: dark;
 }
