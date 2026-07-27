@@ -69,10 +69,21 @@ func serve(stdout, stderr io.Writer, args []string) int {
 		fmt.Fprintf(stderr, "flowbench: warning: %s is not loopback — runs carry captured request/response bodies\n", ln.Addr())
 	}
 
-	for _, p := range ws.Projects() {
+	projects := ws.Projects()
+	total := 0
+	for _, p := range projects {
 		runs, _ := p.Runs()
-		fmt.Fprintf(stdout, "serving %d run(s) from %s (%s)\n", len(runs), p.Store.Root(), p.Name)
+		total += len(runs)
+		fmt.Fprintf(stdout, "  %-24s %d run(s)  %s\n", p.Name, len(runs), p.Store.Root())
 	}
+	// The totals line goes last so it is the one still on screen: a store that
+	// was pointed at by mistake reads as "0 runs" rather than as a server that
+	// started fine.
+	unit := "projects"
+	if len(projects) == 1 {
+		unit = "project"
+	}
+	fmt.Fprintf(stdout, "serving %d run(s) across %d %s\n", total, len(projects), unit)
 	fmt.Fprintf(stdout, "  http://%s\n", ln.Addr())
 
 	srv := &http.Server{Handler: server.New(ws), ReadHeaderTimeout: 10 * time.Second}
