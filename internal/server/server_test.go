@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blackprince001/flowbench/internal/agent"
 	"github.com/blackprince001/flowbench/internal/collector"
 	"github.com/blackprince001/flowbench/internal/executor"
 	"github.com/blackprince001/flowbench/internal/server"
@@ -566,6 +567,100 @@ func TestRunPageCarriesChartsAndSteps(t *testing.T) {
 	}
 	if strings.Contains(body, "ZgotmplZ") {
 		t.Error("chart geometry was stripped by the escaper")
+	}
+}
+
+// withAgentMetrics gives a synthetic result a generator self-metrics series,
+// so the overlay's "generator" line has something to plot.
+func withAgentMetrics(res *executor.Result) *executor.Result {
+	res.Metrics = []executor.MetricSample{
+		{At: 0, CPUSeconds: 1.0, HeapAlloc: 10 << 20},
+		{At: time.Second, CPUSeconds: 1.4, HeapAlloc: 12 << 20},
+		{At: 2 * time.Second, CPUSeconds: 1.9, HeapAlloc: 14 << 20},
+	}
+	return res
+}
+
+// saveRunWithAgent is saveRun plus a target-metrics agent series (issue #32),
+// so the dashboard's overlay has both a generator and a target line to show.
+func saveRunWithAgent(t *testing.T, dir string, gates []collector.Outcome, agentSeries []agent.PolledSample) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rd, err := st.Save(store.RunInfo{
+		Scenario:  "checkout.flow.yaml",
+		Mode:      "stress",
+		Target:    "local-stub",
+		Initiator: "ada",
+		StartedAt: time.Date(2026, 7, 24, 13, 0, 0, 0, time.UTC),
+	}, withAgentMetrics(throttledRun()), gates, agentSeries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Base(rd)
+}
+
+// serveWithAgent is serve plus an attached target-metrics agent series.
+func serveWithAgent(t *testing.T) (*server.Server, string) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "checkout")
+	agentSeries := []agent.PolledSample{
+		{At: 0, Sample: agent.Sample{CPUSeconds: 10.0, MemUsedBytes: 500 << 20}},
+		{At: time.Second, Sample: agent.Sample{CPUSeconds: 13.5, MemUsedBytes: 520 << 20}},
+		{At: 2 * time.Second, Sample: agent.Sample{CPUSeconds: 15.5, MemUsedBytes: 540 << 20}},
+	}
+	id := saveRunWithAgent(t, dir, nil, agentSeries)
+	ws, err := store.NewWorkspace([]string{"checkout=" + dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return server.New(ws), "/p/checkout/runs/" + id
+}
+
+// TestRunPageOverlaysTargetResourcesWhenAgentAttached is issue #37's
+// acceptance: an agent-attached run shows target and generator resource
+// series, distinguishable, on the run page.
+func TestRunPageOverlaysTargetResourcesWhenAgentAttached(t *testing.T) {
+	s, runBase := serveWithAgent(t)
+
+	code, body := get(t, s, runBase)
+	if code != http.StatusOK {
+		t.Fatalf("run page returned %d", code)
+	}
+	for _, want := range []string{
+		"CPU: target vs generator",
+		"Memory: target RSS vs generator heap",
+		"target", "generator", // distinguishable series labels
+		"cores",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("run page missing %q", want)
+		}
+	}
+	if strings.Contains(body, "no agent attached") {
+		t.Error("an agent-attached run should not show the empty-state hint")
+	}
+}
+
+// TestRunPageShowsEmptyStateWithoutAnAgent is the regression: a run with no
+// agent attached keeps the plain hint and renders no overlay charts.
+func TestRunPageShowsEmptyStateWithoutAnAgent(t *testing.T) {
+	s, runBase := serve(t)
+
+	code, body := get(t, s, runBase)
+	if code != http.StatusOK {
+		t.Fatalf("run page returned %d", code)
+	}
+	if !strings.Contains(body, "no agent attached") {
+		t.Error("a run without an agent should keep the empty-state hint")
+	}
+	if strings.Contains(body, "CPU: target vs generator") {
+		t.Error("no agent means no target-resource chart should render")
 	}
 }
 
