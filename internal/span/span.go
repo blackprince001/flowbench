@@ -32,6 +32,7 @@ type Span struct {
 	callMethod string
 	callURL    string
 	callStatus int
+	statusText string
 	retryAfter string
 
 	// failure is why this span failed, in the engine's own words. Held by

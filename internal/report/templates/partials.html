@@ -51,24 +51,60 @@
 {{ end }}
 
 {{ define "strip" }}
-<div class="strip">
+{{ with .Stream }}
+{{ if .Empty }}
+<p class="empty">No outcomes recorded in this window.</p>
+{{ else }}
+<div class="stream-wrap">
+<svg class="stream" viewBox="0 0 {{ .Width }} {{ .Height }}" preserveAspectRatio="none" role="img"
+     aria-label="Outcome share over the run, stacked: ok, throttled, failed.">
+  {{ range .Bands }}<path class="stream-band s-{{ .Tone }}" d="{{ .Path }}"/>{{ end }}
   {{ range .Cells }}
-  {{ if .Href }}<a class="strip-cell{{ if .Selected }} is-selected{{ end }}" href="{{ .Href }}" title="{{ .Title }}">
-    {{ if not .Empty }}
-    {{ if .OK }}<i class="strip-seg s-ok" style="{{ segHeight .OK }}"></i>{{ end }}
-    {{ if .Throttled }}<i class="strip-seg s-throttled" style="{{ segHeight .Throttled }}"></i>{{ end }}
-    {{ if .Failed }}<i class="strip-seg s-failed" style="{{ segHeight .Failed }}"></i>{{ end }}
-    {{ end }}
-  </a>{{ else }}<div class="strip-cell" title="{{ .Title }}">
-    {{ if not .Empty }}
-    {{ if .OK }}<i class="strip-seg s-ok" style="{{ segHeight .OK }}"></i>{{ end }}
-    {{ if .Throttled }}<i class="strip-seg s-throttled" style="{{ segHeight .Throttled }}"></i>{{ end }}
-    {{ if .Failed }}<i class="strip-seg s-failed" style="{{ segHeight .Failed }}"></i>{{ end }}
-    {{ end }}
-  </div>{{ end }}
+  {{ if .Href }}<a class="stream-hit{{ if .Selected }} is-selected{{ end }}" href="{{ .Href }}">
+    <title>{{ .Title }}</title>
+    <rect x="{{ .X }}" y="0" width="{{ .W }}" height="{{ $.Stream.Height }}"/>
+  </a>{{ else }}<g class="stream-hit is-static"><title>{{ .Title }}</title>
+    <rect x="{{ .X }}" y="0" width="{{ .W }}" height="{{ $.Stream.Height }}"/>
+  </g>{{ end }}
   {{ end }}
+</svg>
+{{ if .Marks }}
+<div class="stream-marks" aria-hidden="true">
+  {{ range .Marks }}<span class="stream-mark t-{{ .Tone }}" style="{{ markAt .X .Y }}">{{ .Text }}</span>{{ end }}
 </div>
+{{ end }}
+</div>
+{{ end }}
+{{ end }}
 <div class="axis"><span>0</span><span>{{ .End }}</span></div>
+{{ end }}
+
+{{ define "funnel" }}
+<figure class="funnel">
+  <div class="funnel-plot">
+    <svg class="funnel-svg" viewBox="0 0 100 60" preserveAspectRatio="none" role="img"
+         aria-label="Flow-runs reaching each step of {{ .Flow }}.">
+      {{ range .Bands }}<path class="funnel-halo f-{{ .Tone }}" d="{{ .HaloOut }}"/>{{ end }}
+      {{ range .Bands }}<path class="funnel-halo is-inner f-{{ .Tone }}" d="{{ .HaloIn }}"/>{{ end }}
+      {{ range .Bands }}<path class="funnel-core f-{{ .Tone }}" d="{{ .Core }}"/>{{ end }}
+    </svg>
+    {{ range .Stages }}{{ if not .Last }}<i class="funnel-edge" style="{{ leftAt .Edge }}"></i>{{ end }}{{ end }}
+    {{ range .Stages }}
+    <span class="funnel-pin" style="{{ leftAt .X }}">
+      <b>{{ humanCount .Count }}</b> {{ .Share }}
+    </span>
+    {{ end }}
+  </div>
+  <div class="funnel-labels">
+    {{ range .Stages }}
+    <span class="funnel-label" style="{{ leftAt .X }}">
+      <span class="funnel-name g-{{ .Glyph }}">{{ .Name }}</span>
+      {{ if .Drop }}<span class="funnel-drop">{{ .Drop }}</span>{{ end }}
+    </span>
+    {{ end }}
+  </div>
+  <figcaption class="funnel-note">{{ .Note }}</figcaption>
+</figure>
 {{ end }}
 
 {{ define "waterfall-table" }}

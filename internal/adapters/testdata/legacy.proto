@@ -1,0 +1,17 @@
+// proto2, so the compile path is pinned against a syntax the project will
+// meet in the wild long after it stopped being written.
+syntax = "proto2";
+
+package legacy.v1;
+
+service Echo {
+  rpc Ping(PingRequest) returns (PingReply);
+}
+
+message PingRequest {
+  optional string text = 1;
+}
+
+message PingReply {
+  optional string text = 1;
+}

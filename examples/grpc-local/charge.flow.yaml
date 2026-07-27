@@ -1,0 +1,59 @@
+# A charge and the refund of that charge. The id is real server state — the
+# service only knows about ids it issued — so the second call genuinely depends
+# on the first, the way the deck-of-cards example depends on a shuffled deck.
+#
+#   go run ./examples/grpc-local/stub          # in one terminal
+#   flowbench run examples/grpc-local/charge.flow.yaml \
+#     --target examples/grpc-local/target.yaml
+flow: billing
+steps:
+  # No `url`: the method is the path, so a call against the target itself
+  # names no address at all. `proto` is relative to this file.
+  - id: charge
+    grpc:
+      proto: proto/billing.proto
+      method: billing.v1.Billing/Charge
+      message:
+        account: acct_1
+        # int64 travels as a string in protobuf's JSON mapping, which is why
+        # this is quoted and the assertion below compares a string.
+        amountCents: "1200"
+        currency: GHS
+    headers:
+      x-request-id: req-1
+    extract:
+      charge_id: $.chargeId
+    assert:
+      # 0 is OK. A gRPC status is a small integer in its own numbering; there
+      # is no 200 in it, and code 8 is not HTTP 8.
+      - status == 0
+      - $.status == "captured"
+      - $.amountCents == "1200"
+
+  # The extracted id rides back out in the next message, JSON-escaped by the
+  # same templating a call step's body uses.
+  - id: refund
+    grpc:
+      proto: proto/billing.proto
+      method: billing.v1.Billing/Refund
+      message:
+        chargeId: "{{ charge_id }}"
+    assert:
+      - status == 0
+      - $.status == "refunded"
+
+  # Refunding it twice is a state error the service reports as
+  # FAILED_PRECONDITION (9). A status is data — it does not fail the step on
+  # its own — so asserting the code the service really sends is how a flow
+  # tests the unhappy path.
+  - id: refund_again
+    grpc:
+      proto: proto/billing.proto
+      method: billing.v1.Billing/Refund
+      message:
+        chargeId: "{{ charge_id }}"
+    assert:
+      - status == 9
+
+profile:
+  mode: integration

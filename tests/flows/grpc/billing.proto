@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package billing.v1;
+
+service Billing {
+  rpc Charge(ChargeRequest) returns (ChargeReply);
+  rpc Refund(RefundRequest) returns (RefundReply);
+}
+
+message ChargeRequest {
+  string account = 1;
+  int64 amount_cents = 2;
+  string currency = 3;
+}
+
+message ChargeReply {
+  string charge_id = 1;
+  string status = 2;
+  int64 amount_cents = 3;
+}
+
+message RefundRequest {
+  string charge_id = 1;
+}
+
+message RefundReply {
+  string status = 1;
+}

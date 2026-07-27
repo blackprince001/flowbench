@@ -5,13 +5,18 @@
    breadcrumbs, timestamps, tile labels — and a sans for everything a person
    wrote. Anything the engine produced is set in mono.
 
-   The sans is Open Runde, a soft cut of Inter, shipped in the binary (SIL OFL
-   1.1, licence beside the files) and served as files under /assets/ rather than
-   inlined — the stylesheet is inlined into every page, so an inlined font would
-   be re-sent with it. The mono stays the platform's own: a terminal face is
-   what machine facts should look like, and it costs nothing to ship. The
-   system stack sits behind Open Runde too, so a glyph outside its latin subset
-   falls back per glyph instead of failing. */
+   Both faces ship in the binary (SIL OFL 1.1, licences beside the files) and
+   are served as files under /assets/ rather than inlined — the stylesheet is
+   inlined into every page, so an inlined font would be re-sent with it. The
+   sans is Open Runde, a soft cut of Inter. The mono is JetBrains Mono, which
+   replaces the platform stack the report used to borrow: leaving it to the
+   platform meant the same run id had a different width, weight and figure
+   shape on every machine it was read on, and a column of ids that lines up on
+   a Mac and not on Linux is a table that only works where it was written.
+   Both are cut to latin/latin-ext plus the seventeen symbols the report
+   actually draws — about 330 KB together — and the system stack sits behind
+   each, so a glyph outside the subset falls back per glyph instead of
+   failing. */
 
 @font-face {
   font-family: "Open Runde";
@@ -30,6 +35,28 @@
 @font-face {
   font-family: "Open Runde";
   src: url("/assets/OpenRunde-Semibold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/assets/JetBrainsMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/assets/JetBrainsMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/assets/JetBrainsMono-SemiBold.woff2") format("woff2");
   font-weight: 600;
   font-style: normal;
   font-display: swap;
@@ -69,7 +96,7 @@
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 
   --sans: "Open Runde", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   color-scheme: dark;
 }
@@ -607,31 +634,169 @@ pre.body {
 .tally-lead { background: var(--raised); color: var(--ink); }
 .tally-lead b { color: var(--ink); }
 
-/* One column per time bucket, each stacked by outcome share. Reading left to
-   right is reading the run in order: this is where throttling starts. */
-.strip {
-  display: flex;
-  gap: 2px;
-  height: 44px;
-  align-items: flex-end;
-}
-.strip-cell {
-  flex: 1 1 0;
-  min-width: 2px;
-  height: 100%;
-  display: flex;
-  flex-direction: column-reverse;
-  gap: 1px;
-  border-radius: 2px;
+/* Outcomes over time -----------------------------------------------------
+
+   Three stacked bands rather than a row of columns. A run is one continuous
+   thing, and the question the graph exists to answer — when did the throttling
+   start — is a question about a shape: a band that swells is legible at a
+   glance where a row of heights has to be compared pair by pair.
+
+   The bands are geometry only. Every bucket keeps its own link and tooltip
+   underneath (.stream-hit), and the tallies row above states each outcome in
+   words, so colour is never the only carrier. */
+.stream {
+  display: block;
+  width: 100%;
+  height: 88px;
+  border-radius: 6px;
   overflow: hidden;
   background: var(--hairline-soft);
 }
-a.strip-cell:hover { outline: 2px solid var(--ink-2); outline-offset: 1px; }
-a.strip-cell.is-selected { outline: 2px solid var(--ink); outline-offset: 1px; }
-.strip-seg { width: 100%; background: var(--tone); }
-.s-ok { --tone: var(--ok); }
-.s-throttled { --tone: var(--throttled); }
-.s-failed { --tone: var(--failed); }
+.stream-band { fill: var(--tone); }
+.stream-band.s-ok { --tone: var(--ok); }
+.stream-band.s-throttled { --tone: var(--throttled); }
+.stream-band.s-failed { --tone: var(--failed); }
+
+/* Hit areas sit over the bands: invisible until pointed at, so the graph is a
+   graph first and a control second. */
+.stream-hit rect { fill: transparent; }
+.stream-hit.is-static { pointer-events: none; }
+a.stream-hit:hover rect { fill: color-mix(in oklab, var(--ink) 16%, transparent); }
+a.stream-hit:focus-visible { outline: none; }
+a.stream-hit:focus-visible rect { fill: color-mix(in oklab, var(--ink) 24%, transparent); }
+a.stream-hit.is-selected rect {
+  fill: color-mix(in oklab, var(--ink) 12%, transparent);
+  stroke: var(--ink);
+  stroke-width: 0.4;
+}
+
+/* Inline labels ride on the band they name, the way a legend never quite
+   manages to. Only bands thick enough to hold one get one; the rest are in the
+   tallies row. */
+/* The marks overlay the graph rather than following it, so a percentage
+   position resolves against the graph's own box. A zero-height container would
+   collapse every `top` to the same place. */
+.stream-wrap { position: relative; }
+.stream-marks { position: absolute; inset: 0; pointer-events: none; }
+.stream-mark {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 2px 7px;
+  border-radius: 99px;
+  white-space: nowrap;
+  font: 500 11px/1.4 var(--sans);
+  font-variant-numeric: tabular-nums;
+  color: var(--ground);
+  background: color-mix(in oklab, var(--tone) 88%, black);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.28);
+  pointer-events: none;
+}
+
+/* Funnel -----------------------------------------------------------------
+
+   Where flow-runs stopped. A step's folded count is how many reached it, so
+   the narrowing between two stages is exactly the flow-runs that did not get
+   past the first.
+
+   Each band is three layers: two translucent halos and a solid core. That is
+   what makes the ribbon read as something flowing rather than as a filled
+   polygon — and it is what keeps a hairline stage visible, because the halo
+   is a fixed distance outside the core rather than a fraction of it.
+
+   The ramp is positional, not semantic: stage 1 is not "better" than stage 3.
+   Status colours are deliberately not borrowed for it — they are reserved for
+   outcomes, and a red stage would be read as a failing one. */
+.funnel { margin: 0; }
+/* The ribbon bleeds to the card's edges rather than sitting inside its padding:
+   a flow does not begin at the first step, it arrives at it, and a band that
+   stops short of the frame reads as a bar chart with rounded ends. The labels
+   below stay inside the padding, so only the geometry runs to the edge. */
+.funnel-plot {
+  position: relative;
+  margin: -4px -16px 0;
+}
+.funnel-svg {
+  display: block;
+  width: 100%;
+  height: 260px;
+  overflow: visible;
+}
+.funnel-core { fill: var(--tone); }
+.funnel-halo { fill: var(--tone); opacity: 0.13; }
+.funnel-halo.is-inner { opacity: 0.26; }
+.f-f1 { --tone: #6f5bd6; }
+.f-f2 { --tone: #3987e5; }
+.f-f3 { --tone: #2bb3c6; }
+.f-f4 { --tone: #199e70; }
+.f-f5 { --tone: #b06ad0; }
+
+/* The divider runs the full height of the plot, like the reference: it is the
+   column boundary, not a tick on the ribbon. */
+.funnel-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--hairline);
+  transform: translateX(-0.5px);
+}
+
+/* The count rides on the band it counts. A legend beside the graph makes a
+   reader carry a number across the page; a pill on the ribbon does not. */
+.funnel-pin {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 4px 11px;
+  border-radius: 99px;
+  white-space: nowrap;
+  font: 12.5px/1.35 var(--sans);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  background: var(--ground);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.18), 0 0 0 1px var(--hairline);
+}
+.funnel-pin b { color: var(--ink); font-weight: 600; margin-right: 3px; }
+
+.funnel-labels { position: relative; height: 46px; margin-top: 4px; }
+.funnel-label {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  max-width: 30%;
+}
+.funnel-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 10px;
+  border-radius: 99px;
+  background: var(--raised);
+  font: 12px/1.4 var(--mono);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The glyph says where in the flow a stage sits, so position survives a
+   screenshot in greyscale. */
+.funnel-name::before { content: var(--glyph); color: var(--ink-3); }
+.g-entry { --glyph: "\21e5"; }
+.g-middle { --glyph: "\22ef"; }
+.g-exit { --glyph: "\21e4"; }
+.funnel-drop { font: 11px/1.3 var(--sans); color: var(--failed); white-space: nowrap; }
+.funnel-note { font: 11.5px/1.4 var(--sans); color: var(--ink-3); }
+
+@media (max-width: 720px) {
+  .funnel-svg { height: 180px; }
+  .funnel-pin { font-size: 11px; padding: 3px 8px; }
+  .funnel-name { font-size: 11px; }
+}
 
 .axis {
   display: flex;

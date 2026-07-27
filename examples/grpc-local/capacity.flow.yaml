@@ -1,0 +1,32 @@
+# More charges in flight than the service processes at once. It sheds the
+# surplus with RESOURCE_EXHAUSTED — gRPC's own "you are going too fast" — so
+# the pressure shows up as throttle_rate and leaves error_rate alone, exactly
+# as an HTTP 429 does and as a WebSocket 1013 does (ADR 0006).
+#
+# The status vocabulary is the whole point: RESOURCE_EXHAUSTED is code 8, and
+# nothing in gRPC's numbering is 429.
+#
+#   go run ./examples/grpc-local/stub          # in one terminal
+#   flowbench run examples/grpc-local/capacity.flow.yaml \
+#     --target examples/grpc-local/target.yaml
+flow: billing_capacity
+steps:
+  - id: charge
+    grpc:
+      proto: proto/billing.proto
+      method: billing.v1.Billing/Charge
+      message:
+        account: acct_load
+        amountCents: "500"
+        currency: GHS
+    assert:
+      - status == 0
+
+profile:
+  mode: load
+  vus: 120
+  hold: 5s
+  thresholds:
+    # The shed calls are throttles, not errors, so this holds even though most
+    # of the run is being turned away.
+    - error_rate < 1%

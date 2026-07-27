@@ -21,11 +21,23 @@
 <section class="card">
   <div class="card-head">
     <h2 class="card-title">Outcomes over time</h2>
-    <p class="card-note">{{ if .Peak }}{{ .Peak }}{{ else }}one column per time bucket{{ end }}</p>
+    <p class="card-note">{{ if .Peak }}{{ .Peak }}{{ else }}share of flow-runs, left to right through the run{{ end }}</p>
   </div>
   <div class="card-body">
     {{ template "tallies" .Tallies }}
     {{ template "strip" .Strip }}
+  </div>
+</section>
+{{ end }}
+
+{{ range .Funnels }}
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Where flow-runs stopped</h2>
+    <p class="card-note mono">{{ .Flow }}</p>
+  </div>
+  <div class="card-body">
+    {{ template "funnel" . }}
   </div>
 </section>
 {{ end }}

@@ -233,7 +233,7 @@ def _makes_request(kind, spec):
   """
   if kind == "ws":
     return "url" in spec
-  return kind in ("call", "graphql", "poll")
+  return kind in ("call", "graphql", "grpc", "poll")
 
 
 def _git_info(directory, file):

@@ -243,12 +243,15 @@ func findings(rows []Row) []finding {
 // failed" is only how it surfaced. What is left is the failing span's own
 // nature: a wrong answer, a missing value, or no answer at all.
 func causeOf(r, step Row) (Cause, string) {
-	status := statusOf(r, step)
+	status, text := statusOf(r, step)
 	switch {
 	case r.Outcome == span.OutcomeThrottled || step.Outcome == span.OutcomeThrottled || status == http.StatusTooManyRequests:
-		return CauseThrottled, statusLabel(status)
-	case status >= 400:
-		return CauseStatus, statusLabel(status)
+		return CauseThrottled, statusLabel(status, text)
+	// A status text is only recorded for a protocol whose codes are not HTTP's,
+	// and only when that protocol refused — so its presence is the refusal,
+	// where HTTP has to be read off the number.
+	case text != "" || status >= 400:
+		return CauseStatus, statusLabel(status, text)
 	case strings.HasPrefix(r.Name, "assert_"):
 		return CauseAssertion, r.Name
 	case r.Kind == KindLogic:
@@ -319,18 +322,22 @@ func detailOf(r, step Row) string {
 }
 
 // statusOf is what the target answered on this span, or on its step — a failed
-// assertion is a child of the call that carries the status.
-func statusOf(r, step Row) int {
-	if r.Payload != nil && r.Payload.Status != 0 {
-		return r.Payload.Status
+// assertion is a child of the call that carries the status. The text alongside
+// it is the status in a non-HTTP protocol's own words, empty for HTTP.
+func statusOf(r, step Row) (int, string) {
+	if r.Payload != nil && (r.Payload.Status != 0 || r.Payload.StatusText != "") {
+		return r.Payload.Status, r.Payload.StatusText
 	}
 	if step.Payload != nil {
-		return step.Payload.Status
+		return step.Payload.Status, step.Payload.StatusText
 	}
-	return 0
+	return 0, ""
 }
 
-func statusLabel(status int) string {
+func statusLabel(status int, text string) string {
+	if text != "" {
+		return text
+	}
 	if status == 0 {
 		return ""
 	}

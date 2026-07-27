@@ -25,6 +25,7 @@ var fixtures = []string{
 	"auth_schemes",           // every auth scheme, plus flow default and opt-out (#30)
 	"graphql_operations",     // query, chained mutation, error policy (#26)
 	"ws_session",             // sessions across steps, frame matching (#27)
+	"grpc_unary",             // unary calls, chained through a proto schema (#28)
 }
 
 func TestTwoSurfaceParity(t *testing.T) {

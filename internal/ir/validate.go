@@ -178,7 +178,7 @@ func (st *Step) validate(path string) []error {
 	}
 
 	specs := 0
-	for _, set := range []bool{st.Call != nil, st.GraphQL != nil, st.WS != nil, st.Wait != nil, st.Poll != nil, st.Verify != nil} {
+	for _, set := range []bool{st.Call != nil, st.GraphQL != nil, st.WS != nil, st.GRPC != nil, st.Wait != nil, st.Poll != nil, st.Verify != nil} {
 		if set {
 			specs++
 		}
@@ -191,6 +191,7 @@ func (st *Step) validate(path string) []error {
 		StepCall:    st.Call != nil,
 		StepGraphQL: st.GraphQL != nil,
 		StepWS:      st.WS != nil,
+		StepGRPC:    st.GRPC != nil,
 		StepWait:    st.Wait != nil,
 		StepPoll:    st.Poll != nil,
 		StepVerify:  st.Verify != nil,
@@ -198,7 +199,7 @@ func (st *Step) validate(path string) []error {
 	matches, known := specFor[st.Type]
 	switch {
 	case !known:
-		errs = append(errs, errf(path, "unknown step type %q (v0 executes call, graphql, ws, wait, poll, verify)", st.Type))
+		errs = append(errs, errf(path, "unknown step type %q (v0 executes call, graphql, ws, grpc, wait, poll, verify)", st.Type))
 	case !matches:
 		errs = append(errs, errf(path, "type is %q but the %q spec is not set", st.Type, st.Type))
 	}
@@ -211,6 +212,8 @@ func (st *Step) validate(path string) []error {
 	case st.WS != nil:
 		errs = append(errs, st.WS.validate(path)...)
 		errs = append(errs, st.wsFrameChecks(path)...)
+	case st.GRPC != nil:
+		errs = append(errs, st.GRPC.validate(path)...)
 	case st.Wait != nil && st.Wait.Duration <= 0:
 		errs = append(errs, errf(path, "wait duration must be positive"))
 	case st.Poll != nil:
@@ -222,11 +225,11 @@ func (st *Step) validate(path string) []error {
 	}
 
 	if st.Retry != nil {
-		if st.Type != StepCall && st.Type != StepGraphQL {
+		if st.Type != StepCall && st.Type != StepGraphQL && st.Type != StepGRPC {
 			// A ws step is deliberately excluded: the retry loop re-sends a
 			// request and reads a status, and neither has a meaning on a
 			// session that is already open.
-			errs = append(errs, errf(path, "retry policies apply to call and graphql steps only (poll bounds itself)"))
+			errs = append(errs, errf(path, "retry policies apply to call, graphql, and grpc steps only (poll bounds itself)"))
 		}
 		errs = append(errs, st.Retry.validate(path)...)
 	}
@@ -399,8 +402,59 @@ func (c *CallSpec) validate(path string) []error {
 // handshake, which is an ordinary HTTP request, and a step working on a
 // session someone else opened has no request left to decorate.
 func (st *Step) MakesRequest() bool {
-	return st.Call != nil || st.GraphQL != nil || st.Poll != nil ||
+	return st.Call != nil || st.GraphQL != nil || st.GRPC != nil || st.Poll != nil ||
 		(st.WS != nil && st.WS.Opens())
+}
+
+// grpcMethodRe matches a fully-qualified method, with or without the leading
+// slash the wire uses: `billing.v1.Billing/Charge`.
+var grpcMethodRe = regexp.MustCompile(`^/?[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*/[A-Za-z_][A-Za-z0-9_]*$`)
+
+func (g *GRPCSpec) validate(path string) []error {
+	var errs []error
+	switch {
+	case g.Endpoint != "" && g.URL != "":
+		errs = append(errs, errf(path, "grpc is either an endpoint reference or an inline url, not both"))
+	case g.Endpoint != "" && !identRe.MatchString(g.Endpoint):
+		errs = append(errs, errf(path, "endpoint reference %q must match %s", g.Endpoint, identRe))
+	case g.URL != "" && !strings.Contains(g.URL, "{{"):
+		// An address is the whole URL — a gRPC step has no path, because the
+		// method is the path. A `/` here is almost always someone reaching for
+		// call-step muscle memory.
+		u, err := url.Parse(g.URL)
+		switch {
+		case err != nil:
+			errs = append(errs, errf(path, "grpc url %q does not parse: %v", g.URL, err))
+		case u.Scheme != "grpc" && u.Scheme != "grpcs":
+			errs = append(errs, errf(path, "grpc url %q needs a grpc:// or grpcs:// scheme (grpcs is TLS)", g.URL))
+		case u.Host == "":
+			errs = append(errs, errf(path, "grpc url %q names no host", g.URL))
+		case strings.Trim(u.Path, "/") != "":
+			errs = append(errs, errf(path, "grpc url %q carries a path; the method is the path, so the url is just the address", g.URL))
+		}
+	}
+
+	if strings.TrimSpace(g.Proto) == "" {
+		errs = append(errs, errf(path, "grpc step needs a proto (the .proto file describing the method)"))
+	}
+	switch {
+	case g.Method == "":
+		errs = append(errs, errf(path, "grpc step needs a method (package.Service/Method)"))
+	case !grpcMethodRe.MatchString(g.Method):
+		errs = append(errs, errf(path, "grpc method %q must be fully qualified as package.Service/Method", g.Method))
+	}
+
+	if len(g.Message) > 0 {
+		if !json.Valid(g.Message) {
+			errs = append(errs, errf(path, "grpc message is not valid JSON"))
+		} else if g.Message[0] != '{' {
+			// A protobuf message is a mapping of fields; a bare list or scalar
+			// cannot become one, so catching it here beats a runtime decode
+			// error on the first iteration.
+			errs = append(errs, errf(path, "grpc message must be a mapping of field to value"))
+		}
+	}
+	return errs
 }
 
 func (w *WSSpec) validate(path string) []error {
@@ -698,6 +752,17 @@ func (st *Step) templatedFields() []string {
 		}
 		if len(st.WS.Send) > 0 {
 			fields = append(fields, string(st.WS.Send))
+		}
+	case st.GRPC != nil:
+		// proto and method are excluded: they name a schema and a method in it,
+		// resolved once per run, so a per-iteration value has nothing to say
+		// about either.
+		fields = append(fields, st.GRPC.URL)
+		for _, v := range st.GRPC.Headers {
+			fields = append(fields, v)
+		}
+		if len(st.GRPC.Message) > 0 {
+			fields = append(fields, string(st.GRPC.Message))
 		}
 	}
 	if st.Auth != nil {

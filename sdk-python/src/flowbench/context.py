@@ -115,6 +115,51 @@ class WS:
     )
 
 
+class GRPC:
+  """``ctx.grpc(...)`` — one unary gRPC call.
+
+  ``proto`` names the schema (relative to the flow file) and ``method`` the
+  fully-qualified ``package.Service/Method``. ``url`` is optional and is only
+  an address: a gRPC step has no path, because the method *is* the path, so a
+  call against the target itself names no url at all.
+
+  ``headers`` are gRPC metadata — HTTP/2 headers on the wire — so every auth
+  scheme reaches a gRPC call unchanged.
+  """
+
+  def __init__(self, driver):
+    self._driver = driver
+
+  def __call__(
+    self,
+    method,
+    *,
+    proto,
+    message=None,
+    url=None,
+    headers=None,
+    import_paths=None,
+  ):
+    if "/" not in method.strip("/"):
+      raise FlowCompileError(
+        "ctx.grpc(method=...) must be fully qualified as "
+        f"'package.Service/Method', got {method!r}"
+      )
+    if message is not None and not isinstance(message, dict):
+      raise FlowCompileError(
+        "ctx.grpc(message=...) is the request message as a mapping of field "
+        f"to value, got {type(message).__name__}"
+      )
+    return self._driver.grpc(
+      method,
+      proto=proto,
+      message=message,
+      url=url,
+      headers=headers,
+      import_paths=import_paths,
+    )
+
+
 def _make_method(verb):
   def method(self, url, *, json=None, headers=None, query=None):
     return self._call(verb.upper(), url, json=json, headers=headers, query=query)
@@ -161,6 +206,7 @@ class Context:
     self.http = Http(driver)
     self.graphql = GraphQL(driver)
     self.ws = WS(driver)
+    self.grpc = GRPC(driver)
     self.vars = VarsProxy(driver)
     self.env = EnvProxy(driver)
     self._has_data_pool = has_data_pool

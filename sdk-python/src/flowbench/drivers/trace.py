@@ -47,10 +47,11 @@ class Response:
 class TraceDriver:
   """Accumulates the pieces of one ``ir.Step`` as a step function traces.
 
-  Implements the driver protocol Http/GraphQL/WS/VarsProxy/UserProxy/EnvProxy
-  call into: call(), graphql(), ws(), set_var(), get_var(), get_user_field(),
-  get_env(). kind/spec is the IR step type the traced request compiles to
-  ("call", "graphql" or "ws") and that type's block.
+  Implements the driver protocol Http/GraphQL/WS/GRPC/VarsProxy/UserProxy/
+  EnvProxy call into: call(), graphql(), ws(), grpc(), set_var(), get_var(),
+  get_user_field(), get_env(). kind/spec is the IR step type the traced
+  request compiles to ("call", "graphql", "ws" or "grpc") and that type's
+  block.
   """
 
   def __init__(self, step_id, available_vars):
@@ -130,6 +131,28 @@ class TraceDriver:
         block["timeout"] = timeout
       spec["receive"] = block
     self.set_request("ws", spec)
+    return Response(self)
+
+  def grpc(
+    self,
+    method,
+    *,
+    proto,
+    message=None,
+    url=None,
+    headers=None,
+    import_paths=None,
+  ):
+    spec = {"proto": proto, "method": method}
+    if url is not None:
+      spec["url"] = url
+    if import_paths:
+      spec["import_paths"] = list(import_paths)
+    if message is not None:
+      spec["message"] = message
+    if headers:
+      spec["headers"] = {k: str(v) for k, v in headers.items()}
+    self.set_request("grpc", spec)
     return Response(self)
 
   def set_request(self, kind, spec):

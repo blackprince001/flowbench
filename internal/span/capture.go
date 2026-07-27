@@ -13,9 +13,13 @@ package span
 // the target answered, but a call that never got an answer has no status, and
 // only the recorded reason separates a timeout from a refused connection.
 type Payload struct {
-	Method     string `json:"method,omitempty"`
-	URL        string `json:"url,omitempty"`
-	Status     int    `json:"status,omitempty"`
+	Method string `json:"method,omitempty"`
+	URL    string `json:"url,omitempty"`
+	Status int    `json:"status,omitempty"`
+	// StatusText names the status in its own protocol's vocabulary, set when a
+	// bare number would be read as an HTTP one. A gRPC code 8 is
+	// RESOURCE_EXHAUSTED, and it is emphatically not HTTP 8.
+	StatusText string `json:"status_text,omitempty"`
 	RetryAfter string `json:"retry_after,omitempty"`
 	Failure    string `json:"failure,omitempty"`
 	ReqBytes   int    `json:"req_bytes,omitempty"`
@@ -38,6 +42,10 @@ func (s *Span) SetCall(method, url string, status int, retryAfter string) {
 	s.callMethod, s.callURL, s.callStatus, s.retryAfter = method, url, status, retryAfter
 }
 
+// SetStatusText names the status in the protocol's own words, for protocols
+// whose status codes are not HTTP's. Held by reference like the rest.
+func (s *Span) SetStatusText(text string) { s.statusText = text }
+
 // SetFailure records why this span failed. The reason is held by reference and
 // only materialized for kept traces, so it costs a failed span nothing to say
 // what went wrong. It is set on the span the failure is about — the assertion
@@ -53,10 +61,11 @@ func Finalize(root *Span, redact func([]byte) []byte, maxBytes int) {
 	if root == nil {
 		return
 	}
-	if root.callStatus != 0 || root.rawReq != nil || root.rawResp != nil || root.failure != "" {
+	if root.callStatus != 0 || root.statusText != "" || root.rawReq != nil || root.rawResp != nil || root.failure != "" {
 		p := &Payload{
 			Method:     root.callMethod,
 			Status:     root.callStatus,
+			StatusText: root.statusText,
 			RetryAfter: root.retryAfter,
 			ReqBytes:   len(root.rawReq),
 			RespBytes:  len(root.rawResp),
@@ -79,7 +88,7 @@ func Finalize(root *Span, redact func([]byte) []byte, maxBytes int) {
 			p.Truncated = t1 || t2
 		}
 		root.Payload = p
-		root.rawReq, root.rawResp, root.failure = nil, nil, ""
+		root.rawReq, root.rawResp, root.failure, root.statusText = nil, nil, "", ""
 	}
 	for _, c := range root.Children {
 		Finalize(c, redact, maxBytes)

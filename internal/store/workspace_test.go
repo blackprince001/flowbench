@@ -116,3 +116,95 @@ func TestGroupByScenario(t *testing.T) {
 		t.Errorf("no runs should make no groups, got %+v", got)
 	}
 }
+
+// makeStore creates a directory that is a run store — which is to say, one with
+// an index.json. A run's own directory never has one, which is what keeps the
+// discovery below from reporting individual runs as projects.
+func makeStore(t *testing.T, parent, name string) string {
+	t.Helper()
+	dir := filepath.Join(parent, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.json"), []byte("[]"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// Organizing runs into a directory per project is the obvious thing to do the
+// moment there is more than one thing under test, and pointing at the parent
+// should then show all of them rather than nothing.
+func TestWorkspaceDiscoversStoresInsideAParent(t *testing.T) {
+	root := t.TempDir()
+	makeStore(t, root, "ws-local")
+	makeStore(t, root, "grpc-local")
+	makeStore(t, root, "auth-local")
+	// A directory that is not a store is not a project.
+	if err := os.MkdirAll(filepath.Join(root, "scratch"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := store.NewWorkspace([]string{root})
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	ps := w.Projects()
+	if len(ps) != 3 {
+		t.Fatalf("want 3 discovered projects, got %d", len(ps))
+	}
+	// Sorted, because ReadDir order is not something to expose in a URL space.
+	want := []string{"auth-local", "grpc-local", "ws-local"}
+	for i, p := range ps {
+		if p.Name != want[i] {
+			t.Errorf("project %d = %q, want %q", i, p.Name, want[i])
+		}
+	}
+}
+
+// A directory that is a store in its own right is one project, even when it
+// happens to contain subdirectories — which every store does, since each run is
+// one.
+func TestWorkspacePrefersTheStoreItWasPointedAt(t *testing.T) {
+	root := t.TempDir()
+	dir := makeStore(t, root, "runs")
+	makeStore(t, dir, "20260101T000000.000000000Z") // a run that looks store-ish
+
+	w, err := store.NewWorkspace([]string{dir})
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	if ps := w.Projects(); len(ps) != 1 || ps[0].Name != "runs" {
+		t.Fatalf("want the store itself as one project, got %+v", ps)
+	}
+}
+
+// Naming a project is a statement that it is one project, so an explicit
+// `name=path` is taken literally and never expanded.
+func TestWorkspaceDoesNotExpandANamedSpec(t *testing.T) {
+	root := t.TempDir()
+	makeStore(t, root, "a")
+	makeStore(t, root, "b")
+
+	w, err := store.NewWorkspace([]string{"everything=" + root})
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	ps := w.Projects()
+	if len(ps) != 1 || ps[0].Name != "everything" {
+		t.Fatalf("a named spec should stay one project, got %+v", ps)
+	}
+}
+
+// A fresh store, before anything has been run into it, has no index.json and no
+// children — and must still open as itself rather than as nothing.
+func TestWorkspaceOpensAnEmptyStore(t *testing.T) {
+	dir := projectDir(t, "runs")
+	w, err := store.NewWorkspace([]string{dir})
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	if ps := w.Projects(); len(ps) != 1 || ps[0].Name != "runs" {
+		t.Fatalf("want one empty project, got %+v", ps)
+	}
+}

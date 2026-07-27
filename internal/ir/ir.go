@@ -5,6 +5,7 @@ package ir
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type StepType string
@@ -13,6 +14,7 @@ const (
 	StepCall    StepType = "call"
 	StepGraphQL StepType = "graphql"
 	StepWS      StepType = "ws"
+	StepGRPC    StepType = "grpc"
 	StepWait    StepType = "wait"
 	StepPoll    StepType = "poll"
 	StepVerify  StepType = "verify"
@@ -88,6 +90,7 @@ type Step struct {
 	Call    *CallSpec    `json:"call,omitempty"`
 	GraphQL *GraphQLSpec `json:"graphql,omitempty"`
 	WS      *WSSpec      `json:"ws,omitempty"`
+	GRPC    *GRPCSpec    `json:"grpc,omitempty"`
 	Wait    *WaitSpec    `json:"wait,omitempty"`
 	Poll    *PollSpec    `json:"poll,omitempty"`
 	Verify  *VerifySpec  `json:"verify,omitempty"`
@@ -199,6 +202,56 @@ func (w *WSSpec) describeSession() string {
 type WSReceive struct {
 	Match   []Assertion `json:"match,omitempty"`
 	Timeout Duration    `json:"timeout,omitempty"`
+}
+
+// GRPCSpec is one unary gRPC call.
+//
+// It is the first adapter that does not ride on the HTTP one. gRPC brings its
+// own HTTP/2 client, so the session, the cookie jar and the httptrace hooks do
+// not carry over. Everything above the wire does: templating, the host
+// allow-list, retry, throttle classification, extraction and assertions all
+// apply unchanged, because the response message is converted to JSON and the
+// status code is an ordinary status.
+//
+// Streaming is deliberately absent — the step and span model is call-shaped,
+// and whether streaming belongs in v1 at all is the question issue #29 asks.
+type GRPCSpec struct {
+	// Proto is the file describing the method, resolved relative to the flow
+	// file. It is compiled to descriptors once per run, not once per call.
+	Proto string `json:"proto"`
+
+	// ImportPaths are extra roots for the proto's own imports, resolved the
+	// same way. The proto's own directory is always searched.
+	ImportPaths []string `json:"import_paths,omitempty"`
+
+	// Method is the fully-qualified method — `package.Service/Method`. It is
+	// also, literally, the HTTP/2 `:path` gRPC puts on the wire.
+	Method string `json:"method"`
+
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// URL is the address as `grpc://host:port` (or `grpcs://` for TLS). A gRPC
+	// step has no path of its own — the method is the path — so the target's
+	// base URL is usually the whole address, and this stays empty.
+	URL string `json:"url,omitempty"`
+
+	// Message is the request, in the shape a call step's body takes. It is
+	// converted into the method's input type, so a field the schema does not
+	// declare is an error rather than something the server quietly ignores.
+	Message json.RawMessage `json:"message,omitempty"`
+
+	// Headers are gRPC metadata. They are named for what they are on the wire
+	// — HTTP/2 headers — so the step-level `headers:` block, and every auth
+	// scheme that writes one, reaches a gRPC call unchanged.
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+// GRPCPath renders the method as the leading-slash path form the wire uses.
+func (g *GRPCSpec) GRPCPath() string {
+	if strings.HasPrefix(g.Method, "/") {
+		return g.Method
+	}
+	return "/" + g.Method
 }
 
 type WaitSpec struct {

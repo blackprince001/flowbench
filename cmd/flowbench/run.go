@@ -101,25 +101,36 @@ func runScenario(stdout, stderr io.Writer, args []string) int {
 		return exitPreRun
 	}
 
+	// gRPC schemas are compiled here, next to the allow-list and the ceilings,
+	// because they belong to the same class of problem: a method that is not in
+	// the .proto is as knowable before the run as a host that is not allowed,
+	// and finding it out on the first iteration of a 10k-VU run is finding it
+	// out 10k times.
+	protos := adapters.NewProtoRegistry(filepath.Dir(scenarioPath))
+	if err := protos.Prepare(context.Background(), sc); err != nil {
+		fmt.Fprintf(stderr, "flowbench: %v\n", err)
+		return exitPreRun
+	}
+
 	watchAddr := ""
 	if *watch {
 		watchAddr = *addr
 	}
-	return execute(stdout, stderr, sc, tgt, pools, *storeDir, scenarioPath, watchAddr)
+	return execute(stdout, stderr, sc, tgt, pools, protos, *storeDir, scenarioPath, watchAddr)
 }
 
 // execute dispatches on the profile's mode: load/stress/soak run under the
 // goroutine-per-VU pool with threshold evaluation; integration/system run once
 // (or once per fixture row) with loud per-iteration failures.
-func execute(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool, storeRoot, scenarioPath, watchAddr string) int {
+func execute(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool, protos *adapters.ProtoRegistry, storeRoot, scenarioPath, watchAddr string) int {
 	switch sc.Profile.Mode {
 	case ir.ModeLoad, ir.ModeStress, ir.ModeSoak:
-		return executeLoad(stdout, stderr, sc, tgt, pools, storeRoot, scenarioPath, watchAddr)
+		return executeLoad(stdout, stderr, sc, tgt, pools, protos, storeRoot, scenarioPath, watchAddr)
 	default:
 		if watchAddr != "" {
 			fmt.Fprintln(stderr, "flowbench: --watch applies to load/stress/soak runs; ignoring")
 		}
-		return executeOnce(stdout, stderr, sc, tgt, pools, storeRoot, scenarioPath)
+		return executeOnce(stdout, stderr, sc, tgt, pools, protos, storeRoot, scenarioPath)
 	}
 }
 
@@ -127,7 +138,7 @@ func execute(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pool
 // prints an aggregate summary, and evaluates thresholds — point-in-time, plus
 // soak trend drift. The run exits nonzero only on a threshold breach or an
 // abort; individual failures are data in these modes, not test failures.
-func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool, storeRoot, scenarioPath, watchAddr string) int {
+func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool, protos *adapters.ProtoRegistry, storeRoot, scenarioPath, watchAddr string) int {
 	sched, err := planner.Plan(sc.Profile)
 	if err != nil {
 		fmt.Fprintf(stderr, "flowbench: %v\n", err)
@@ -146,7 +157,7 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 	// The live view runs the scenario and serves it from one process, with abort
 	// as its one write path (PRD 10.7).
 	if watchAddr != "" {
-		return runLive(stdout, stderr, sc, tgt, pools, storeRoot, scenarioPath, watchAddr, sched, thresholds)
+		return runLive(stdout, stderr, sc, tgt, pools, protos, storeRoot, scenarioPath, watchAddr, sched, thresholds)
 	}
 
 	fmt.Fprintf(stdout, "running %q against %s (%s) [%s, %d VUs]\n",
@@ -165,6 +176,7 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 		Pools:          pools,
 		BaseURL:        tgt.BaseURL(),
 		Allow:          tgt.Allows,
+		Protos:         protos,
 		RequestTimeout: tgt.RequestTimeout(),
 	})
 	agentSeries := stopAgent()
@@ -237,7 +249,7 @@ func printOutcomes(w io.Writer, outcomes []collector.Outcome) bool {
 // only lose signal) and saves it the same way, so an integration-mode run is
 // inspectable via `flowbench serve` too, and comparable against a
 // Python-driven run of the same flow (ADR 0012's two-producer model).
-func executeOnce(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool, storeRoot, scenarioPath string) int {
+func executeOnce(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool, protos *adapters.ProtoRegistry, storeRoot, scenarioPath string) int {
 	start := time.Now()
 	iterations, failed := 0, 0
 
@@ -258,14 +270,18 @@ func executeOnce(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 			iterations++
 			iterStart := time.Now()
 			scope := executor.NewScope(flow.Data, row)
+			channels := adapters.NewGRPCConns(tgt.RequestTimeout())
 			runner := &executor.Runner{
 				Session: adapters.NewSession(adapters.SessionOptions{Timeout: tgt.RequestTimeout()}),
+				GRPC:    channels,
+				Protos:  protos,
 				BaseURL: tgt.BaseURL(),
 				Mode:    sc.Profile.Mode,
 				Allow:   tgt.Allows,
 				Auth:    credentials,
 			}
 			it, err := runner.RunFlow(context.Background(), flow, scope)
+			channels.Close()
 			if err != nil {
 				fmt.Fprintf(stderr, "  %s [%d/%d]  error: %v\n", flow.Name, i+1, len(rows), err)
 				failed++

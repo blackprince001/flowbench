@@ -23,9 +23,26 @@ type Project struct {
 	Store *Store
 }
 
-// NewWorkspace opens each spec as a project. A spec is `name=path` or bare
-// `path`, in which case the directory's own base name is used — so
+// indexFile is what makes a directory a run store rather than a directory that
+// happens to contain some. Every store writes one; a run's own directory never
+// does.
+const indexFile = "index.json"
+
+// NewWorkspace opens each spec as one or more projects. A spec is `name=path`
+// or bare `path`, in which case the directory's own base name is used — so
 // `--store ./runs` reads as "runs" without ceremony.
+//
+// A bare path that is not itself a store but *contains* stores is expanded into
+// one project per store inside it. That is the difference between
+//
+//	flowbench serve --store runs
+//	flowbench serve --store load-local=runs/load-local --store ws-local=runs/ws-local ...
+//
+// and it exists because organizing runs into per-project directories is the
+// obvious thing to do the moment you have more than one thing under test —
+// at which point pointing at the parent should show you all of them, not
+// nothing. An explicitly named spec (`name=path`) is always taken literally:
+// naming a project is a statement that it is one project.
 func NewWorkspace(specs []string) (*Workspace, error) {
 	if len(specs) == 0 {
 		return nil, fmt.Errorf("no run store given")
@@ -33,16 +50,11 @@ func NewWorkspace(specs []string) (*Workspace, error) {
 
 	w := &Workspace{}
 	seen := map[string]bool{}
-	for _, spec := range specs {
-		name, path := splitSpec(spec)
-		if _, err := os.Stat(path); err != nil {
-			return nil, fmt.Errorf("run store %s: %w", path, err)
-		}
+	add := func(name, path string) error {
 		st, err := Open(path)
 		if err != nil {
-			return nil, err
+			return err
 		}
-
 		slug := slugify(name)
 		// Two projects resolving to the same slug would make one unreachable,
 		// so disambiguate rather than silently shadow.
@@ -51,10 +63,59 @@ func NewWorkspace(specs []string) (*Workspace, error) {
 			slug = fmt.Sprintf("%s-%d", base, i)
 		}
 		seen[slug] = true
-
 		w.projects = append(w.projects, Project{Name: name, Slug: slug, Store: st})
+		return nil
+	}
+
+	for _, spec := range specs {
+		name, path, named := splitSpec(spec)
+		if _, err := os.Stat(path); err != nil {
+			return nil, fmt.Errorf("run store %s: %w", path, err)
+		}
+		if !named && !isStore(path) {
+			if nested, err := storesIn(path); err != nil {
+				return nil, err
+			} else if len(nested) > 0 {
+				for _, dir := range nested {
+					if err := add(filepath.Base(dir), dir); err != nil {
+						return nil, err
+					}
+				}
+				continue
+			}
+		}
+		if err := add(name, path); err != nil {
+			return nil, err
+		}
 	}
 	return w, nil
+}
+
+// isStore reports whether a directory is a run store in its own right.
+func isStore(path string) bool {
+	_, err := os.Stat(filepath.Join(path, indexFile))
+	return err == nil
+}
+
+// storesIn lists the run stores directly inside path, sorted by name. It looks
+// one level down and no further: a store's own children are its runs, and
+// recursing would start reporting those as projects.
+func storesIn(path string) ([]string, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, fmt.Errorf("run store %s: %w", path, err)
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if dir := filepath.Join(path, e.Name()); isStore(dir) {
+			out = append(out, dir)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // WorkspaceOf wraps one already-open store, for callers that never asked for
@@ -120,12 +181,14 @@ func GroupByScenario(index []Meta) []Group {
 	return out
 }
 
-func splitSpec(spec string) (name, path string) {
+// splitSpec parses `name=path` or a bare `path`. named reports which it was,
+// because an explicitly named spec is never expanded into several projects.
+func splitSpec(spec string) (name, path string, named bool) {
 	// A Windows drive letter or an `=` inside a path would both confuse a naive
 	// split, so only treat the first `=` as a separator when what precedes it
 	// looks like a label rather than a path.
 	if i := strings.Index(spec, "="); i > 0 && !strings.ContainsAny(spec[:i], `/\.`) {
-		return spec[:i], spec[i+1:]
+		return spec[:i], spec[i+1:], true
 	}
 	clean := filepath.Clean(spec)
 	base := filepath.Base(clean)
@@ -134,7 +197,7 @@ func splitSpec(spec string) (name, path string) {
 			base = filepath.Base(abs)
 		}
 	}
-	return base, spec
+	return base, spec, false
 }
 
 // slugify makes a URL-safe segment, keeping it recognizable as the name.

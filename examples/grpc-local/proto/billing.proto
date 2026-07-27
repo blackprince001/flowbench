@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package billing.v1;
+
+// The service the example flows call. Nothing is generated from this file:
+// the engine compiles it at run time to make the calls, and the stub compiles
+// the same file to serve them.
+service Billing {
+  rpc Charge(ChargeRequest) returns (ChargeReply);
+  rpc Refund(RefundRequest) returns (RefundReply);
+  rpc GetCharge(GetChargeRequest) returns (ChargeReply);
+}
+
+message ChargeRequest {
+  string account = 1;
+  int64 amount_cents = 2;
+  string currency = 3;
+}
+
+message ChargeReply {
+  string charge_id = 1;
+  string status = 2;
+  int64 amount_cents = 3;
+  string currency = 4;
+}
+
+message RefundRequest {
+  string charge_id = 1;
+}
+
+message RefundReply {
+  string charge_id = 1;
+  string status = 2;
+}
+
+message GetChargeRequest {
+  string charge_id = 1;
+}
