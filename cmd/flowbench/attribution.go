@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blackprince001/flowbench/internal/agent"
 	"github.com/blackprince001/flowbench/internal/collector"
 	"github.com/blackprince001/flowbench/internal/executor"
 	"github.com/blackprince001/flowbench/internal/ir"
@@ -15,9 +16,12 @@ import (
 	"github.com/blackprince001/flowbench/internal/target"
 )
 
-// saveRun writes a completed load/stress/soak run to the store with attribution
-// so a run answers who ran what, against which target, at which revision.
-func saveRun(storeRoot, scenarioPath string, sc *ir.Scenario, tgt *target.Target, startedAt time.Time, res *executor.Result, outcomes []collector.Outcome) (string, error) {
+// saveRun writes a completed run to the store with attribution so a run
+// answers who ran what, against which target, at which revision.
+// agentSeries is nil for entry points that don't poll a target-metrics
+// agent (issue #32) — integration/system mode, and any run without one
+// attached.
+func saveRun(storeRoot, scenarioPath string, sc *ir.Scenario, tgt *target.Target, startedAt time.Time, res *executor.Result, outcomes []collector.Outcome, agentSeries []agent.PolledSample) (string, error) {
 	st, err := store.Open(storeRoot)
 	if err != nil {
 		return "", err
@@ -31,7 +35,7 @@ func saveRun(storeRoot, scenarioPath string, sc *ir.Scenario, tgt *target.Target
 		Commit:    commit,
 		Dirty:     dirty,
 		StartedAt: startedAt,
-	}, res, outcomes)
+	}, res, outcomes, agentSeries)
 }
 
 // initiator is the OS user who launched the run.

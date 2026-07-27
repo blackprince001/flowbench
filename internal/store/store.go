@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/blackprince001/flowbench/internal/agent"
 	"github.com/blackprince001/flowbench/internal/collector"
 	"github.com/blackprince001/flowbench/internal/executor"
 	"github.com/blackprince001/flowbench/internal/span"
@@ -67,19 +68,27 @@ type Meta struct {
 	// not a failure.
 	Thresholds []collector.Outcome `json:"thresholds,omitempty"`
 	Breached   bool                `json:"breached,omitempty"`
+
+	// AgentAttached reports whether a target-metrics agent (issue #32)
+	// contributed at least one sample to this run — derived from the saved
+	// agent series itself, never a caller-supplied flag, so the two can
+	// never disagree.
+	AgentAttached bool `json:"agent_attached,omitempty"`
 }
 
-// Save writes a run's span tiers, self-metrics, evaluated thresholds, and
-// attribution to a fresh directory and appends it to the index. It returns the
-// run directory.
-func (s *Store) Save(info RunInfo, res *executor.Result, outcomes []collector.Outcome) (string, error) {
+// Save writes a run's span tiers, self-metrics, an optional target-metrics
+// agent series, evaluated thresholds, and attribution to a fresh directory
+// and appends it to the index. It returns the run directory. agentSeries may
+// be nil or empty — no agent was attached, or every poll against one failed
+// (fail-open, issue #32).
+func (s *Store) Save(info RunInfo, res *executor.Result, outcomes []collector.Outcome, agentSeries []agent.PolledSample) (string, error) {
 	id := runID(info.StartedAt)
 	dir := filepath.Join(s.root, id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create run dir: %w", err)
 	}
 
-	meta := metaFrom(id, info, res, outcomes)
+	meta := metaFrom(id, info, res, outcomes, agentSeries)
 	writes := []struct {
 		name string
 		v    any
@@ -89,7 +98,8 @@ func (s *Store) Save(info RunInfo, res *executor.Result, outcomes []collector.Ou
 		{"traces.json", res.Traces},                   // tier 2: sampled raw trees
 		{"series.json", collector.BuildSeries(res)},   // tier 3: bucketed over time
 		{"samples.json", collector.BuildSamples(res)}, // tier 4: per flow-run, thinned
-		{"metrics.json", res.Metrics},
+		{"metrics.json", res.Metrics},                 // the generator's own resource use
+		{"agent.json", agentSeries},                   // the target's resource use, if an agent was attached
 	}
 	for _, w := range writes {
 		if err := writeJSON(filepath.Join(dir, w.name), w.v); err != nil {
@@ -147,11 +157,18 @@ func (s *Store) LoadMetrics(id string) ([]executor.MetricSample, error) {
 	return readJSON[[]executor.MetricSample](s.artifact(id, "metrics.json"))
 }
 
+// LoadAgentSeries reads the target's own resource series, if an agent was
+// attached to the run (issue #32) — nil, no error, when the file holds an
+// empty or null array.
+func (s *Store) LoadAgentSeries(id string) ([]agent.PolledSample, error) {
+	return readJSON[[]agent.PolledSample](s.artifact(id, "agent.json"))
+}
+
 func (s *Store) artifact(id, name string) string {
 	return filepath.Join(s.root, id, name)
 }
 
-func metaFrom(id string, info RunInfo, res *executor.Result, outcomes []collector.Outcome) Meta {
+func metaFrom(id string, info RunInfo, res *executor.Result, outcomes []collector.Outcome, agentSeries []agent.PolledSample) Meta {
 	breached := false
 	for _, o := range outcomes {
 		if !o.Pass {
@@ -160,25 +177,26 @@ func metaFrom(id string, info RunInfo, res *executor.Result, outcomes []collecto
 		}
 	}
 	return Meta{
-		ID:           id,
-		Scenario:     info.Scenario,
-		Mode:         info.Mode,
-		Initiator:    info.Initiator,
-		Target:       info.Target,
-		Commit:       info.Commit,
-		Dirty:        info.Dirty,
-		StartedAt:    info.StartedAt,
-		Duration:     res.Duration,
-		Iterations:   res.Iterations,
-		FlowRuns:     len(res.Samples),
-		ErrorRate:    res.ErrorRate(),
-		ThrottleRate: res.ThrottleRate(),
-		P50:          executor.Percentile(res.Samples, 0.50),
-		P95:          executor.Percentile(res.Samples, 0.95),
-		P99:          executor.Percentile(res.Samples, 0.99),
-		Aborted:      res.Aborted,
-		Thresholds:   outcomes,
-		Breached:     breached,
+		ID:            id,
+		Scenario:      info.Scenario,
+		Mode:          info.Mode,
+		Initiator:     info.Initiator,
+		Target:        info.Target,
+		Commit:        info.Commit,
+		Dirty:         info.Dirty,
+		StartedAt:     info.StartedAt,
+		Duration:      res.Duration,
+		Iterations:    res.Iterations,
+		FlowRuns:      len(res.Samples),
+		ErrorRate:     res.ErrorRate(),
+		ThrottleRate:  res.ThrottleRate(),
+		P50:           executor.Percentile(res.Samples, 0.50),
+		P95:           executor.Percentile(res.Samples, 0.95),
+		P99:           executor.Percentile(res.Samples, 0.99),
+		Aborted:       res.Aborted,
+		Thresholds:    outcomes,
+		Breached:      breached,
+		AgentAttached: len(agentSeries) > 0,
 	}
 }
 
