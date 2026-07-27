@@ -80,7 +80,7 @@ func saveRun(t *testing.T, dir string, gates []collector.Outcome) string {
 		Target:    "local-stub",
 		Initiator: "ada",
 		StartedAt: time.Date(2026, 7, 24, 13, 0, 0, 0, time.UTC),
-	}, throttledRun(), gates)
+	}, throttledRun(), gates, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestLatestRunIsTagged(t *testing.T) {
 			Scenario:  "checkout.flow.yaml",
 			Mode:      "stress",
 			StartedAt: time.Date(2026, 7, 24, 13, min, 0, 0, time.UTC),
-		}, throttledRun(), nil); err != nil {
+		}, throttledRun(), nil, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -405,6 +405,7 @@ func TestVerdictReportsABreach(t *testing.T) {
 		store.RunInfo{Scenario: "breach.flow.yaml", Mode: "load", StartedAt: time.Now()},
 		throttledRun(),
 		[]collector.Outcome{{Expr: "p95(latency) < 5ms", Pass: false, Detail: "p95(latency) = 16ms, want < 5ms"}},
+		nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -440,7 +441,7 @@ func TestVerdictSeparatesThrottledFromFailed(t *testing.T) {
 			res.Samples[i].Outcome = span.OutcomeOK
 		}
 	}
-	rd, err := st.Save(store.RunInfo{Scenario: "s.yaml", Mode: "stress", StartedAt: time.Now()}, res, nil)
+	rd, err := st.Save(store.RunInfo{Scenario: "s.yaml", Mode: "stress", StartedAt: time.Now()}, res, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -583,6 +584,7 @@ func TestDashboardShowsSoakTrend(t *testing.T) {
 		store.RunInfo{Scenario: "soak.flow.yaml", Mode: "soak", StartedAt: time.Now()},
 		throttledRun(),
 		[]collector.Outcome{{Expr: "p95(latency) trend", Detail: "p95 latency crept 10ms → 30ms over the run"}},
+		nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -618,6 +620,7 @@ func TestComparePageHighlightsTheRegressedStep(t *testing.T) {
 		store.RunInfo{Scenario: "checkout.flow.yaml", Mode: "load", StartedAt: time.Date(2026, 7, 24, 13, 0, 0, 0, time.UTC)},
 		runWithStep(10*time.Millisecond),
 		[]collector.Outcome{{Expr: "p95(latency) < 30ms", Pass: true, Detail: "p95 = 12ms, want < 30ms"}},
+		nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -626,6 +629,7 @@ func TestComparePageHighlightsTheRegressedStep(t *testing.T) {
 		store.RunInfo{Scenario: "checkout.flow.yaml", Mode: "load", StartedAt: time.Date(2026, 7, 24, 13, 30, 0, 0, time.UTC)},
 		runWithStep(40*time.Millisecond),
 		[]collector.Outcome{{Expr: "p95(latency) < 30ms", Pass: false, Detail: "p95 = 41ms, want < 30ms"}},
+		nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -745,7 +749,7 @@ func serveFailures(t *testing.T) (*server.Server, string) {
 		Mode:      "integration",
 		Target:    "local-stub",
 		StartedAt: time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC),
-	}, mixedFailureRun(), nil)
+	}, mixedFailureRun(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -875,7 +879,7 @@ func TestFailuresPageOnACleanRun(t *testing.T) {
 	}
 	res := mixedFailureRun()
 	res.Traces = nil
-	rd, err := st.Save(store.RunInfo{Scenario: "clean.flow.yaml", Mode: "load", StartedAt: time.Now()}, res, nil)
+	rd, err := st.Save(store.RunInfo{Scenario: "clean.flow.yaml", Mode: "load", StartedAt: time.Now()}, res, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -158,6 +158,7 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 	defer stop()
 
 	startedAt := time.Now()
+	stopAgent := startAgentPoll(tgt.AgentAddr())
 	res, err := executor.Run(ctx, executor.Options{
 		Schedule:       sched,
 		Flows:          sc.Flows,
@@ -166,6 +167,7 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 		Allow:          tgt.Allows,
 		RequestTimeout: tgt.RequestTimeout(),
 	})
+	agentSeries := stopAgent()
 	if err != nil {
 		fmt.Fprintf(stderr, "flowbench: %v\n", err)
 		return exitFail
@@ -182,7 +184,7 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 
 	// Persist the run artifact regardless of pass/fail — a breaching run is
 	// exactly the one worth keeping. A store failure is a warning, not an exit.
-	if dir, err := saveRun(storeRoot, scenarioPath, sc, tgt, startedAt, res, outcomes); err != nil {
+	if dir, err := saveRun(storeRoot, scenarioPath, sc, tgt, startedAt, res, outcomes, agentSeries); err != nil {
 		fmt.Fprintf(stderr, "flowbench: could not save run: %v\n", err)
 	} else {
 		fmt.Fprintf(stdout, "run saved to %s\n", dir)
@@ -314,7 +316,7 @@ func executeOnce(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 		Metrics:    []executor.MetricSample{},
 		Aborted:    aborted,
 	}
-	if dir, err := saveRun(storeRoot, scenarioPath, sc, tgt, start, res, nil); err != nil {
+	if dir, err := saveRun(storeRoot, scenarioPath, sc, tgt, start, res, nil, nil); err != nil {
 		fmt.Fprintf(stderr, "flowbench: could not save run: %v\n", err)
 	} else {
 		fmt.Fprintf(stdout, "run saved to %s\n", dir)

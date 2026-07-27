@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 
+	"github.com/blackprince001/flowbench/internal/agent"
 	"github.com/blackprince001/flowbench/internal/executor"
 	"github.com/blackprince001/flowbench/internal/ir"
 	"github.com/blackprince001/flowbench/internal/planner"
@@ -52,7 +53,7 @@ func TestSaveCarriesAttributionAndTiers(t *testing.T) {
 		Dirty:     true,
 		StartedAt: time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC),
 	}
-	dir, err := st.Save(info, syntheticResult(), nil)
+	dir, err := st.Save(info, syntheticResult(), nil, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -86,6 +87,56 @@ func TestSaveCarriesAttributionAndTiers(t *testing.T) {
 	}
 }
 
+// AgentAttached must be derived from the saved series itself (issue #32),
+// never a caller-supplied flag, so the two can never disagree — and a run
+// with no agent must round-trip to an unattached, empty series rather than
+// an error.
+func TestAgentSeriesRoundTripsAndDrivesAgentAttached(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	series := []agent.PolledSample{
+		{At: 0, Sample: agent.Sample{CPUSeconds: 1.5, MemUsedBytes: 100}},
+		{At: time.Second, Sample: agent.Sample{CPUSeconds: 1.8, MemUsedBytes: 120}},
+	}
+	dir, err := st.Save(store.RunInfo{Scenario: "s.yaml", Mode: "stress", StartedAt: time.Now()}, syntheticResult(), nil, series)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	id := filepath.Base(dir)
+
+	m, err := st.Load(id)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !m.AgentAttached {
+		t.Error("a run saved with a non-empty agent series should report AgentAttached")
+	}
+
+	got, err := st.LoadAgentSeries(id)
+	if err != nil {
+		t.Fatalf("LoadAgentSeries: %v", err)
+	}
+	if len(got) != 2 || got[1].CPUSeconds != 1.8 {
+		t.Errorf("agent series did not round-trip: %+v", got)
+	}
+
+	// No agent attached: still saves and loads cleanly, just unattached.
+	dir2, err := st.Save(store.RunInfo{Scenario: "s.yaml", Mode: "stress", StartedAt: time.Now()}, syntheticResult(), nil, nil)
+	if err != nil {
+		t.Fatalf("Save without an agent: %v", err)
+	}
+	m2, err := st.Load(filepath.Base(dir2))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if m2.AgentAttached {
+		t.Error("a run saved without an agent series should not report AgentAttached")
+	}
+}
+
 // The results server reads each tier back on its own, so every artifact Save
 // writes must round-trip without the others.
 func TestTiersRoundTripIndependently(t *testing.T) {
@@ -93,7 +144,7 @@ func TestTiersRoundTripIndependently(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	dir, err := st.Save(store.RunInfo{Scenario: "s.yaml", Mode: "load", StartedAt: time.Now()}, syntheticResult(), nil)
+	dir, err := st.Save(store.RunInfo{Scenario: "s.yaml", Mode: "load", StartedAt: time.Now()}, syntheticResult(), nil, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -174,7 +225,7 @@ func TestSavePartialRunAfterCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir, err := st.Save(store.RunInfo{Scenario: "s.yaml", Mode: "load", StartedAt: time.Date(2026, 7, 21, 13, 0, 0, 0, time.UTC)}, res, nil)
+	dir, err := st.Save(store.RunInfo{Scenario: "s.yaml", Mode: "load", StartedAt: time.Date(2026, 7, 21, 13, 0, 0, 0, time.UTC)}, res, nil, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}

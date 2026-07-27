@@ -2,6 +2,7 @@
 /bin/
 /dist/
 /flowbench
+/flowbench-agent
 *.exe
 *.test
 *.out

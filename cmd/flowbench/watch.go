@@ -237,6 +237,7 @@ func runLive(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pool
 	fmt.Fprintf(stdout, "watching %q live at http://%s  (Ctrl-C to abort)\n", sc.Name, ln.Addr())
 
 	startedAt := time.Now()
+	stopAgent := startAgentPoll(tgt.AgentAddr())
 	resc := make(chan *executor.Result, 1)
 	go func() {
 		res, _ := executor.Run(ctx, executor.Options{
@@ -260,6 +261,7 @@ func runLive(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pool
 		res = <-resc
 	}
 	ended := ctx.Err() != nil // cut short rather than run to its scheduled end
+	agentSeries := stopAgent()
 
 	printRunSummary(stdout, res)
 	outcomes := collector.Evaluate(thresholds, res)
@@ -268,7 +270,7 @@ func runLive(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pool
 	}
 	breached := printOutcomes(stdout, outcomes)
 
-	if dir, err := saveRun(storeRoot, scenarioPath, sc, tgt, startedAt, res, outcomes); err != nil {
+	if dir, err := saveRun(storeRoot, scenarioPath, sc, tgt, startedAt, res, outcomes, agentSeries); err != nil {
 		fmt.Fprintf(stderr, "flowbench: could not save run: %v\n", err)
 		ls.done.Store(true) // let the live page settle even with nothing stored to open
 	} else {
