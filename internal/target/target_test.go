@@ -167,3 +167,25 @@ func TestRequestTimeoutIsCarried(t *testing.T) {
 		t.Errorf("an undeclared timeout should stay zero, got %s", got)
 	}
 }
+
+func TestAgentAddrIsCarried(t *testing.T) {
+	tg, err := target.New(&ir.TargetConfig{
+		Name:      "svc",
+		BaseURLs:  []string{"http://localhost:8080"},
+		AgentAddr: "10.0.0.5:9090",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tg.AgentAddr(); got != "10.0.0.5:9090" {
+		t.Errorf("agent addr = %q, want %q", got, "10.0.0.5:9090")
+	}
+
+	plain, err := target.New(&ir.TargetConfig{Name: "svc", BaseURLs: []string{"http://localhost:8080"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plain.AgentAddr(); got != "" {
+		t.Errorf("no agent configured should give an empty address, got %q", got)
+	}
+}

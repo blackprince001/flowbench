@@ -48,6 +48,10 @@ func (t *Target) BaseURL() string { return t.base }
 // default in place.
 func (t *Target) RequestTimeout() time.Duration { return time.Duration(t.cfg.RequestTimeout) }
 
+// AgentAddr is the target-metrics agent's address, if one is attached to
+// this target — empty means no agent (issue #32).
+func (t *Target) AgentAddr() string { return t.cfg.AgentAddr }
+
 // Allows reports whether a fully resolved call URL targets an allowed host.
 // Relative URLs are allowed because they resolve against the base URL. This is
 // the request-time check for URLs whose host is only known after templating.
