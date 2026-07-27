@@ -1,0 +1,37 @@
+# Two unary calls, the second using a value the first returned. Written twice —
+# here and in grpc_unary.py — and held to byte-identical IR by the conformance
+# suite, because one flow definition is the whole premise (ADR 0002).
+flow: billing
+steps:
+  # No `url`: a gRPC step has no path of its own — the method is the path — so
+  # a call against the target itself names no address at all.
+  - id: charge
+    grpc:
+      proto: grpc/billing.proto
+      method: billing.v1.Billing/Charge
+      message:
+        account: acct_1
+        amountCents: "1200"
+        currency: GHS
+    headers:
+      x-request-id: req-1
+    extract:
+      charge_id: $.chargeId
+    assert:
+      # 0 is OK. A gRPC status is a small integer in its own numbering, and
+      # nothing in it is 200.
+      - status == 0
+      - $.status == "captured"
+
+  - id: refund
+    grpc:
+      proto: grpc/billing.proto
+      method: billing.v1.Billing/Refund
+      message:
+        chargeId: "{{ charge_id }}"
+    assert:
+      - status == 0
+      - $.status == "refunded"
+
+profile:
+  mode: integration

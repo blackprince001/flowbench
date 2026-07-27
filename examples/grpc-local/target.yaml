@@ -1,0 +1,12 @@
+# --target for the grpc-local example. The allow-list is one host, written as
+# http:// even though the flows speak gRPC — a gRPC call is HTTP/2 to the same
+# origin, so `grpc://host` and `http://host` are one host here, exactly as
+# `ws://host` is.
+#
+# It is also the address the flows use: a gRPC step has no path of its own, so
+# a step that names no url is calling this.
+name: billing-stub
+base_urls:
+  - http://127.0.0.1:50051
+max_vus: 300
+max_rps: 5000

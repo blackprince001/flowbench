@@ -145,7 +145,7 @@ steps:
       url: /graphql
       query: "{ a }"
 `,
-			want: "sets more than one of call, graphql, ws, wait, poll",
+			want: "sets more than one of call, graphql, ws, grpc, wait, poll",
 		},
 		{
 			name: "variable with no upstream source",

@@ -95,7 +95,7 @@ func TestValidateRejects(t *testing.T) {
 					Retry: &ir.RetryPolicy{OnStatus: []int{503}, Backoff: ir.BackoffFixed, MaxAttempts: 2},
 				})
 			},
-			"call and graphql steps only",
+			"call, graphql, and grpc steps only",
 		},
 		"wait without a positive duration": {
 			func(s *ir.Scenario) {

@@ -125,6 +125,8 @@ func stepURLs(st *ir.Step) []string {
 		urls = append(urls, st.GraphQL.URL)
 	case st.WS != nil:
 		urls = append(urls, st.WS.URL)
+	case st.GRPC != nil:
+		urls = append(urls, st.GRPC.URL)
 	case st.Poll != nil:
 		urls = append(urls, st.Poll.Call.URL)
 	}
@@ -147,17 +149,18 @@ func originOf(raw string) (string, error) {
 
 // origin is the allow-list key for a scheme and host.
 //
-// ws and wss fold into http and https: a WebSocket connection opens with an
-// HTTP request to the same host, so `ws://api.example.com` and
-// `http://api.example.com` are one origin — and a target that already lists
-// the host it calls should not have to list it a second time to open a socket
-// on it.
+// ws, wss, grpc and grpcs fold into http and https. A WebSocket connection
+// opens with an HTTP request to the same host and a gRPC call is HTTP/2 to it,
+// so `ws://api.example.com`, `grpc://api.example.com` and
+// `http://api.example.com` are one origin — and a target that already lists the
+// host it calls should not have to list it again to open a socket or an RPC
+// channel on it.
 func origin(scheme, host string) string {
 	scheme = strings.ToLower(scheme)
 	switch scheme {
-	case "ws":
+	case "ws", "grpc":
 		scheme = "http"
-	case "wss":
+	case "wss", "grpcs":
 		scheme = "https"
 	}
 	return scheme + "://" + strings.ToLower(host)

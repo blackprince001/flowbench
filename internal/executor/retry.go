@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/blackprince001/flowbench/internal/adapters"
@@ -22,45 +23,54 @@ const defaultBackoff = 100 * time.Millisecond
 // large attempt count cannot wait absurdly long (or overflow).
 const maxBackoff = 2 * time.Minute
 
-// executeCall runs a call step, applying its retry policy when set. Without a
-// policy it is a single request whose span is the step itself; with one it
-// wraps each attempt and each backoff wait in a child span under the step, and
-// the step's duration is the time-to-success including backoff — so retries add
-// to measured latency rather than hiding it.
+// attempt is one try of a step: it attaches credentials and performs the call,
+// returning the span it produced plus the two things the retry policy reads —
+// the status and, for honor_retry_after, what the target asked for.
 //
-// Credentials are attached per attempt rather than once for the step, so a
-// retried request carries a fresh HMAC signature and timestamp — and a token
-// that refreshed mid-backoff — instead of replaying the first attempt's.
-func (r *Runner) executeCall(ctx context.Context, st *ir.Step, req *adapters.Request, scope *Scope, anchor time.Time) (*adapters.Response, *span.Span, error) {
+// It is a function rather than a method so the loop below is shared by every
+// protocol that is call-shaped. An HTTP status and a gRPC status code are
+// different vocabularies but the same decision: try again, or stop.
+type attempt func(ctx context.Context, name string) (sp *span.Span, status int, retryAfter string, err error)
+
+// withRetry runs a step, applying its retry policy when set. Without a policy
+// it is a single try whose span is the step itself; with one it wraps each try
+// and each backoff wait in a child span under the step, and the step's duration
+// is the time-to-success including backoff — so retries add to measured latency
+// rather than hiding it.
+//
+// Credentials are attached per try rather than once for the step (it is inside
+// try that applyAuth is called), so a retried request carries a fresh HMAC
+// signature and timestamp — and a token that refreshed mid-backoff — instead of
+// replaying the first try's.
+func (r *Runner) withRetry(ctx context.Context, st *ir.Step, anchor time.Time, try attempt) (*span.Span, error) {
 	if st.Retry == nil {
-		if err := r.applyAuth(ctx, st, req, scope); err != nil {
-			return nil, failedSpan(st.ID, anchor), err
-		}
-		return r.Session.Do(ctx, st.ID, req, anchor)
+		sp, _, _, err := try(ctx, st.ID)
+		return sp, err
 	}
 
 	p := st.Retry
 	attempts := max(p.MaxAttempts, 1)
 
 	step := span.New(st.ID, time.Since(anchor))
-	var resp *adapters.Response
 	var err error
-	for attempt := 1; ; attempt++ {
-		name := fmt.Sprintf("attempt %d", attempt)
-		if err = r.applyAuth(ctx, st, req, scope); err != nil {
-			resp = nil
-			step.Children = append(step.Children, failedSpan(name, anchor))
+	for n := 1; ; n++ {
+		name := fmt.Sprintf("attempt %d", n)
+		var sp *span.Span
+		var status int
+		var retryAfter string
+		sp, status, retryAfter, err = try(ctx, name)
+		step.Children = append(step.Children, sp)
+
+		// A failed try can still be retryable, and gRPC is why: it reports
+		// "nothing was listening" as UNAVAILABLE, which is both an error and
+		// the code a retry policy most wants to name. What is never retryable
+		// is a try that produced no status at all — a refused connection, a
+		// credential that would not resolve — because a policy lists statuses
+		// and there is none to match.
+		if n >= attempts || !retryable(p, status) {
 			break
 		}
-
-		var aSp *span.Span
-		resp, aSp, err = r.Session.Do(ctx, name, req, anchor)
-		step.Children = append(step.Children, aSp)
-
-		if err != nil || attempt >= attempts || !retryable(p, resp.Status) {
-			break
-		}
-		if !r.backoff(ctx, step, backoffDelay(p, attempt, resp), anchor) {
+		if !r.backoff(ctx, step, backoffDelay(p, n, retryAfter), anchor) {
 			break // context cancelled mid-wait
 		}
 	}
@@ -69,7 +79,27 @@ func (r *Runner) executeCall(ctx context.Context, st *ir.Step, req *adapters.Req
 	if err != nil {
 		step.Outcome = span.OutcomeFailed
 	}
-	return resp, step, err
+	return step, err
+}
+
+// executeCall runs an HTTP-shaped step through the retry loop.
+func (r *Runner) executeCall(ctx context.Context, st *ir.Step, req *adapters.Request, scope *Scope, anchor time.Time) (*adapters.Response, *span.Span, error) {
+	var resp *adapters.Response
+	try := func(ctx context.Context, name string) (*span.Span, int, string, error) {
+		if err := r.applyAuth(ctx, st, req, scope); err != nil {
+			resp = nil
+			return failedSpan(name, anchor), 0, "", err
+		}
+		var sp *span.Span
+		var err error
+		resp, sp, err = r.Session.Do(ctx, name, req, anchor)
+		if resp == nil {
+			return sp, 0, "", err
+		}
+		return sp, resp.Status, resp.Headers.Get("Retry-After"), err
+	}
+	sp, err := r.withRetry(ctx, st, anchor, try)
+	return resp, sp, err
 }
 
 // backoff sleeps for d, recorded as a child span, and reports whether the wait
@@ -90,10 +120,10 @@ func retryable(p *ir.RetryPolicy, status int) bool {
 }
 
 // backoffDelay computes the wait before the next attempt.
-func backoffDelay(p *ir.RetryPolicy, attempt int, resp *adapters.Response) time.Duration {
+func backoffDelay(p *ir.RetryPolicy, attempt int, retryAfter string) time.Duration {
 	switch p.Backoff {
 	case ir.BackoffHonorRetryAfter:
-		if d, ok := retryAfter(resp); ok {
+		if d, ok := retryAfterDelay(retryAfter); ok {
 			return clampBackoff(d)
 		}
 		return baseDelay(p)
@@ -119,14 +149,16 @@ func clampBackoff(d time.Duration) time.Duration {
 	return d
 }
 
-// retryAfter reads a Retry-After header as delta-seconds or an HTTP date.
-func retryAfter(resp *adapters.Response) (time.Duration, bool) {
-	if resp == nil {
-		return 0, false
-	}
-	v := resp.Headers.Get("Retry-After")
+// retryAfterDelay reads a Retry-After value as delta-seconds, an HTTP date, or
+// the millisecond form gRPC's pushback header uses.
+func retryAfterDelay(v string) (time.Duration, bool) {
 	if v == "" {
 		return 0, false
+	}
+	if ms, ok := strings.CutSuffix(v, "ms"); ok {
+		if n, err := strconv.Atoi(ms); err == nil {
+			return time.Duration(max(n, 0)) * time.Millisecond, true
+		}
 	}
 	if secs, err := strconv.Atoi(v); err == nil {
 		if secs < 0 {

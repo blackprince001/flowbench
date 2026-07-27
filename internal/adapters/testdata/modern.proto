@@ -1,0 +1,18 @@
+// Protobuf Editions, the syntax that replaces proto2/proto3. The bundled
+// compiler supports edition 2023 and nothing later, so this file is what
+// proves the claim rather than the ADR asserting it.
+edition = "2023";
+
+package modern.v1;
+
+service Echo {
+  rpc Ping(PingRequest) returns (PingReply);
+}
+
+message PingRequest {
+  string text = 1;
+}
+
+message PingReply {
+  string text = 1;
+}

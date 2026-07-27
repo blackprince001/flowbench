@@ -36,6 +36,11 @@ type Options struct {
 	// run, so an OAuth2 token endpoint sees one fetch rather than one per VU.
 	Auth *auth.Provider
 
+	// Protos is the run's compiled gRPC schemas, shared by every VU. A run with
+	// no grpc steps never touches it, and nil is only a wiring error for a run
+	// that has some.
+	Protos *adapters.ProtoRegistry
+
 	// Metrics is the self-metric sample interval; 0 uses a default, negative
 	// disables sampling.
 	Metrics time.Duration
@@ -324,19 +329,40 @@ func (p *pool) runClosed(ctx context.Context) {
 // iteration (integration/system).
 func (p *pool) vu(ctx context.Context, wg *sync.WaitGroup, deadline time.Time, once bool) {
 	defer wg.Done()
-	sess := adapters.NewSession(adapters.SessionOptions{Timeout: p.opts.RequestTimeout})
+	clients := p.newClients()
+	defer clients.close()
 	local := newAcc()
 	for ctx.Err() == nil {
 		if !once && !time.Now().Before(deadline) {
 			break
 		}
-		p.iterate(ctx, sess, local, 0, false)
+		p.iterate(ctx, clients, local, 0, false)
 		if once {
 			break
 		}
 	}
 	p.merge(local)
 }
+
+// vuClients are one VU's protocol clients, held for its whole life rather than
+// per iteration: an HTTP session with its own transport and cookie jar, and
+// gRPC channels opened on first use. Connection reuse across iterations is the
+// point — a VU that re-dialled every pass would measure handshakes.
+type vuClients struct {
+	http *adapters.Session
+	grpc *adapters.GRPCConns
+}
+
+func (p *pool) newClients() *vuClients {
+	return &vuClients{
+		http: adapters.NewSession(adapters.SessionOptions{Timeout: p.opts.RequestTimeout}),
+		grpc: adapters.NewGRPCConns(p.opts.RequestTimeout),
+	}
+}
+
+// close releases what the VU held. The HTTP session's transport is reclaimed
+// with it; a gRPC channel is not, so it is closed explicitly.
+func (c *vuClients) close() { c.grpc.Close() }
 
 // runOpen enforces a profile's arrival cap as a hard ceiling (ADR 0013): a
 // generator issues iterations on a fixed 1/N wall-clock schedule and a bounded
@@ -391,26 +417,35 @@ func (p *pool) runOpen(ctx context.Context) {
 
 func (p *pool) worker(ctx context.Context, jobs <-chan time.Duration, wg *sync.WaitGroup) {
 	defer wg.Done()
-	sess := adapters.NewSession(adapters.SessionOptions{Timeout: p.opts.RequestTimeout})
+	clients := p.newClients()
+	defer clients.close()
 	local := newAcc()
 	for intended := range jobs {
 		if ctx.Err() != nil {
 			break
 		}
-		p.iterate(ctx, sess, local, intended, true)
+		p.iterate(ctx, clients, local, intended, true)
 	}
 	p.merge(local)
 }
 
-// iterate runs one pass over the flows through sess, recording a sample and
-// (per the retention budget) a trace tree per flow. intended is the scheduled
-// dispatch offset for coordinated-omission accounting; when hasIntended is
-// false the run is its own reference (closed model).
-func (p *pool) iterate(ctx context.Context, sess *adapters.Session, local *acc, intended time.Duration, hasIntended bool) {
+// iterate runs one pass over the flows through the VU's clients, recording a
+// sample and (per the retention budget) a trace tree per flow. intended is the
+// scheduled dispatch offset for coordinated-omission accounting; when
+// hasIntended is false the run is its own reference (closed model).
+func (p *pool) iterate(ctx context.Context, clients *vuClients, local *acc, intended time.Duration, hasIntended bool) {
 	p.active.Add(1)
 	defer p.active.Add(-1)
 
-	runner := &Runner{Session: sess, BaseURL: p.opts.BaseURL, Mode: p.sched.Mode, Allow: p.opts.Allow, Auth: p.opts.Auth}
+	runner := &Runner{
+		Session: clients.http,
+		GRPC:    clients.grpc,
+		Protos:  p.opts.Protos,
+		BaseURL: p.opts.BaseURL,
+		Mode:    p.sched.Mode,
+		Allow:   p.opts.Allow,
+		Auth:    p.opts.Auth,
+	}
 	for i := range p.opts.Flows {
 		fl := p.opts.Flows[i]
 		actual := time.Since(p.start)

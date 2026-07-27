@@ -148,11 +148,11 @@ func (w *walker) step(n ast.Node) ir.Step {
 	st := ir.Step{Pos: w.pos(n)}
 	entries, ok := mapEntries(n)
 	if !ok {
-		w.errAt(n, "a step is a mapping with an id and one of call, graphql, ws, wait, poll")
+		w.errAt(n, "a step is a mapping with an id and one of call, graphql, ws, grpc, wait, poll")
 		return st
 	}
 
-	var callNode, graphqlNode, wsNode, waitNode, pollNode ast.Node
+	var callNode, graphqlNode, wsNode, grpcNode, waitNode, pollNode ast.Node
 	var headers, query map[string]string
 	var body json.RawMessage
 	var headersNode, queryNode, bodyNode ast.Node
@@ -169,6 +169,8 @@ func (w *walker) step(n ast.Node) ir.Step {
 			graphqlNode = e.Value
 		case "ws":
 			wsNode = e.Value
+		case "grpc":
+			grpcNode = e.Value
 		case "wait":
 			waitNode = e.Value
 		case "poll":
@@ -205,16 +207,16 @@ func (w *walker) step(n ast.Node) ir.Step {
 	}
 
 	kinds := 0
-	for _, kn := range []ast.Node{callNode, graphqlNode, wsNode, waitNode, pollNode} {
+	for _, kn := range []ast.Node{callNode, graphqlNode, wsNode, grpcNode, waitNode, pollNode} {
 		if kn != nil {
 			kinds++
 		}
 	}
 	switch {
 	case kinds == 0:
-		w.errAt(n, "step %q needs one of call, graphql, ws, wait, poll", st.ID)
+		w.errAt(n, "step %q needs one of call, graphql, ws, grpc, wait, poll", st.ID)
 	case kinds > 1:
-		w.errAt(n, "step %q sets more than one of call, graphql, ws, wait, poll", st.ID)
+		w.errAt(n, "step %q sets more than one of call, graphql, ws, grpc, wait, poll", st.ID)
 	case callNode != nil:
 		st.Type = ir.StepCall
 		spec := w.callShorthand(callNode)
@@ -251,6 +253,20 @@ func (w *walker) step(n ast.Node) ir.Step {
 			}
 		}
 		st.WS = spec
+	case grpcNode != nil:
+		st.Type = ir.StepGRPC
+		spec := w.grpc(grpcNode)
+		// Metadata is HTTP/2 headers on the wire, so it stays where a call step
+		// puts its headers and every auth scheme reaches a gRPC call unchanged.
+		// A query string and a body have nowhere to go: the method is the path
+		// and the payload is the message.
+		spec.Headers = headers
+		for _, kn := range []ast.Node{queryNode, bodyNode} {
+			if kn != nil {
+				w.errAt(kn, "a grpc step carries its payload in the message it sends, not query or body")
+			}
+		}
+		st.GRPC = spec
 	case waitNode != nil:
 		st.Type = ir.StepWait
 		d := w.duration(waitNode, "wait")
@@ -346,6 +362,44 @@ func (w *walker) ws(n ast.Node) *ir.WSSpec {
 			spec.Receive = w.wsReceive(e.Value)
 		default:
 			w.errAt(keyNode, "unknown ws key %q", key)
+		}
+	}
+	return spec
+}
+
+// grpc reads one unary call. `url` is optional and is only an address: the
+// method is the path, so a step against the target's own base URL names no url
+// at all.
+func (w *walker) grpc(n ast.Node) *ir.GRPCSpec {
+	spec := &ir.GRPCSpec{}
+	entries, ok := mapEntries(n)
+	if !ok {
+		w.errAt(n, "grpc is a mapping with proto, method, and optionally url, message, import_paths")
+		return spec
+	}
+	for _, e := range entries {
+		key, keyNode := w.key(e)
+		switch key {
+		case "proto":
+			spec.Proto, _ = w.str(e.Value, "proto")
+		case "import_paths":
+			if seq, ok := w.seq(e.Value, "import_paths"); ok {
+				for _, item := range seq.Values {
+					if s, ok := w.str(item, "import path"); ok {
+						spec.ImportPaths = append(spec.ImportPaths, s)
+					}
+				}
+			}
+		case "method":
+			spec.Method, _ = w.str(e.Value, "method")
+		case "url":
+			spec.URL, _ = w.str(e.Value, "url")
+		case "endpoint":
+			spec.Endpoint, _ = w.str(e.Value, "endpoint")
+		case "message":
+			spec.Message = w.bodyJSON(e.Value, "message")
+		default:
+			w.errAt(keyNode, "unknown grpc key %q", key)
 		}
 	}
 	return spec

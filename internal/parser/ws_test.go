@@ -225,7 +225,7 @@ steps:
       backoff: fixed
       max_attempts: 2
 `,
-			want: "retry policies apply to call and graphql steps only",
+			want: "retry policies apply to call, graphql, and grpc steps only",
 		},
 		{
 			name: "auth on a step with no request to sign",

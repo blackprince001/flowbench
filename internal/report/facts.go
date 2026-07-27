@@ -46,7 +46,13 @@ func (r Row) Facts() []Fact {
 	out := []Fact{{Label: "outcome", Value: string(r.Outcome), Tone: string(r.Outcome)}}
 
 	if p := r.Payload; p != nil {
-		if p.Status != 0 {
+		// A protocol that names its own statuses says them in its own words, and
+		// the span's outcome is already the classification of that word — so
+		// there is no second table mapping RESOURCE_EXHAUSTED to a tone.
+		switch {
+		case p.StatusText != "":
+			out = append(out, Fact{Label: "status", Value: p.StatusText, Tone: string(r.Outcome)})
+		case p.Status != 0:
 			out = append(out, Fact{Label: "status", Value: fmt.Sprint(p.Status), Tone: statusTone(p.Status)})
 		}
 		if p.Method != "" || p.URL != "" {

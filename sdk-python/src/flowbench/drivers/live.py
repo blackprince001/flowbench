@@ -286,6 +286,21 @@ class LiveDriver:
       "`flowbench run <file>.py` instead (the Go engine supports ws steps)"
     )
 
+  def grpc(
+    self,
+    method,
+    *,
+    proto,
+    message=None,
+    url=None,
+    headers=None,
+    import_paths=None,
+  ):
+    raise FlowExecutionError(
+      "ctx.grpc() is not yet supported by live execution -- run "
+      "`flowbench run <file>.py` instead (the Go engine supports grpc steps)"
+    )
+
   def set_var(self, key, value):
     if not isinstance(value, PendingLiveExtraction):
       raise FlowExecutionError(

@@ -28,6 +28,17 @@ type Runner struct {
 	// step declaring auth without one set is a wiring error, not a silent
 	// unauthenticated request.
 	Auth *auth.Provider
+
+	// GRPC holds this VU's gRPC channels, one per address, opened on first use
+	// and closed when the VU ends. Per VU for the same reason the HTTP session
+	// gets its own transport: a channel multiplexes every call over one
+	// connection, and one shared across 10k VUs measures that channel.
+	GRPC *adapters.GRPCConns
+
+	// Protos is the run's compiled schemas, shared by every VU — linking a
+	// .proto is real work, and doing it per iteration would measure the
+	// generator rather than the target.
+	Protos *adapters.ProtoRegistry
 }
 
 // Failure is one recorded assertion or extraction failure within an iteration.
@@ -105,6 +116,8 @@ func (r *Runner) runStep(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 		return r.runGraphQL(ctx, st, scope, anchor, it)
 	case ir.StepWS:
 		return r.runWS(ctx, st, scope, anchor, it)
+	case ir.StepGRPC:
+		return r.runGRPC(ctx, st, scope, anchor, it)
 	case ir.StepWait:
 		sp := span.New(st.ID, time.Since(anchor))
 		time.Sleep(time.Duration(st.Wait.Duration))

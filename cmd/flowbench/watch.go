@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/blackprince001/flowbench/internal/adapters"
 	"github.com/blackprince001/flowbench/internal/collector"
 	"github.com/blackprince001/flowbench/internal/data"
 	"github.com/blackprince001/flowbench/internal/executor"
@@ -211,7 +212,7 @@ func (ls *liveServer) complete(runDir string) error {
 // browser — the results server's one write path (PRD 10.7). When the run ends it
 // flushes the artifacts and keeps serving the stored run until the operator quits
 // (a second Ctrl-C), so watching flows straight into inspecting.
-func runLive(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool, storeRoot, scenarioPath, addr string, sched *planner.Schedule, thresholds []collector.Threshold) int {
+func runLive(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pools map[string]*data.Pool, protos *adapters.ProtoRegistry, storeRoot, scenarioPath, addr string, sched *planner.Schedule, thresholds []collector.Threshold) int {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Fprintf(stderr, "flowbench: bind %s: %v\n", addr, err)
@@ -246,6 +247,7 @@ func runLive(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pool
 			Pools:    pools,
 			BaseURL:  tgt.BaseURL(),
 			Allow:    tgt.Allows,
+			Protos:   protos,
 			Progress: lr.update,
 		})
 		resc <- res
