@@ -172,10 +172,16 @@
 <section class="card">
   <div class="card-head">
     <h2 class="card-title">Target resources</h2>
-    <p class="card-note">agent overlay</p>
+    <p class="card-note">{{ if .Agent.Attached }}target vs generator{{ else }}agent overlay{{ end }}</p>
   </div>
   <div class="card-body">
-    <p class="hint">{{ .Agent }}</p>
+    {{ if .Agent.Attached }}
+    <div class="charts">
+      {{ range .Agent.Charts }}{{ template "linechart" . }}{{ end }}
+    </div>
+    {{ else }}
+    <p class="hint">{{ .Agent.Note }}</p>
+    {{ end }}
   </div>
 </section>
 

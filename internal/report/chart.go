@@ -67,6 +67,16 @@ type AxisTick struct {
 	Label string
 }
 
+// AgentOverlay is the "Target resources" card: once a target-metrics agent
+// (issue #32) contributed a sample to the run, CPU and memory charts
+// comparing target against generator; until then, a note pointing the
+// reader at agent_addr.
+type AgentOverlay struct {
+	Attached bool
+	Note     string      // set only when !Attached
+	Charts   []LineChart // set only when Attached: CPU, then memory
+}
+
 // LineChart is one titled chart of one or more lines over a shared axis. Key
 // addresses it in a URL, so a chart can be opened on its own; Href is that link
 // and Expanded says this is the opened one.

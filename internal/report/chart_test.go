@@ -149,7 +149,7 @@ func TestRenderRunPageCharts(t *testing.T) {
 		Charts:  report.LinkCharts([]report.LineChart{report.ThroughputChart(seriesFixture()), report.LatencyChart(seriesFixture()), report.RatesChart(seriesFixture())}, "/run"),
 		Steps:   report.StepRows(folded()),
 		Gates:   []report.Gate{{Expr: "error_rate < 2%", Pass: true, Tone: "ok", Detail: "error_rate = 1%, want < 2%"}},
-		Agent:   "no agent attached — target CPU/memory overlay lands with #32",
+		Agent:   report.AgentOverlay{Note: "no agent attached — target CPU/memory overlay lands with #32"},
 	})
 	if err != nil {
 		t.Fatalf("RenderRun: %v", err)
