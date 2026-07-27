@@ -180,7 +180,7 @@ type RunPage struct {
 	Bucket  *BucketDetail // the selected strip column, shown in the rail
 	Steps   []StepRow
 	Gates   []Gate
-	Agent   string        // the empty-state note for the deferred overlay lane
+	Agent   AgentOverlay  // the target-metrics overlay: charts once attached, an empty-state note otherwise
 	Trend   *TrendSection // soak runs only; nil otherwise
 	Links   []Jump
 }

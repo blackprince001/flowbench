@@ -158,6 +158,7 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 	series, _ := p.Store.LoadSeries(id)
 	samples, _ := p.Store.LoadSamples(id)
 	metrics, _ := p.Store.LoadMetrics(id)
+	agentSeries, _ := p.Store.LoadAgentSeries(id)
 
 	peak := ""
 	if at, n, found := report.PeakThrottle(series); found {
@@ -173,6 +174,20 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 	}, base)
 	chart, charts := report.SelectChart(charts, r.URL.Query().Get("chart"))
 	bucket := intParam(r, "at", -1)
+
+	// Attached is read from the run's own meta, not len(agentSeries) > 0 on
+	// this load: a corrupt or partial agent.json should degrade to an empty
+	// chart, not to silently claiming no agent was ever attached.
+	overlay := report.AgentOverlay{Attached: m.AgentAttached}
+	if overlay.Attached {
+		agentSp := agentSpan(series, metrics, agentSeries)
+		overlay.Charts = []report.LineChart{
+			targetCPUChart(agentSp, metrics, agentSeries),
+			targetMemChart(agentSp, metrics, agentSeries),
+		}
+	} else {
+		overlay.Note = "no agent attached — set agent_addr on the target to overlay its CPU and memory against this run"
+	}
 
 	page := report.RunPage{
 		Shell:   s.shell(p, m, index, "overview", len(report.FlameFrames(folded)), traces, samples.Kept),
@@ -196,7 +211,7 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		Bucket:  report.InspectBucket(series, bucket),
 		Steps:   report.StepRows(folded),
 		Gates:   gates(m),
-		Agent:   "no agent attached — target CPU/memory overlay lands with #32",
+		Agent:   overlay,
 		Links:   jumps(base, folded, len(traces), samples),
 	}
 	if m.Mode == "soak" {
