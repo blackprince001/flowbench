@@ -13,7 +13,7 @@ from .drivers.trace import TraceDriver
 from .errors import FlowCompileError, FlowExecutionError
 from .ir import build_scenario
 from .profile import Profile
-from .secret import SecretSet
+from .redaction import SecretSet, flagged
 from .span import OUTCOME_OK, Span
 from .store import Sample, write_run
 from .target import TargetConfig, resolve_target_via_binary
@@ -116,7 +116,7 @@ class Flow:
 
     started_at = datetime.now(timezone.utc)
     run_start = time.monotonic()
-    secrets = SecretSet()
+    secrets = SecretSet(flagged())
     roots, samples = [], []
     failed = 0
 

@@ -9,8 +9,8 @@ from flowbench.assertions import expect
 from flowbench.context import Context
 from flowbench.drivers.live import FlowAbortedError, LiveDriver
 from flowbench.errors import FlowExecutionError
+from flowbench.redaction import SecretSet
 from flowbench.retry import Retry
-from flowbench.secret import SecretSet
 from flowbench.span import finalize
 from flowbench.target import TargetConfig
 
@@ -79,6 +79,13 @@ def run_step(cfg, func, *, has_data_pool=False, row=None, retry=None):
   return driver.result()
 
 
+def child_named(span, name):
+  """Extraction and assertion children sit alongside the http_call leg
+  auto-instrumentation adds, so they are looked up by name, not position.
+  """
+  return next(c for c in span.children if c.name == name)
+
+
 def test_successful_call_records_ok_span(cfg, server):
   server.routes[("GET", "/ping")] = lambda h, b: h._respond(200, {"ok": True})
 
@@ -127,8 +134,7 @@ def test_extraction_not_found_aborts_and_records_failure(cfg, server):
   step_id, detail = result.failures[0]
   assert step_id == "step"
   assert "token" in detail
-  extract_child = result.spans[0].children[0]
-  assert extract_child.name == "token"
+  extract_child = child_named(result.spans[0], "token")
   assert extract_child.outcome == "failed"
 
 
@@ -142,9 +148,7 @@ def test_assertion_failure_aborts_and_records_child_span(cfg, server):
   result = run_step(cfg, step)
   assert result.outcome == "failed"
   assert len(result.failures) == 1
-  child = result.spans[0].children[0]
-  assert child.name == "assert_status"
-  assert child.outcome == "failed"
+  assert child_named(result.spans[0], "assert_status").outcome == "failed"
 
 
 def test_passing_assertion_creates_ok_child_span(cfg, server):
@@ -156,9 +160,7 @@ def test_passing_assertion_creates_ok_child_span(cfg, server):
 
   result = run_step(cfg, step)
   assert result.outcome == "ok"
-  child = result.spans[0].children[0]
-  assert child.name == "assert_status"
-  assert child.outcome == "ok"
+  assert child_named(result.spans[0], "assert_status").outcome == "ok"
 
 
 def test_throttle_429_marks_throttled_and_aborts(cfg, server):
@@ -291,7 +293,7 @@ def test_vars_setitem_rejects_non_extraction(cfg, server):
 def test_end_step_rejects_step_that_never_called(cfg):
   driver = LiveDriver(cfg, has_data_pool=False)
   driver.begin_step("step", None)
-  with pytest.raises(FlowExecutionError, match=r"never made a ctx\.http call"):
+  with pytest.raises(FlowExecutionError, match=r"made no HTTP call"):
     driver.end_step()
   driver.close()
 

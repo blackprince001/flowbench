@@ -192,3 +192,9 @@ class TraceDriver:
 
   def get_env(self, name):
     return TemplateRef(f"env.{name}")
+
+  def add_secret(self, value):
+    # Compilation produces IR, not artifacts, so there is nothing to redact;
+    # the declared value is a TemplateRef the Go engine resolves and registers
+    # as a secret itself.
+    return value

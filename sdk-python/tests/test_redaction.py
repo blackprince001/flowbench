@@ -1,4 +1,4 @@
-from flowbench.secret import PLACEHOLDER, SecretSet
+from flowbench.redaction import PLACEHOLDER, SecretSet
 
 
 def test_redacts_registered_value():
