@@ -15,6 +15,7 @@ from .auth import (
 from .errors import FlowCompileError, FlowExecutionError
 from .flow import Flow
 from .profile import Profile
+from .redaction import secret
 from .retry import Retry
 from .template import env
 
@@ -34,4 +35,5 @@ __all__ = [
   "env",
   "expect",
   "frame",
+  "secret",
 ]

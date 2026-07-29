@@ -18,9 +18,10 @@ import time
 from .. import target as target_mod
 from ..errors import FlowExecutionError
 from ..eval import compare
+from ..instrument import Instrumentation
 from ..jsonpath import query_json
+from ..redaction import SecretSet
 from ..retry_exec import backoff_delay, retryable
-from ..secret import SecretSet
 from ..span import OUTCOME_FAILED, OUTCOME_OK, OUTCOME_THROTTLED, Span
 
 try:
@@ -175,6 +176,8 @@ class LiveDriver:
     self._current_step_id = None
     self._current_retry = None
     self._call_made = False
+    self._instr = Instrumentation(self._elapsed)
+    self._instr.attach()
 
     self.spans = []
     self.failures = []  # list of (step_id, detail)
@@ -182,7 +185,16 @@ class LiveDriver:
     self.throttled = False
 
   def close(self):
+    self._instr.detach()
     self._client.close()
+
+  def add_secret(self, value):
+    """ctx.secret(...): flags a value the flow computed at run time. Import-
+    scope credentials use flowbench.secret(...) instead, which this run's
+    SecretSet was already seeded from.
+    """
+    self._secrets.add(value if isinstance(value, str) else str(value))
+    return value
 
   def set_row(self, row):
     self._row = row
@@ -200,15 +212,24 @@ class LiveDriver:
     self._current_retry = retry.to_ir() if retry is not None else None
     self._current_span = Span(step_id, self._elapsed())
     self._call_made = False
+    self._instr.begin_step(self._current_span)
 
   def end_step(self):
     step = self._current_span
     step_id = self._current_step_id
-    if not self._call_made:
+    self._instr.end_step()
+    # A step earns its span by putting a request on the wire. ctx.http is one
+    # way; a call the step's own code makes -- its SDK, its helper, its LLM
+    # client -- is another, and auto-instrumentation sees those too, so a step
+    # that never touches ctx.http is no longer empty by definition.
+    if not self._call_made and not self._instr.recorded:
       raise FlowExecutionError(
-        f"step {step_id!r} never made a ctx.http call; "
-        "every @flow.step function must make exactly one"
+        f"step {step_id!r} made no HTTP call; every @flow.step function must "
+        "make one, through ctx.http or through the flow's own client"
       )
+    if self._instr.throttled:
+      self.throttled = True
+      step.outcome = _worst(step.outcome, OUTCOME_THROTTLED)
     self.spans.append(step)
     self.outcome = _worst(self.outcome, step.outcome)
     self._current_span = None
@@ -342,16 +363,12 @@ class LiveDriver:
     return self._base_url.rstrip("/") + "/" + url.lstrip("/")
 
   def _send(self, method, url, headers, query, body, span_obj):
-    resp = self._client.request(method, url, headers=headers, params=query, json=body)
-    span_obj.duration = resp.elapsed.total_seconds()
-    span_obj.set_raw(resp.request.content or b"", resp.content or b"")
-    span_obj.set_call(
-      method,
-      str(resp.request.url),
-      resp.status_code,
-      resp.headers.get("Retry-After", ""),
-    )
-    return resp
+    # Binding makes span_obj the call span, so ctx.http's phase spans hang
+    # directly off the step (or retry attempt) exactly as the Go adapter's do,
+    # instead of gaining a call span the engine path has no counterpart for.
+    # Duration, bodies, and call identity are recorded by the instrumentation.
+    self._instr.bind_next(span_obj)
+    return self._client.request(method, url, headers=headers, params=query, json=body)
 
   def _do_request(self, method, url, headers, query, body, step):
     try:

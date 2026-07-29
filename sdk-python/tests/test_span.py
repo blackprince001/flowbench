@@ -1,6 +1,6 @@
 import pytest
 
-from flowbench.secret import SecretSet
+from flowbench.redaction import SecretSet
 from flowbench.span import Span, finalize
 
 

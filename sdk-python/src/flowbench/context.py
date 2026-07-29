@@ -211,6 +211,14 @@ class Context:
     self.env = EnvProxy(driver)
     self._has_data_pool = has_data_pool
 
+  def secret(self, value):
+    """Flags a value the step computed -- a token minted mid-flow, a signed
+    URL -- as sensitive, so it is scrubbed from this run's artifacts. Returns
+    it, so it can wrap an expression in place. Credentials that exist before
+    the run starts use the module-level flowbench.secret(...) instead.
+    """
+    return self._driver.add_secret(value)
+
   @property
   def user(self):
     if not self._has_data_pool:
