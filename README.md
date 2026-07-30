@@ -23,11 +23,16 @@ This is a set of tooling packages, not a hosted platform: Go engine + CLI, Pytho
 | Agent binary | Go | Streams target-host resource metrics into runs |
 | YAML DSL | — | Declarative authoring surface compiling to the same canonical IR as Python |
 
+## Getting started
+
+- [Installation](docs/getting-started/installation.md) — release binaries, or `go build`
+- [Quickstart](docs/getting-started/quickstart.md) — one YAML flow to a first stress run and flame graph, under ten minutes
+
 ## Documentation
 
-- [docs/index.md](docs/index.md) — documentation map (start here)
-- [docs/prd.md](docs/prd.md) — the full PRD (source of truth for scope)
-- [docs/CONTEXT.md](docs/CONTEXT.md) — ubiquitous-language glossary
-- [docs/decisions/](docs/decisions/) — architecture decision records
-- [docs/planning/milestones.md](docs/planning/milestones.md) — milestone plan (mirrored on GitHub)
-- [docs/log.md](docs/log.md) — decision/work log
+The docs are a book: [docs/README.md](docs/README.md) is the front page, [docs/SUMMARY.md](docs/SUMMARY.md) the table of contents.
+
+- [Guide](docs/guide/flows.md) — authoring flows, protocols, auth, profiles, the agent, the results server
+- [Cookbook](docs/cookbook/README.md) — worked patterns, each runnable from [examples/](examples/)
+- [Reference](docs/reference/cli.md) — [CLI](docs/reference/cli.md), [YAML DSL](docs/reference/yaml-dsl.md), [Python API](docs/reference/python-api.md)
+- [Project](docs/project/architecture.md) — [architecture](docs/project/architecture.md), the [PRD](docs/prd.md), [glossary](docs/CONTEXT.md), [decision records](docs/decisions/README.md), [milestones](docs/planning/milestones.md), [work log](docs/log.md), [rollout checklist](docs/project/rollout-checklist.md)

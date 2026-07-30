@@ -4,6 +4,12 @@ okf_version: "0.1"
 
 Entry point for the FlowBench knowledge bundle. Read this index first; open documents as needed.
 
+## The book
+
+* [README.md](README.md) + [SUMMARY.md](SUMMARY.md) - The user-facing documentation book (GitBook layout): [getting started](getting-started/quickstart.md), the [guide](guide/flows.md), the [cookbook](cookbook/README.md), and the [CLI](reference/cli.md)/[YAML](reference/yaml-dsl.md)/[Python](reference/python-api.md) references.
+* [project/rollout-checklist.md](project/rollout-checklist.md) - The dogfood exit criteria (PRD §18), tracked to done.
+* [project/architecture.md](project/architecture.md) - The system in one pass; [project/development.md](project/development.md) - working on the toolkit itself.
+
 ## Product
 
 * [PRD](prd.md) - Full product requirements document (v0.6 DRAFT); the source of truth for v1 scope.
