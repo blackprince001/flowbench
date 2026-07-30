@@ -174,6 +174,17 @@ a { color: inherit; }
   padding: 14px;
 }
 
+/* With a tab strip above it, the content becomes the window's content area:
+   lifted off the chrome's ground, with a hairline and rounded shoulders where
+   the two meet. Without one — a page with no project strip — the shell is the
+   page and stays flat. */
+:root:has(.tabstrip) .shell {
+  background: color-mix(in oklab, var(--surface) 30%, var(--ground));
+  border-top: 1px solid var(--hairline);
+  border-radius: 14px 14px 0 0;
+  min-height: calc(100vh - 42px);
+}
+
 .side {
   width: 232px;
   display: flex;
@@ -1422,9 +1433,33 @@ a.frame { text-decoration: none; }
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 14px 0;
+  padding: 7px 14px;
   background: var(--ground);
 }
+
+/* Folded, the strip keeps only the control that unfolds it — a bar you can
+   put away without losing the way back. The chevron turns over to say which
+   way it will go, so the same button reads correctly in both states. */
+:root[data-tabs="off"] .tabstrip-tabs,
+:root[data-tabs="off"] .tabstrip-all { display: none; }
+:root[data-tabs="off"] .tabstrip { padding-block: 2px; }
+:root[data-tabs="off"] .tabstrip-fold-mark { transform: rotate(180deg); }
+
+.tabstrip-fold {
+  flex: none;
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.tabstrip-fold:hover { background: var(--surface); color: var(--ink); }
+.tabstrip-fold-mark { width: 12px; height: 12px; }
 .tabstrip-tabs {
   display: flex;
   align-items: center;

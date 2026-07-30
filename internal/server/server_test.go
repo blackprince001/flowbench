@@ -1392,3 +1392,17 @@ func TestOverviewButtonAppearsWhereItLeadsSomewhereElse(t *testing.T) {
 		t.Error("the workspace root should not link to itself")
 	}
 }
+
+func TestProjectStripFoldsAway(t *testing.T) {
+	s, runBase := serve(t)
+	_, body := get(t, s, runBase)
+
+	if !strings.Contains(body, `data-toggle="tabs"`) {
+		t.Error("the strip should offer a control to fold it out of the way")
+	}
+	// The button and the script have to agree on the name, or the fold works
+	// for one page and forgets by the next.
+	if !strings.Contains(body, `"fb-tabs"`) {
+		t.Error("the fold state should be persisted like the rails' are")
+	}
+}
