@@ -2,6 +2,12 @@
 
 ## 2026-07-30
 
+- **A gRPC call could lose its phase breakdown, and CI finally said so.** `TestUnaryCallRoundTrip` failed once with the `grpc_call` leg holding `connect` alone — no `ttfb`, no `transfer`. Not flake to be re-run: grpc-go writes the request to the transport and *then* calls the stats handler for `OutPayload` (`csAttempt.sendMsg`), while `InHeader` is delivered on the transport's own reader goroutine. Against a fast in-process target, under enough scheduling pressure, the answer is observed before the send it answers.
+
+  The phase recorder required the send first, so in that window `ttfb` was skipped — and because `transfer` keys off the headers `ttfb` records, it was skipped too. A user hitting a fast target on a busy box would silently lose the breakdown the gRPC stats handler exists to provide, which is the one thing its own test comment claims for it.
+
+  `ttfb` no longer waits for a send it has not been told about: it is measured from the send when that is known and from the call's start otherwise, so the span is always recorded and `transfer` always has its anchor. The order is pinned by unit tests over the recorder rather than by hoping the race reappears — including the racing order itself, which is not reproducible on demand. Surfaced by the knee-point tests added earlier today: two-second stress runs at 6 VUs loaded the runner enough to tip a latent race into a failure.
+
 - **The deliverables table is a release now.** The README has promised four artifacts since the PRD was written and shipped none of them: no tags, no releases, no build beyond `go build ./...`. A `v*` tag now produces them — the engine/CLI for linux and darwin on both architectures plus windows/amd64, the agent for linux alone, the SDK as a wheel and sdist — re-running the full CI gate first, because a tag that outruns the checks is a tag that ships something nobody tested.
 
   **The agent's matrix is deliberately shorter than the CLI's.** Host sampling reads `/proc` (ADR 0017), so a darwin or windows agent compiles and then serves an error; shipping one would be shipping a functional no-op with a version number on it. The release notes say Linux rather than letting the missing files say it.
