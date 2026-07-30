@@ -211,8 +211,10 @@ type WSReceive struct {
 // apply unchanged, because the response message is converted to JSON and the
 // status code is an ordinary status.
 //
-// Streaming is deliberately absent — the step and span model is call-shaped,
-// and whether streaming belongs in v1 at all is the question issue #29 asks.
+// Streaming is deliberately absent, and out of v1 by decision rather than by
+// omission (ADR 0019, spike #29): the span model could carry a stream, but a
+// run reports iterations and per-flow-run latency, and neither describes a
+// stream held open for minutes.
 type GRPCSpec struct {
 	// Proto is the file describing the method, resolved relative to the flow
 	// file. It is compiled to descriptors once per run, not once per call.

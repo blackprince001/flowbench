@@ -93,10 +93,13 @@ func (r *ProtoRegistry) Method(ctx context.Context, spec *ir.GRPCSpec) (*GRPCMet
 				service, method, spec.Proto, listMethods(svc))
 		}
 		if md.IsStreamingClient() || md.IsStreamingServer() {
-			// Not a limitation of the adapter so much as of the model above it:
-			// a step is one call and a span is one timed node, and a stream is
-			// neither. Whether v1 grows a shape for it is issue #29.
-			return nil, fmt.Errorf("method %s is streaming; v1 calls unary methods only", spec.Method)
+			// Settled, not pending: streaming is out of v1 (ADR 0019, spike
+			// #29). The span model could carry a stream — the ws slice already
+			// built session scope and match/skip — but a run reports iterations
+			// and per-flow-run latency, and neither says anything about a
+			// stream held open for minutes.
+			return nil, fmt.Errorf("method %s is streaming; v1 calls unary methods only (ADR 0019). %s defines %s",
+				spec.Method, spec.Proto, listMethods(svc))
 		}
 		return &GRPCMethod{
 			Path:     spec.GRPCPath(),
