@@ -6,9 +6,11 @@ is the whole point -- FlowBench never sees them being set up, only that they
 happened.
 """
 
+import asyncio
 import contextlib
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
@@ -277,6 +279,109 @@ def test_ctx_secret_redacts_a_value_the_step_computed(cfg, base_url, server):
   finalize(call, driver._secrets, 2048)
   assert minted not in call.payload["response"]
   assert PLACEHOLDER in call.payload["response"]
+
+
+# -- async clients ---------------------------------------------------------
+#
+# The step function stays sync -- the driver is -- so an async client is driven
+# the way a flow would drive one: asyncio.run inside the step. The task copies
+# the context, which is how the attached driver reaches it.
+
+
+def test_an_async_client_is_recorded_with_its_phases(cfg, base_url, server):
+  server.routes[("GET", "/async")] = lambda h, b: h._respond(200, {"ok": True})
+
+  def step(ctx):
+    async def go():
+      async with httpx.AsyncClient() as client:
+        await client.get(base_url + "/async")
+
+    asyncio.run(go())
+
+  call = run_step(cfg, step).spans[0].children[0]
+  assert call.name == "GET /async"
+  assert call.duration > 0
+  leg = call.children[0]
+  assert leg.name == "http_call"
+  assert "ttfb" in names(leg)
+
+
+def test_concurrent_calls_keep_their_own_phases(cfg, base_url, server):
+  """The reason the current call lives in a ContextVar rather than a stack:
+  three requests are open at once and their responses arrive out of order, so
+  "the most recently started call" is the wrong owner for an arriving phase
+  event. Each response must close its own ttfb.
+  """
+  server.routes[("GET", "/slow")] = lambda h, b: (
+    time.sleep(0.2),
+    h._respond(200, {}),
+  )
+  server.routes[("GET", "/mid")] = lambda h, b: (time.sleep(0.1), h._respond(200, {}))
+  server.routes[("GET", "/fast")] = lambda h, b: h._respond(200, {})
+
+  def step(ctx):
+    async def go():
+      async with httpx.AsyncClient() as client:
+        await asyncio.gather(
+          *(client.get(base_url + path) for path in ("/slow", "/mid", "/fast"))
+        )
+
+    asyncio.run(go())
+
+  step_span = run_step(cfg, step).spans[0]
+  calls = {c.name: c for c in step_span.children}
+  assert set(calls) == {"GET /slow", "GET /mid", "GET /fast"}
+
+  def ttfb(call):
+    leg = call.children[0]
+    return next(c.duration for c in leg.children if c.name == "ttfb")
+
+  # Each call waited as long as its own endpoint slept, which is only true if
+  # no phase crossed between the requests in flight.
+  assert ttfb(calls["GET /slow"]) > ttfb(calls["GET /mid"]) > ttfb(calls["GET /fast"])
+  assert ttfb(calls["GET /slow"]) == pytest.approx(0.2, abs=0.08)
+  assert ttfb(calls["GET /fast"]) < 0.05
+
+
+def test_429_from_an_async_call_throttles_the_step(cfg, base_url, server):
+  server.routes[("GET", "/limited")] = lambda h, b: h._respond(429, {})
+
+  def step(ctx):
+    async def go():
+      async with httpx.AsyncClient() as client:
+        await client.get(base_url + "/limited")
+
+    asyncio.run(go())
+
+  result = run_step(cfg, step)
+  assert result.outcome == "throttled"
+  assert result.spans[0].children[0].outcome == "throttled"
+
+
+def test_an_async_transport_failure_marks_the_span(cfg):
+  def step(ctx):
+    async def go():
+      async with httpx.AsyncClient() as client:
+        await client.get("http://127.0.0.1:1/nope")
+
+    asyncio.run(go())
+
+  driver = LiveDriver(cfg, has_data_pool=False)
+  driver.begin_step("step", None)
+  with pytest.raises(httpx.ConnectError):
+    step(Context(driver, has_data_pool=False))
+  assert driver._current_span.children[0].outcome == "failed"
+  driver.close()
+
+
+def test_async_requests_outside_a_run_are_untouched(base_url, server):
+  server.routes[("GET", "/free")] = lambda h, b: h._respond(200, {"ok": True})
+
+  async def go():
+    async with httpx.AsyncClient() as client:
+      return await client.get(base_url + "/free")
+
+  assert asyncio.run(go()).status_code == 200
 
 
 # -- staying out of the way ------------------------------------------------
