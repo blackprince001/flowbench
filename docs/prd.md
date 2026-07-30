@@ -247,7 +247,7 @@ graph LR
 - `[P0]` `(E)` HTTP/HTTPS (REST): all methods, headers, query/body templating, multipart, redirects, cookie jars per VU.
 - `[P0]` `(E)` GraphQL: query/mutation steps with variables, response extraction over the `data`/`errors` shape.
 - `[P1]` `(E)` WebSockets: open a session as a step, send/receive/match messages, hold sessions across steps within an iteration, assert on received frames.
-- `[P1]` `(E)` gRPC: unary calls from `.proto` definitions; streaming scoped later. [Open question on streaming.] gRPC's `RESOURCE_EXHAUSTED` status maps to the same `throttled` outcome class as HTTP `429`.
+- `[P1]` `(E)` gRPC: unary calls from `.proto` definitions. **Streaming is out of v1 (ADR 0019, spike #29)** — a streaming method is a pre-run error naming the unary alternatives. gRPC's `RESOURCE_EXHAUSTED` status maps to the same `throttled` outcome class as HTTP `429`.
 - `[P2]` `(E)` SOAP/XML: XML body templating and XPath extraction.
 - LLM providers are deliberately **not** a protocol adapter: the flow's own SDK code makes LLM calls in Python-driven flows, and FlowBench observes them (see 10.9).
 - `[P0]` `(E)` Auth schemes: bearer/JWT (static or extracted at runtime), session cookies, basic auth, API keys (header/query), OAuth2 client-credentials, HMAC request signing. Explicitly excluded: OAuth2 authorization-code.
@@ -659,7 +659,7 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 - [ ] Default retry/backoff parameters (max attempts, base delay for exponential) when a flow declares `retry` without specifying them fully. Owner: [name]. By: [date].
 - [x] Whether the arrival cap (10.3) should be a hard scheduling constraint or a soft target the planner approximates under load. **Resolved: hard scheduling constraint via the open-loop generator (ADR 0013, spike #15) — the soft self-paced model undershot the cap by ~11% under a realistic latency tail.**
 - [ ] Lua as a third surface, or Python-only. Owner: [name]. By: [date].
-- [ ] gRPC streaming scope in v1. Owner: [name]. By: [date].
+- [x] gRPC streaming scope in v1. **Resolved: out of v1, unary only (ADR 0019, spike #29). The step/span model could carry it — the ws slice already built session scope and match/skip — but the profile model cannot say what a long-lived stream measures, three stream kinds is a large surface, and the streaming case teams actually bring today is token output over HTTP SSE, which the Python-driven path already covers.**
 - [ ] Demo/disposable DB feature — worth the complexity? Owner: [name]. By: [date].
 - [ ] Team size and timeline, so Milestones become dated. Owner: [name]. By: [date].
 

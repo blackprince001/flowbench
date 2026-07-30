@@ -30,6 +30,7 @@ Entry point for the FlowBench knowledge bundle. Read this index first; open docu
   * [0016 coder/websocket for the ws adapter](decisions/0016-websocket-coder-library.md) - Its handshake is an `http.Client` request, so auth, the allow-list and the phase spans carry over unchanged.
   * [0017 Target-metrics agent is scraped over HTTP, Linux-first](decisions/0017-agent-scrape-transport.md) - `flowbench-agent` serves `GET /metrics`; the CLI polls it on a ticker into the run store's own `agent.json` tier.
   * [0018 gRPC calls are made dynamically from .proto](decisions/0018-grpc-dynamic-from-proto.md) - Schemas are compiled at run time and invoked through `dynamicpb`; no code generation, and the response arrives as JSON so the rest of the engine applies unchanged.
+  * [0019 gRPC streaming is out of v1](decisions/0019-grpc-streaming-out-of-v1.md) - Unary only: the span model could carry a stream, but the profile model cannot say what a long-lived one measures.
 
 ## Planning
 

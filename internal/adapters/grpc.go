@@ -39,8 +39,8 @@ import (
 // other one. The response is converted to JSON, so extraction and assertions
 // are the same JSONPath evaluator, and the status is an ordinary status.
 //
-// Only unary calls. A stream is neither one step nor one span, and whether v1
-// grows a shape for it is the question issue #29 asks.
+// Only unary calls. Streaming is out of v1 by decision (ADR 0019, spike #29),
+// which also records how the three stream kinds would map if demand appears.
 
 // grpcConnectTimeout bounds waiting for a channel to come up. It is separate
 // from the call timeout because it is paid once per VU per address, and a
