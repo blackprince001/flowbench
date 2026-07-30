@@ -144,6 +144,9 @@
 
 body {
   margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   background: var(--ground);
   color: var(--ink);
   font-family: var(--sans);
@@ -174,15 +177,19 @@ a { color: inherit; }
   padding: 14px;
 }
 
-/* With a tab strip above it, the content becomes the window's content area:
-   lifted off the chrome's ground, with a hairline and rounded shoulders where
-   the two meet. Without one — a page with no project strip — the shell is the
-   page and stays flat. */
+/* With a tab strip above it, the content becomes the window's content area: a
+   surface floating on the chrome's ground, inset on every side so the ground
+   reads as what it sits on rather than as a band above it. It grows to fill
+   whatever the strip leaves — flex rather than a viewport calculation, since
+   the strip is a different height folded than open. Without a strip, the shell
+   is the page and stays flat. */
 :root:has(.tabstrip) .shell {
+  flex: 1;
+  min-height: 0;
+  margin: 0 12px 12px;
   background: color-mix(in oklab, var(--surface) 30%, var(--ground));
-  border-top: 1px solid var(--hairline);
-  border-radius: 14px 14px 0 0;
-  min-height: calc(100vh - 42px);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
 }
 
 .side {
@@ -476,6 +483,13 @@ a { color: inherit; }
 .jump-title { font-size: 13.5px; font-weight: 600; }
 .jump-value { font-size: 21px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 4px; }
 .jump-note { font: 11px/1.5 var(--mono); color: var(--ink-3); }
+
+/* A project card is wider than the "ways in" cards that share this grid: it
+   carries a name, a scenario filename and a store path, all of which are long
+   and none of which should wrap. Three across a laptop rather than four or
+   five, so each card is landscape — the height is unchanged, it is the width
+   that grew. */
+.jumps.projects { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
 
 .jump.project { gap: 5px; }
 .project-latest { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--ink-2); }

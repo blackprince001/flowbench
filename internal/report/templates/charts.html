@@ -51,6 +51,7 @@
 </section>
 {{ end }}
 
+{{ if .Rest }}
 <section class="card">
   <div class="card-head">
     <h2 class="card-title">Over the run</h2>
@@ -58,10 +59,11 @@
   </div>
   <div class="card-body">
     <div class="charts">
-      {{ range .Charts }}{{ template "linechart" . }}{{ end }}
+      {{ range .Rest }}{{ template "linechart" . }}{{ end }}
     </div>
   </div>
 </section>
+{{ end }}
 
 {{ if .Agent.Charts }}
 <section class="card">

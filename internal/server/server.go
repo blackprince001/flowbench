@@ -249,6 +249,7 @@ func (s *Server) charts(w http.ResponseWriter, r *http.Request) {
 		Shell:   s.shell(p, m, index, "charts", len(report.FlameFrames(folded)), traces, samples.Kept),
 		RunHead: head(m),
 		Charts:  charts,
+		Rest:    report.ChartsExcept(charts, chart),
 		Chart:   chart,
 		All:     base + "/charts",
 	}

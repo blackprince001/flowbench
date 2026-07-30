@@ -249,11 +249,15 @@ type RunPage struct {
 type ChartsPage struct {
 	Shell
 	RunHead
-	Charts []LineChart
-	Chart  *LineChart // the one opened full size
-	All    string     // back to every chart at once
-	Agent  AgentOverlay
-	Note   string // set when the run recorded no series at all
+	Charts []LineChart // every chart, for the picker
+	// Rest is the grid under the expanded one: every chart *except* it. With
+	// nothing expanded that is all of them; with one open, showing it again
+	// below itself would be the same plot twice on one page.
+	Rest  []LineChart
+	Chart *LineChart // the one opened full size
+	All   string     // back to every chart at once
+	Agent AgentOverlay
+	Note  string // set when the run recorded no series at all
 }
 
 // Jump is a card on the overview that leads into one of the detail views,
