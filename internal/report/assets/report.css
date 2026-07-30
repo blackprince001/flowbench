@@ -192,6 +192,14 @@ a { color: inherit; }
   border-radius: 14px;
 }
 
+/* Each column is placed explicitly. Without that, hiding a rail does not leave
+   its track empty — the remaining items slide down into the first free track,
+   so a collapsed run list drops the page into the `auto` column and it shrinks
+   to its own content with the 1fr track left as a void beside it. */
+.side { grid-column: 1; }
+.main { grid-column: 2; }
+.rail { grid-column: 3; }
+
 .side {
   width: 232px;
   display: flex;
@@ -235,14 +243,19 @@ a { color: inherit; }
 :root[data-rail="off"] .rail { display: none; }
 :root:has(.rail:empty) .detail-btn { display: none; }
 
+/* The topbar carries the same width and centring as the flow beneath it, and
+   the breadcrumb leads, so a crumb trail starts exactly where the page title
+   does. The two toggles ride together at the far end rather than pushing the
+   trail out of alignment by their own width. */
 .topbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 4px;
+  width: 100%;
+  max-width: var(--flow, 1080px);
+  margin: 0 auto 4px;
 }
 .topbar .crumbs { margin: 0; flex: 1; min-width: 0; }
-.detail-btn { margin-left: auto; }
 
 /* Two 14px bars, one narrow: a panel beside a page. The side button's narrow
    bar leads, the detail button's trails, so each points at what it toggles. */
@@ -360,7 +373,21 @@ a { color: inherit; }
 /* The flow's own gap owns the vertical rhythm, so nothing inside it carries a
    stacking margin of its own. */
 .flow > * { margin-block: 0; }
-.page-head { display: flex; flex-direction: column; gap: 5px; }
+/* Title on the left, the run's facts on the right of the same line — the
+   facts are reference, not a subtitle, and reading them as a column under the
+   title made them look like one. They wrap under it when there is no room. */
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 20px;
+  margin-bottom: 22px;
+}
+.page-head .page-title { margin: 0; }
+/* margin-left rather than justify-content, so the facts stay right-aligned on
+   the line they wrap onto as well as beside the title. */
+.page-head .byline { margin: 0 0 0 auto; text-align: right; justify-content: flex-end; }
 
 /* Header --------------------------------------------------------------- */
 
@@ -369,9 +396,7 @@ a { color: inherit; }
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  font: 11px/1 var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font: 12px/1 var(--sans);
   color: var(--ink-3);
   margin-bottom: 14px;
 }
@@ -388,18 +413,20 @@ a { color: inherit; }
   text-wrap: balance;
 }
 
+/* The byline reads as a sentence of facts about the run, so it is set in the
+   sans at its natural case. Mono and small caps made a target name and a
+   commit look like column headings rather than like the answer to "which run
+   is this". */
 .byline {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  font: 11px/1.6 var(--mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font: 12px/1.6 var(--sans);
   color: var(--ink-3);
   margin: 0 0 26px;
 }
-.byline b { color: var(--ink-2); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
+.byline b { color: var(--ink-2); font-weight: 500; }
 .byline-sep { color: var(--hairline); }
 
 /* A pill states the run's verdict in a word; the colour only reinforces it. */
@@ -1417,6 +1444,8 @@ a.frame { text-decoration: none; }
    there is no column to collapse into. */
 @media (max-width: 860px) {
   .shell { grid-template-columns: minmax(0, 1fr); }
+  /* One column: the explicit placements above would create implicit tracks. */
+  .side, .main, .rail { grid-column: auto; }
   .side, :root[data-side="off"] .side { display: flex; position: static; max-height: none; width: auto; }
   .rail, :root[data-rail="off"] .rail { display: flex; position: static; max-height: none; width: auto; }
   .rail:empty { display: none; }

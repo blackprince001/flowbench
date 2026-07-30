@@ -1,12 +1,14 @@
 {{ define "content" }}
 
-<h1 class="page-title">Watching {{ .Scenario }}</h1>
-<p class="byline">
-  <b>{{ .Mode }}</b>
-  <span class="byline-sep" aria-hidden="true">•</span><b>{{ .Target }}</b>
-  <span class="byline-sep" aria-hidden="true">•</span>
-  <span class="pill" id="live-status" style="--tone:var(--kind-net)">running</span>
-</p>
+<header class="page-head">
+  <h1 class="page-title">Watching {{ .Scenario }}</h1>
+  <p class="byline">
+    <b>{{ .Mode }}</b>
+    <span class="byline-sep" aria-hidden="true">•</span><b>{{ .Target }}</b>
+    <span class="byline-sep" aria-hidden="true">•</span>
+    <span class="pill" id="live-status" style="--tone:var(--kind-net)">running</span>
+  </p>
+</header>
 
 <section class="card">
   <div class="card-head">

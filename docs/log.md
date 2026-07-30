@@ -16,6 +16,12 @@
 
   **The overview keeps the grid.** Seeing the shape is the reason to open one, so nothing is hidden from the page that summarizes the run — only the expansion moved, and every small multiple there links into the tab. The chart set is built in one place for both, since a chart on one page and not the other would make the other's links dead. `?chart=` on the overview is a permanent redirect carrying the chart it named, the same way `/dashboard` was kept alive when it merged into the run page — a link written before the tab existed still lands on the plot it meant.
 
+- **The page header lines up now.** The breadcrumb sat in a bar that started at the toggle button's edge while the title started at the reading column's, so every page had two left margins about forty pixels apart. The topbar carries the flow's own width and centring, the trail leads it, and both toggles ride together at the far end — a crumb trail now begins exactly where the title does. The trail is set in the sans rather than in mono small caps: it is prose, not a machine fact.
+
+  The byline moved to the right of the title on the same line, and lost its underlines — every fact in it looked like a link and none of them is — and its uppercase mono, which made a target name and a commit read as column headings rather than as the answer to "which run is this". It stays right-aligned on the line it wraps onto when the title leaves no room.
+
+  **A collapsed rail no longer moves the page.** Each column is placed explicitly now (`grid-column: 1/2/3`), because a hidden grid item does not leave its track empty — the remaining items slide into the first free one, so collapsing the run list dropped the page into the `auto` column, shrank it to its own content and left the `1fr` track beside it as a void. Found by collapsing both rails on a wide window.
+
 - **Projects are tabs now.** The workspace's projects sit in a window-style strip across the top — a coloured badge carrying the project's first letter, its name, its run count — with the one you are in marked, and an overview button beside them that leads back to the project list. It replaces the sidebar's project list, so switching project is one click from wherever you are rather than a trip back to the workspace root; the sidebar is now about runs alone.
 
   **The colour and the letter are derived, never stored** — hashed from the project's name into the same validated categorical slots the span kinds use — so a project's tab looks the same everywhere it appears and nothing has to be persisted to keep it stable.
