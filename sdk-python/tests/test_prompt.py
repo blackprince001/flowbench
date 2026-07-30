@@ -568,6 +568,136 @@ def test_a_flagged_value_inside_a_prompt_is_redacted(client, provider_url, tmp_p
   assert PLACEHOLDER in artifacts
 
 
+# -- variants (issue #44) --------------------------------------------------
+
+CONCISE = "Classify in one word."
+VERBOSE = "Classify the ticket, explaining your reasoning."
+
+
+def variant_flow(client, provider):
+  """One observation recorded under two labels. What varies is the flow's own
+  code -- a different system prompt -- which is the whole of what a variant
+  is: the label only gives that version its own identity.
+  """
+  flow = Flow("triage")
+
+  @flow.step
+  def classify(ctx):
+    for label, system in (("concise", CONCISE), ("verbose", VERBOSE)):
+      messages = [{"role": "system", "content": system}, *MESSAGES[1:]]
+      provider.reply = (200, completion(content=f"refund_{label}"))
+      with ctx.prompt("classify", template=system, variant=label) as p:
+        reply = client.create(messages)
+        p.record(messages, reply["choices"][0]["message"]["content"])
+
+  return flow
+
+
+def test_two_variants_are_two_identities_in_the_run_store(
+  client, provider, provider_url, tmp_path
+):
+  store = tmp_path / "store"
+  variant_flow(client, provider).run(
+    Profile(mode="integration"), base_url=provider_url, store=str(store)
+  )
+
+  trace = json.loads(next(store.glob("*/traces.json")).read_text())[0]
+  observations = {c["Name"]: c["Payload"] for c in trace["Children"][0]["Children"]}
+  assert set(observations) == {"classify@concise", "classify@verbose"}
+
+  concise, verbose = observations["classify@concise"], observations["classify@verbose"]
+  assert concise["completion"] == "refund_concise"
+  assert verbose["completion"] == "refund_verbose"
+  assert concise["variant"] == "concise"
+  assert verbose["variant"] == "verbose"
+  # Each variant's own prompt, so each gets its own identity: without this a
+  # diff could not tell the two versions apart at all.
+  assert concise["prompt_hash"] != verbose["prompt_hash"]
+  assert concise["prompt_hash"] == hash_prompt(CONCISE, "")
+
+  # And they fold apart, which is what keeps per-variant metrics per-variant.
+  folded = json.loads(next(store.glob("*/folded.json")).read_text())
+  step = folded["root"]["children"]["flow:triage"]["children"]["classify"]
+  assert {"classify@concise", "classify@verbose"} <= set(step["children"])
+  assert step["children"]["classify@concise"]["count"] == 1
+
+
+def test_a_run_records_the_identities_it_used(client, provider, provider_url, tmp_path):
+  store = tmp_path / "store"
+  variant_flow(client, provider).run(
+    Profile(mode="integration"), base_url=provider_url, store=str(store)
+  )
+
+  meta = json.loads((store / "index.json").read_text())[0]
+  assert meta["identities"] == [
+    "classify",
+    "classify.classify@concise",
+    "classify.classify@verbose",
+  ]
+
+
+def test_a_renamed_variant_warns_that_folding_will_break(
+  client, provider, provider_url, tmp_path, capsys
+):
+  store = tmp_path / "store"
+  profile = Profile(mode="integration")
+  variant_flow(client, provider).run(profile, base_url=provider_url, store=str(store))
+  capsys.readouterr()
+
+  renamed = Flow("triage")
+
+  @renamed.step
+  def classify(ctx):
+    for label, system in (("terse", CONCISE), ("verbose", VERBOSE)):
+      messages = [{"role": "system", "content": system}, *MESSAGES[1:]]
+      with ctx.prompt("classify", template=system, variant=label) as p:
+        reply = client.create(messages)
+        p.record(messages, reply["choices"][0]["message"]["content"])
+
+  renamed.run(profile, base_url=provider_url, store=str(store))
+
+  err = capsys.readouterr().err
+  assert "classify.classify@concise" in err
+  assert "cross-run folding for it will break" in err
+  # The one that did not move is not reported.
+  assert "classify@verbose" not in err
+
+
+def test_an_unchanged_run_warns_about_nothing(
+  client, provider, provider_url, tmp_path, capsys
+):
+  store = tmp_path / "store"
+  profile = Profile(mode="integration")
+  for _ in range(2):
+    variant_flow(client, provider).run(profile, base_url=provider_url, store=str(store))
+  assert "warning" not in capsys.readouterr().err
+
+
+def test_a_failed_run_is_not_read_as_a_rename(
+  client, provider, provider_url, tmp_path, capsys
+):
+  """A run that stopped early never reached identities it would otherwise
+  have recorded, and calling those renames would blame the author for the
+  failure they are already looking at.
+  """
+  store = tmp_path / "store"
+  profile = Profile(mode="integration")
+  variant_flow(client, provider).run(profile, base_url=provider_url, store=str(store))
+  capsys.readouterr()
+
+  broken = Flow("triage")
+
+  @broken.step
+  def classify(ctx):
+    with ctx.prompt("classify", variant="concise") as p:
+      reply = client.create(MESSAGES)
+      p.record(MESSAGES, reply["choices"][0]["message"]["content"])
+    expect(p.completion).to_be("something else entirely")
+
+  broken.run(profile, base_url=provider_url, store=str(store))
+  assert "warning" not in capsys.readouterr().err
+
+
 # -- capture policy --------------------------------------------------------
 
 
