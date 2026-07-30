@@ -1410,3 +1410,252 @@ a.frame { text-decoration: none; }
 @media (prefers-reduced-motion: no-preference) {
   .nav-item, .frame, .row-link { transition: background-color 90ms ease, outline-color 90ms ease, filter 90ms ease; }
 }
+
+/* Open runs ------------------------------------------------------------ */
+
+/* A window-style strip across the top: the runs someone is holding open, each
+   found by a coloured letter before it is read. It sits outside .shell so it
+   spans the whole width like a title bar, above all three columns. */
+.tabstrip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px 0;
+  background: var(--ground);
+}
+.tabstrip-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabstrip-tabs::-webkit-scrollbar { display: none; }
+
+.runtab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 230px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  text-decoration: none;
+  color: var(--ink-3);
+  flex: none;
+}
+.runtab:hover { background: var(--surface); color: var(--ink-2); }
+.runtab.is-active {
+  background: var(--surface);
+  border-color: var(--hairline);
+  color: var(--ink);
+}
+
+/* The badge is the tab's handle: one letter from the scenario, in a colour
+   hashed from its name, so every run of one scenario looks alike and the strip
+   is scannable without reading a word of it. */
+.runtab-badge {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  font: 600 11px/1 var(--mono);
+  color: #fff;
+  background: var(--tone);
+}
+.runtab-label {
+  font: 500 12.5px/1 var(--sans);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.runtab-sub { font: 11px/1 var(--mono); color: var(--ink-3); flex: none; }
+
+/* The close button only appears on the tab under the pointer or focus, so a
+   strip at rest is a list of runs rather than a row of buttons. It stays in
+   the layout either way — a tab that changed width on hover would shuffle its
+   neighbours under the cursor. */
+.runtab-close {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink-3);
+  font: 13px/1 var(--sans);
+  cursor: pointer;
+  opacity: 0;
+}
+.runtab:hover .runtab-close,
+.runtab-close:focus-visible { opacity: 1; }
+.runtab-close:hover { background: var(--hairline); color: var(--ink); }
+
+.runtab-add {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--ink-3);
+  text-decoration: none;
+  font: 15px/1 var(--sans);
+}
+.runtab-add:hover { background: var(--surface); color: var(--ink); }
+
+/* The strip is chrome, and chrome is the first thing to go when the window is
+   the size of a phone: the run list in the left column already navigates. */
+@media (max-width: 860px) {
+  .tabstrip { display: none; }
+}
+
+/* Prompt diff ---------------------------------------------------------- */
+
+/* The observation list is the page's index: one row per prompt the run
+   recorded, its variants stated as chips so a reader sees what there is to
+   compare before choosing anything. */
+.obs-list { display: flex; flex-direction: column; gap: 4px; }
+.obs {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--ink-2);
+}
+.obs:hover { border-color: var(--ink-3); background: var(--raised); }
+.obs.is-selected { background: var(--raised); border-color: var(--kind-logic); color: var(--ink); }
+.obs-name { font: 500 13px/1 var(--mono); color: var(--ink); }
+.obs-step { font: 11px/1 var(--mono); color: var(--ink-3); }
+.obs-variants { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.obs-chip {
+  font: 500 10px/1 var(--mono);
+  letter-spacing: 0.04em;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--kind-logic) var(--tint), var(--surface));
+  color: var(--ink);
+}
+.obs-count { font: 11px/1 var(--mono); color: var(--ink-3); white-space: nowrap; }
+
+/* Two headers over two columns, aligned to the diff below them so the label
+   above a side always names the side under it. */
+.diff-heads { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.diff-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.diff-sub { font: 11px/1 var(--mono); color: var(--ink-3); }
+.hash { font: 11px/1 var(--mono); color: var(--ink-3); }
+
+/* The prompt's own verdict leads the card: an output that moved under a
+   changed prompt is the author's edit, not the model drifting, and reading the
+   completions without knowing which is the mistake this line prevents. */
+.prompt-flag {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.diff-stat { display: flex; gap: 12px; font-size: 11px; margin: 0 0 8px; }
+.d-added { color: var(--ok); }
+.d-removed { color: var(--failed); }
+.d-changed { color: var(--throttled); }
+.diff-identical {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  color: var(--ink-3);
+  margin: 0 0 8px;
+}
+
+.diff {
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--ground);
+  font: 12px/1.65 var(--mono);
+}
+.drow { display: grid; grid-template-columns: 1fr 1fr; }
+.dside { display: flex; gap: 10px; padding: 2px 10px; min-width: 0; border-right: 1px solid var(--hairline-soft); }
+.dside:last-child { border-right: 0; }
+.dline { display: flex; gap: 10px; padding: 2px 10px; }
+.dno {
+  flex: none;
+  width: 26px;
+  text-align: right;
+  color: var(--ink-3);
+  font-size: 11px;
+  user-select: none;
+}
+.dtext { white-space: pre-wrap; word-break: break-word; min-width: 0; color: var(--ink-2); }
+
+/* Tinted rows carry the row-level verdict; the marks inside carry the
+   word-level one. Both are pale enough that the text stays the thing being
+   read — a diff whose colour shouts is a diff nobody reads twice. */
+.d-changed .dleft, .d-removed { background: color-mix(in oklab, var(--failed) 7%, transparent); }
+.d-changed .dright, .d-added { background: color-mix(in oklab, var(--ok) 7%, transparent); }
+.d-same .dtext, .d-same .dno { color: var(--ink-3); }
+
+/* Neither mark relies on its colour: the deletion is struck through and the
+   addition is underlined, so the two are told apart in greyscale and under
+   deuteranopia, where red and green are the same colour. */
+.d-mark-del,
+.d-mark-add {
+  border-radius: 3px;
+  padding: 0 1px;
+  color: var(--ink);
+}
+.d-mark-del {
+  background: color-mix(in oklab, var(--failed) 26%, transparent);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, var(--failed) 70%, transparent);
+}
+.d-mark-add {
+  background: color-mix(in oklab, var(--ok) 26%, transparent);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-decoration-color: color-mix(in oklab, var(--ok) 70%, transparent);
+}
+
+/* A segmented control for the layout switch. It is two links, so the layout is
+   part of the URL and survives being shared like every other selection. */
+.seg {
+  display: inline-flex;
+  padding: 3px;
+  gap: 3px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+}
+.seg-btn {
+  padding: 5px 10px;
+  border-radius: 6px;
+  font: 500 11px/1 var(--mono);
+  color: var(--ink-3);
+  text-decoration: none;
+}
+.seg-btn:hover { color: var(--ink); }
+.seg-btn.is-on { background: var(--raised); color: var(--ink); }
+
+@media (max-width: 860px) {
+  /* One column: two half-width columns of prose is unreadable on a phone, and
+     the inline layout says the same thing in the width available. */
+  .drow, .diff-heads { grid-template-columns: minmax(0, 1fr); }
+  .dside { border-right: 0; }
+  .obs { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .obs-variants { justify-content: flex-start; }
+}
