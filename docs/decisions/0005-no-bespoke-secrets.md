@@ -21,4 +21,4 @@ Secrets are not a FlowBench concept. YAML flows resolve `{{ env.VAR_NAME }}` aga
 
 - No secrets file format, storage, or rotation to build or audit.
 - Redaction is a hard P0 engine requirement and a non-functional guarantee, testable in isolation.
-- DB verifier connections use the same `{{ env.* }}` mechanism and are read-only by default.
+- ~~DB verifier connections use the same `{{ env.* }}` mechanism and are read-only by default.~~ The DB verifier was cut from v1 (PRD 10.4, 2026-07-30); the rule it was an instance of is unchanged.

@@ -24,7 +24,7 @@ An ordered, optionally branching sequence of Steps; the unit of authorship. Writ
 _Avoid_: test case, collection, journey
 
 **Step**:
-The atomic unit of a flow. Types: `call` (HTTP), `graphql`, `ws`, `grpc` (unary), `logic` (Python hook), `wait`/`poll-until`, `verify` (database check). Can extract values, assert conditions, and carry a retry/backoff policy.
+The atomic unit of a flow. Types: `call` (HTTP), `graphql`, `ws`, `grpc` (unary), `wait`/`poll-until`. Can extract values, assert conditions, and carry a retry/backoff policy.
 _Avoid_: request, task
 
 **Prompt observation**:

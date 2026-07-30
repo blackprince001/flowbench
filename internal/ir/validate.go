@@ -178,7 +178,7 @@ func (st *Step) validate(path string) []error {
 	}
 
 	specs := 0
-	for _, set := range []bool{st.Call != nil, st.GraphQL != nil, st.WS != nil, st.GRPC != nil, st.Wait != nil, st.Poll != nil, st.Verify != nil} {
+	for _, set := range []bool{st.Call != nil, st.GraphQL != nil, st.WS != nil, st.GRPC != nil, st.Wait != nil, st.Poll != nil} {
 		if set {
 			specs++
 		}
@@ -194,12 +194,11 @@ func (st *Step) validate(path string) []error {
 		StepGRPC:    st.GRPC != nil,
 		StepWait:    st.Wait != nil,
 		StepPoll:    st.Poll != nil,
-		StepVerify:  st.Verify != nil,
 	}
 	matches, known := specFor[st.Type]
 	switch {
 	case !known:
-		errs = append(errs, errf(path, "unknown step type %q (v0 executes call, graphql, ws, grpc, wait, poll, verify)", st.Type))
+		errs = append(errs, errf(path, "unknown step type %q (v0 executes call, graphql, ws, grpc, wait, poll)", st.Type))
 	case !matches:
 		errs = append(errs, errf(path, "type is %q but the %q spec is not set", st.Type, st.Type))
 	}
@@ -218,10 +217,6 @@ func (st *Step) validate(path string) []error {
 		errs = append(errs, errf(path, "wait duration must be positive"))
 	case st.Poll != nil:
 		errs = append(errs, st.Poll.validate(path)...)
-	case st.Verify != nil:
-		if st.Verify.Connection == "" || st.Verify.Query == "" {
-			errs = append(errs, errf(path, "verify step needs a connection and a query"))
-		}
 	}
 
 	if st.Retry != nil {
@@ -731,8 +726,6 @@ func (st *Step) templatedFields() []string {
 		collect(st.Call)
 	case st.Poll != nil:
 		collect(&st.Poll.Call)
-	case st.Verify != nil:
-		fields = append(fields, st.Verify.Args...)
 	case st.GraphQL != nil:
 		// The query document is deliberately excluded: values reach a GraphQL
 		// operation through variables, and a `{{ }}` spliced into the document

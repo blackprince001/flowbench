@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: FlowBench PRD
-description: Full product requirements document (v0.6 DRAFT) for FlowBench; the source of truth for v1 scope.
+description: Full product requirements document (v0.7 DRAFT) for FlowBench; the source of truth for v1 scope.
 tags:
   - product
   - prd
@@ -14,8 +14,8 @@ timestamp: 2026-07-08
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
 | **Author**         | Prince Kwabena Appiah Boadu                                                                                            |
 | **Status**         | `DRAFT`                                                                                                                |
-| **Version**        | v0.6                                                                                                                   |
-| **Last updated**   | 2026.07.12                                                                                                             |
+| **Version**        | v0.7                                                                                                                   |
+| **Last updated**   | 2026.07.30                                                                                                             |
 | **Target release** | v1, timeline TBD (see Milestones for relative sequencing)                                                              |
 | **Shape**          | Tooling packages, not a platform: Go engine + CLI, Python SDK, YAML DSL, embedded results server, target-metrics agent |
 | **Audience**       | Internal engineering teams; local-first developer tool                                                                 |
@@ -53,7 +53,7 @@ One flow definition, four kinds of truth. Write a flow once — in YAML for the 
 
 1. As an engineer, I want to define a chained flow (login → extract credentials → perform a series of authenticated calls → assert results) and run it N times concurrently to stress the path and examine every failed instance individually.
 2. As an engineer developing locally, I want to run a flow in integration mode against my dev server in seconds, as easily as running a test file, to verify my work before pushing.
-3. As an engineer, I want to verify that data flows correctly between modules — call service A, assert the effect is visible via service B (or, where necessary, directly in a database).
+3. As an engineer, I want to verify that data flows correctly between modules — call service A, assert the effect is visible via service B.
 4. As an investigator, I want a flame graph of the flow — which step, and which phase within it (connect, TLS, waiting, transfer, logic), consumes the time — for a single run or cumulatively across runs.
 5. As an engineer debugging a specific failure, I want to open the exact causal trace of one iteration — what happened, in order, at every step and phase — the way I'd read a browser performance panel, not just an aggregate chart.
 6. As an investigator, I want the target's CPU and memory streamed into the run via an agent, so a stress knee or a soak drift is attributable to the right cause.
@@ -95,7 +95,7 @@ The differentiator is deliberate: **one canonical flow, two authoring surfaces (
 - No notifications (Slack, email). v2.
 - No retention policies or artifact lifecycle management. Runs accumulate on disk under the user's control.
 - No browser/UI testing and no mobile app testing. This is an API-and-flow tool.
-- No general database or message-queue _steps_ as a primary pattern. Where an HTTP endpoint already exercises the flow, the flow is tested through HTTP. A narrow database _verifier_ for assertions is in scope (see 10.4); orchestration over queues and DBs is not.
+- No database or message-queue steps. Where an HTTP endpoint already exercises the flow, the flow is tested through HTTP; where none does, the assertion belongs in the service's own test suite, next to the schema it depends on. A read-only database _verifier_ was scoped for v1 and cut (see 10.4).
 - No dedicated setup/teardown subsystem. Seeding and cleanup are handled through the Python surface or through test data design — deliberately, to keep the engine lean.
 - No OAuth2 authorization-code flow (requires browser interaction). All other common auth schemes are in scope.
 - No mocking or service virtualization.
@@ -135,7 +135,7 @@ A single Go engine executes a canonical flow representation. Authoring happens i
 
 - **Endpoint:** a declared, reusable target — protocol, method/operation, URL or address template, default headers, auth requirement.
 - **Flow:** an ordered, optionally branching sequence of **Steps**. Each step calls an endpoint, can **extract** values into flow variables, and can **assert** conditions.
-- **Step:** the atomic unit. Types: `call` (HTTP/GraphQL/gRPC), `ws` (WebSocket session operation), `wait`/`poll-until`, `verify` (database check). `call` steps may carry an optional retry/backoff policy for rate-limited responses (see 10.1). Runtime Python is not a step type — flows that need it run Python-driven (ADR 0012).
+- **Step:** the atomic unit. Types: `call` (HTTP/GraphQL/gRPC), `ws` (WebSocket session operation), `wait`/`poll-until`. `call` steps may carry an optional retry/backoff policy for rate-limited responses (see 10.1). Runtime Python is not a step type — flows that need it run Python-driven (ADR 0012).
 - **Prompt Observation:** an LLM invocation made by the flow's own code in a Python-driven flow — any SDK or framework — wrapped by the Python SDK's prompt-observation API. The wrapper captures the prompt and completion (always), hashes the prompt's identity, emits a `prompt` span (the SDK's HTTP round-trip resolves as child spans via auto-instrumentation), and can pace and time-bound repeated calls. A **variant** label gives each named prompt version its own structural span identity (see 10.9).
 - **Profile:** the execution contract — mode (`integration | system | load | stress | soak`), VUs, ramp shape, duration or iteration count, thresholds, and an optional arrival-rate cap (see 10.3).
 - **Scenario:** one or more flows bound to a profile, a target config, and data pools. The runnable unit.
@@ -174,7 +174,7 @@ erDiagram
         string arrival_cap "optional self-imposed req/s ceiling"
     }
     STEP {
-        enum type "call, ws, wait, poll, verify"
+        enum type "call, ws, wait, poll"
     }
     PROMPT_OBSERVATION {
         string name "structural span identity, e.g. classify@concise"
@@ -270,9 +270,9 @@ graph LR
 
 ### 10.4 Verification beyond HTTP
 
-- `[P1]` `(E)` A `verify` step type checks state directly in a database when no endpoint exposes it: run a parameterized read-only query against a configured connection and assert on the result (row exists, count, field value). Adapter-based; PostgreSQL first, others by demand.
-- `[P1]` `(E)` Database connections are declared per target config, referenced by name, credentialed via `{{ env.* }}` (same mechanism as everywhere else), and **read-only by default**; write access requires an explicit per-connection flag.
-- `[P2]` `(E)` A disposable "demo DB" option for scenarios that need a seeded, throwaway database (container spun per run). [Open question on whether this earns its complexity.]
+**Cut from v1 (2026-07-30).** A `verify` step running a read-only query against a database, with connections declared per target config, was scoped here as `[P1]`. It is out: the engine stays HTTP-and-RPC shaped. What it would have cost is a database driver, a connection pool with its own ceiling (a verify step at VU scale measures the pool, not the service), a read-only enforcement story, and a live database in CI — against a check that, where no endpoint exposes the state, belongs in the service's own test suite next to the schema it depends on. The section keeps its number so the cross-references around it stay true.
+
+- `[P2]` `(E)` A disposable "demo DB" option for scenarios that need a seeded, throwaway database (container spun per run). Unaffected by the above — it seeds state for a service under test rather than asserting on it. [Open question on whether this earns its complexity.]
 
 ### 10.5 Execute (engine, CLI)
 
@@ -506,9 +506,7 @@ graph TD
         V --> PL["Planner<br/>profile → VU schedule<br/>+ optional arrival cap"]
         PL --> EX["Executor<br/>goroutine-per-VU pool<br/>10k VUs / node"]
         EX --> AD["Protocol adapters<br/>HTTP · GraphQL · WS · gRPC<br/>emit spans per phase,<br/>run retry/backoff,<br/>classify ok/failed/throttled"]
-        EX --> VF["DB verifier<br/>read-only adapters"]
         AD --> COL["Collector<br/>fold spans → flame data;<br/>keep raw traces → waterfall;<br/>redact; thresholds + trends;<br/>knee: degraded vs throttled"]
-        VF --> COL
         SELF["Engine self-metrics"] --> COL
     end
 
@@ -587,7 +585,7 @@ sequenceDiagram
 - **Footprint:** per-VU memory overhead low enough that a developer laptop comfortably handles hundreds of VUs; integration mode starts in well under a second for the local dev loop.
 - **Reliability:** runs are crash-tolerant (partial artifacts flushed); aborts are clean and propagate to all VUs within [X]s; poll-until and retry/backoff patterns are timeout- and attempt-bounded so a persistently rate-limited target cannot hang a run indefinitely.
 - **Determinism where it matters:** integration/system modes produce reproducible orderings; data-pool draws are seedable.
-- **Security:** no credential material is ever written into flow, scenario, or target-config files; any value sourced from `{{ env.* }}` or flagged sensitive by the SDK never appears in logs, traces, artifacts, or served views; DB verifier connections read-only by default; the results server binds to localhost by default.
+- **Security:** no credential material is ever written into flow, scenario, or target-config files; any value sourced from `{{ env.* }}` or flagged sensitive by the SDK never appears in logs, traces, artifacts, or served views; the results server binds to localhost by default.
 - **Agent discipline:** the agent's own overhead stays below [X]% CPU on the target, backs off its sampling under pressure, and fails open (a dead agent never affects the run, only the overlay).
 - **Compatibility:** Linux and macOS for the CLI/engine and agent; the Python SDK supports the org's standard Python versions.
 
@@ -680,7 +678,7 @@ An internal stress tool can still cause an internal outage. Defenses are configu
 |---|---|
 |M1: Engine core|Canonical IR, parser/validator, HTTP adapter emitting spans per phase, extract/assert/template chaining, YAML surface with `{{ env.* }}` resolution, data pools, target configs, CLI with integration mode (local dev loop)|
 |M2: The four modes|Planner + goroutine VU executor toward the 10k benchmark, load/stress/soak profiles, arrival-cap enforcement, retry/backoff policy execution and outcome classification (ok/failed/throttled), thresholds and trend evaluation, two-tier span storage (folded + raw trace trees), capture policy and redaction, run store, safety rails|
-|M3: Python SDK + protocols + agent|Python SDK — declarative flows compiling to the IR plus a Python-driven execution path that writes runs — with SDK-side HTTP auto-instrumentation, GraphQL, WebSockets, gRPC unary (with RESOURCE_EXHAUSTED mapped to throttled), prompt-observation API (Python-driven: always-on prompt/completion capture, identity hashing, variant labels, in-process pace/timeout guards), auth scheme coverage, DB verifier (read-only, Postgres), agent v1 with run-store correlation|
+|M3: Python SDK + protocols + agent|Python SDK — declarative flows compiling to the IR plus a Python-driven execution path that writes runs — with SDK-side HTTP auto-instrumentation, GraphQL, WebSockets, gRPC unary (with RESOURCE_EXHAUSTED mapped to throttled), prompt-observation API (Python-driven: always-on prompt/completion capture, identity hashing, variant labels, in-process pace/timeout guards), auth scheme coverage, agent v1 with run-store correlation|
 |M4: Results server|Flame graphs (single + cumulative) and the waterfall/trace debug view over the same span data, dashboards with agent overlays and throttle-rate charting, failure drill-down grouped by step/cause with throttled as its own group, degraded-vs-throttled knee-point reporting, regression comparison, prompt diff view (variant vs variant, run vs baseline), soak trend view, live view, hardening and dogfood exit|
 
 > _M1+M2 alone already replace the pytest-plus-Locust glue for HTTP services; M3 and M4 are where the differentiation compounds — the agent, the flame graphs, the waterfall trace view, honest throttle-aware stress reporting, and prompt diffing are what no off-the-shelf combination gives you. Prompt testing (10.9) is deliberately a thin layer over the protected mechanics — the Python-driven SDK path, auto-instrumentation, capture, baseline comparison — so its marginal cost is small. If scope pressure hits, SOAP, Lua, and the demo DB are the first deferrals, then pace-guard coordination and spread rendering (the observation API and its diff survive longer); the IR, chaining, profile mechanics, span emission, outcome classification, and the results server are the protected core._
