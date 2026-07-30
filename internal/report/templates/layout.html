@@ -10,44 +10,38 @@
 </head>
 <body>
 
-{{ if .OpenTab }}
-<!-- The strip of runs a reader is holding open. The server renders exactly the
-     one this page is, because that is the only one it knows about; the script
-     adds the others back from what the browser remembers. With JavaScript off
-     it stays a correct, single-tab strip rather than disappearing. -->
-<div class="tabstrip" data-tab-id="{{ .OpenTab.ID }}" data-tab-label="{{ .OpenTab.Label }}"
-     data-tab-sub="{{ .OpenTab.Sub }}" data-tab-href="{{ .OpenTab.Href }}"
-     data-tab-badge="{{ .OpenTab.Badge }}" data-tab-tone="{{ .OpenTab.Tone }}">
-  <nav class="tabstrip-tabs" aria-label="Open runs">
-    <a class="runtab is-active" href="{{ .OpenTab.Href }}" style="--tone:var(--{{ .OpenTab.Tone }})">
-      <span class="runtab-badge" aria-hidden="true">{{ .OpenTab.Badge }}</span>
-      <span class="runtab-label">{{ .OpenTab.Label }}</span>
-      <span class="runtab-sub">{{ .OpenTab.Sub }}</span>
+{{ if .ProjectTabs }}
+<!-- The projects in this workspace, as a strip of tabs across the top. Every
+     one of them is a `--store` the server was given, so this is entirely
+     server-rendered: no client state, and it works with JavaScript off. It
+     replaces the sidebar's project list, so switching project is one click
+     from wherever you are rather than a trip back to the workspace root. -->
+<div class="tabstrip">
+  {{ if .AllProjectsHref }}
+  <a class="tabstrip-all" href="{{ .AllProjectsHref }}" title="All projects" aria-label="All projects">
+    <svg class="tabstrip-all-mark" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+      <rect x="0" y="0" width="6" height="6" rx="1.5"/><rect x="8" y="0" width="6" height="6" rx="1.5"/>
+      <rect x="0" y="8" width="6" height="6" rx="1.5"/><rect x="8" y="8" width="6" height="6" rx="1.5"/>
+    </svg>
+  </a>
+  {{ end }}
+  <nav class="tabstrip-tabs" aria-label="Projects">
+    {{ range .ProjectTabs }}
+    <a class="ptab{{ if .Current }} is-active{{ end }}" href="{{ .Href }}"
+       style="--tone:var(--{{ .Tone }})"{{ if .Current }} aria-current="page"{{ end }}>
+      <span class="ptab-badge" aria-hidden="true">{{ .Badge }}</span>
+      <span class="ptab-name">{{ .Name }}</span>
+      <span class="ptab-runs">{{ .Runs }}</span>
     </a>
+    {{ end }}
   </nav>
-  <a class="runtab-add" href="{{ .OpenTab.ListHref }}"
-     title="Open another run" aria-label="Open another run">+</a>
 </div>
-<script>{{ tabsJS }}</script>
 {{ end }}
 
 <div class="shell">
 
   <nav class="side" aria-label="Runs and projects">
     <div class="brand"><span class="brand-mark" aria-hidden="true"></span>flowbench</div>
-    {{ if .ProjectNav }}
-    <div class="nav-group">
-      <div class="nav-label" id="nav-projects">Projects</div>
-      <ul class="nav-list" aria-labelledby="nav-projects">
-        {{ range .ProjectNav }}
-        <li><a class="nav-item" href="{{ .Href }}"{{ if .Current }} aria-current="page"{{ end }}>
-          <span class="nav-item-name">{{ .Label }}</span>
-          <span class="nav-item-meta">{{ .Meta }}</span>
-        </a></li>
-        {{ end }}
-      </ul>
-    </div>
-    {{ end }}
     {{ if .Nav }}
     <div class="nav-group">
       <div class="nav-label" id="nav-runs">Runs</div>

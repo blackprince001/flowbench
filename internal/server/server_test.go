@@ -1114,36 +1114,6 @@ func TestShellHasThreeColumns(t *testing.T) {
 	}
 }
 
-// The left column switches projects as well as runs, so moving between them
-// does not mean a trip back to the workspace root.
-func TestSidebarSwitchesProjects(t *testing.T) {
-	dir := t.TempDir()
-	a, b := filepath.Join(dir, "checkout"), filepath.Join(dir, "billing")
-	saveRun(t, a, nil)
-	id := saveRun(t, b, nil)
-	ws, err := store.NewWorkspace([]string{"Checkout=" + a, "Billing=" + b})
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := server.New(ws)
-
-	_, body := get(t, s, "/p/billing/runs/"+id)
-	if !strings.Contains(body, `id="nav-projects"`) {
-		t.Fatal("a multi-project workspace should list its projects in the sidebar")
-	}
-	if !strings.Contains(body, `href="/p/checkout/"`) {
-		t.Error("the other project should be one click away")
-	}
-
-	// One project is not a choice, so it is not offered inside a run.
-	s2, runBase := serve(t)
-	if _, single := get(t, s2, runBase); strings.Contains(single, `id="nav-projects"`) {
-		t.Error("a single-project workspace has nothing to switch between")
-	}
-}
-
-// Overview and dashboard were two tabs of one question. The merged page carries
-// both, and the old URL still lands on it.
 func TestDashboardRedirectsIntoTheRunPage(t *testing.T) {
 	s, runBase := serve(t)
 
@@ -1318,41 +1288,107 @@ func TestPromptsPageOnARunWithoutObservationsExplainsItself(t *testing.T) {
 	}
 }
 
-// -- open runs as tabs -----------------------------------------------------
+// -- projects as tabs ------------------------------------------------------
 
-func TestEveryRunPageCarriesItsOwnTab(t *testing.T) {
+func TestEveryPageCarriesTheProjectStrip(t *testing.T) {
 	s, runBase := serve(t)
-	for _, view := range []string{"", "/flame", "/waterfall", "/outcomes", "/failures", "/compare"} {
-		_, body := get(t, s, runBase+view)
+	for _, path := range []string{projectOf(runBase), runBase, runBase + "/flame", runBase + "/waterfall", runBase + "/compare"} {
+		_, body := get(t, s, path)
 		if !strings.Contains(body, `class="tabstrip"`) {
-			t.Errorf("%s has no run tab strip", view)
+			t.Errorf("%s has no project strip", path)
 		}
-		if !strings.Contains(body, `class="runtab is-active"`) {
-			t.Errorf("%s does not render its own tab server-side", view)
+		if !strings.Contains(body, `class="ptab is-active"`) {
+			t.Errorf("%s does not mark the project it is in", path)
 		}
-	}
-
-	// The run list is not a run, so it wears no tab of its own.
-	_, body := get(t, s, projectOf(runBase))
-	if strings.Contains(body, `class="tabstrip"`) {
-		t.Error("the run list is not an open run")
 	}
 }
 
-func TestRunsOfOneScenarioShareABadgeAndColour(t *testing.T) {
-	s, runBase, baseline := servePrompts(t)
-	_, newer := get(t, s, runBase)
-	_, older := get(t, s, "/p/triage/runs/"+baseline)
+func TestProjectStripSwitchesBetweenProjects(t *testing.T) {
+	root := t.TempDir()
+	checkout := filepath.Join(root, "checkout")
+	billing := filepath.Join(root, "billing")
+	id := saveRun(t, checkout, nil)
+	saveRun(t, billing, nil)
 
-	badge := regexp.MustCompile(`data-tab-badge="([^"]*)" data-tab-tone="([^"]*)"`)
-	a, b := badge.FindStringSubmatch(newer), badge.FindStringSubmatch(older)
+	ws, err := store.NewWorkspace([]string{"Checkout API=" + checkout, "Billing=" + billing})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := server.New(ws)
+
+	_, body := get(t, srv, "/p/checkout-api/runs/"+id)
+	for _, want := range []string{"Checkout API", "Billing", `href="/p/billing/"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("strip missing %q — switching project should be one click", want)
+		}
+	}
+	// Exactly one tab is the one you are in.
+	if got := strings.Count(body, `class="ptab is-active"`); got != 1 {
+		t.Errorf("%d active tabs, want 1", got)
+	}
+	// And the overview button exists, because there is more than one project.
+	if !strings.Contains(body, `class="tabstrip-all"`) {
+		t.Error("a multi-project workspace should offer the overview")
+	}
+}
+
+func TestSingleProjectStripNamesItWithoutOfferingAnOverview(t *testing.T) {
+	s, runBase := serve(t)
+	_, body := get(t, s, runBase)
+	if !strings.Contains(body, `class="ptab is-active"`) {
+		t.Error("the one project should still name itself")
+	}
+	// The workspace root redirects straight back in, so an overview button
+	// would link to the page you are already on.
+	if strings.Contains(body, `class="tabstrip-all"`) {
+		t.Error("a single-project workspace has no overview to go to")
+	}
+}
+
+func TestProjectBadgeAndColourFollowTheName(t *testing.T) {
+	root := t.TempDir()
+	checkout := filepath.Join(root, "checkout")
+	id := saveRun(t, checkout, nil)
+	ws, err := store.NewWorkspace([]string{"Checkout API=" + checkout})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := server.New(ws)
+
+	tab := regexp.MustCompile(`<a class="ptab is-active"[^>]*style="--tone:var\(--([a-z-]+)\)"`)
+	_, onRun := get(t, srv, "/p/checkout-api/runs/"+id)
+	_, onList := get(t, srv, "/p/checkout-api/")
+
+	a, b := tab.FindStringSubmatch(onRun), tab.FindStringSubmatch(onList)
 	if a == nil || b == nil {
-		t.Fatal("both pages should describe their tab")
+		t.Fatal("both pages should render the project tab")
 	}
-	if a[1] != b[1] || a[2] != b[2] {
-		t.Errorf("two runs of one scenario differ: %v vs %v", a[1:], b[1:])
+	if a[1] != b[1] {
+		t.Errorf("a project changed colour between pages: %q vs %q", a[1], b[1])
 	}
-	if a[1] != "T" {
-		t.Errorf("badge = %q, want the scenario's first letter", a[1])
+	if !strings.Contains(onRun, `>C</span>`) {
+		t.Error("the badge should be the project's first letter")
+	}
+}
+
+func TestOverviewButtonAppearsWhereItLeadsSomewhereElse(t *testing.T) {
+	root := t.TempDir()
+	a, b := filepath.Join(root, "checkout"), filepath.Join(root, "billing")
+	id := saveRun(t, a, nil)
+	saveRun(t, b, nil)
+	ws, err := store.NewWorkspace([]string{"Checkout=" + a, "Billing=" + b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := server.New(ws)
+
+	for _, path := range []string{"/p/checkout/", "/p/checkout/runs/" + id} {
+		if _, body := get(t, srv, path); !strings.Contains(body, `class="tabstrip-all"`) {
+			t.Errorf("%s should offer the way back to all projects", path)
+		}
+	}
+	// Not on the overview itself, which would be a link to the page you are on.
+	if _, body := get(t, srv, "/"); strings.Contains(body, `class="tabstrip-all"`) {
+		t.Error("the workspace root should not link to itself")
 	}
 }

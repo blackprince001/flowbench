@@ -1411,11 +1411,13 @@ a.frame { text-decoration: none; }
   .nav-item, .frame, .row-link { transition: background-color 90ms ease, outline-color 90ms ease, filter 90ms ease; }
 }
 
-/* Open runs ------------------------------------------------------------ */
+/* Projects ------------------------------------------------------------- */
 
-/* A window-style strip across the top: the runs someone is holding open, each
-   found by a coloured letter before it is read. It sits outside .shell so it
-   spans the whole width like a title bar, above all three columns. */
+/* A window-style strip across the top: the workspace's projects, each found by
+   a coloured letter before it is read. It sits outside .shell so it spans the
+   whole width like a title bar, above all three columns, and it replaces the
+   sidebar's project list — switching project is one click from wherever you
+   are rather than a trip back to the workspace root. */
 .tabstrip {
   display: flex;
   align-items: center;
@@ -1433,30 +1435,43 @@ a.frame { text-decoration: none; }
 }
 .tabstrip-tabs::-webkit-scrollbar { display: none; }
 
-.runtab {
-  position: relative;
+/* The overview button, in the position a window puts its tab-exposé control.
+   Four panes: what the workspace root shows. */
+.tabstrip-all {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--ink-3);
+  text-decoration: none;
+}
+.tabstrip-all:hover { background: var(--surface); color: var(--ink); }
+.tabstrip-all-mark { width: 13px; height: 13px; fill: currentColor; }
+
+.ptab {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  max-width: 230px;
-  padding: 7px 9px;
+  max-width: 240px;
+  padding: 7px 10px;
   border-radius: 8px;
   border: 1px solid transparent;
   text-decoration: none;
   color: var(--ink-3);
   flex: none;
 }
-.runtab:hover { background: var(--surface); color: var(--ink-2); }
-.runtab.is-active {
+.ptab:hover { background: var(--surface); color: var(--ink-2); }
+.ptab.is-active {
   background: var(--surface);
   border-color: var(--hairline);
   color: var(--ink);
 }
 
-/* The badge is the tab's handle: one letter from the scenario, in a colour
-   hashed from its name, so every run of one scenario looks alike and the strip
-   is scannable without reading a word of it. */
-.runtab-badge {
+/* The badge is the tab's handle: one letter from the project's name, in a
+   colour hashed from it, so the strip is scannable without reading a word. */
+.ptab-badge {
   flex: none;
   width: 20px;
   height: 20px;
@@ -1467,52 +1482,19 @@ a.frame { text-decoration: none; }
   color: #fff;
   background: var(--tone);
 }
-.runtab-label {
+.ptab-name {
   font: 500 12.5px/1 var(--sans);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
 }
-.runtab-sub { font: 11px/1 var(--mono); color: var(--ink-3); flex: none; }
-
-/* The close button only appears on the tab under the pointer or focus, so a
-   strip at rest is a list of runs rather than a row of buttons. It stays in
-   the layout either way — a tab that changed width on hover would shuffle its
-   neighbours under the cursor. */
-.runtab-close {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 4px;
-  background: none;
-  color: var(--ink-3);
-  font: 13px/1 var(--sans);
-  cursor: pointer;
-  opacity: 0;
-}
-.runtab:hover .runtab-close,
-.runtab-close:focus-visible { opacity: 1; }
-.runtab-close:hover { background: var(--hairline); color: var(--ink); }
-
-.runtab-add {
-  flex: none;
-  width: 26px;
-  height: 26px;
-  display: grid;
-  place-items: center;
-  border-radius: 7px;
-  color: var(--ink-3);
-  text-decoration: none;
-  font: 15px/1 var(--sans);
-}
-.runtab-add:hover { background: var(--surface); color: var(--ink); }
+/* The run count is the one fact worth carrying here: which project has
+   anything in it. It fades on the tabs you are not reading. */
+.ptab-runs { font: 11px/1 var(--mono); color: var(--ink-3); flex: none; }
 
 /* The strip is chrome, and chrome is the first thing to go when the window is
-   the size of a phone: the run list in the left column already navigates. */
+   the size of a phone: the breadcrumb still names the project. */
 @media (max-width: 860px) {
   .tabstrip { display: none; }
 }

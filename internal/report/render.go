@@ -12,7 +12,7 @@ import (
 	"unicode"
 )
 
-//go:embed assets/report.css assets/flame.js assets/live.js assets/shell.js assets/tabs.js assets/fonts/*.woff2 templates/*.html
+//go:embed assets/report.css assets/flame.js assets/live.js assets/shell.js assets/fonts/*.woff2 templates/*.html
 var assets embed.FS
 
 // AssetPrefix is the URL space the embedded binary assets live under. The
@@ -47,32 +47,33 @@ const rowHeight = 36
 // rail is filled by each page's own "detail" template, not from here, because
 // what is worth inspecting is the page's business.
 type Shell struct {
-	Title      string
-	Crumbs     []Crumb
-	ProjectNav []NavRun
-	Nav        []NavRun
-	Tabs       []Tab
-	// OpenTab describes the run this page belongs to, for the window-style
-	// strip of runs across the top. The server renders exactly one — the one
-	// being read — and the browser remembers the rest, because which runs a
-	// reader is holding open is theirs, not the store's.
-	OpenTab *RunTab
+	Title  string
+	Crumbs []Crumb
+	Nav    []NavRun
+	Tabs   []Tab
+	// Projects is the window-style strip across the top: one tab per project
+	// in the workspace, the current one marked. The server knows every
+	// project, so the strip needs no client state at all and works with
+	// JavaScript off — unlike the runs a reader happens to be holding open,
+	// which nobody but the browser could know.
+	ProjectTabs []ProjectTab
+	// AllProjectsHref is the workspace root, for the overview button beside
+	// the strip. Empty in a single-project workspace, which has no overview to
+	// go back to — the root redirects straight back in.
+	AllProjectsHref string
 }
 
-// RunTab is one run in the top strip: its identity, a letter and a colour to
-// find it by, and where it goes. Badge and Tone are derived from the scenario
-// rather than stored, so two runs of one scenario always look alike and a
-// reader picks the right tab without reading it.
-type RunTab struct {
-	ID    string
-	Label string
-	Sub   string
-	Href  string
-	Badge string
-	Tone  string
-	// ListHref is where the strip's "+" goes: this project's run list, which
-	// is the only place another run can be opened from.
-	ListHref string
+// ProjectTab is one project in the top strip: a letter and a colour to find it
+// by, its name, and how many runs it holds. Badge and Tone are derived from
+// the name rather than stored, so a project keeps its colour for as long as it
+// keeps its name and the strip is scannable without being read.
+type ProjectTab struct {
+	Name    string
+	Href    string
+	Runs    int
+	Badge   string
+	Tone    string
+	Current bool
 }
 
 // Tab is one view of a run. Count is shown when the view has a natural size
@@ -84,36 +85,34 @@ type Tab struct {
 	Selected bool
 }
 
-// tabTones are the categorical slots a run tab's badge is coloured from —
+// tabTones are the categorical slots a project tab's badge is coloured from —
 // the same validated set the span kinds use, so nothing new had to be checked
-// for contrast. The scenario name picks one, so a scenario keeps its colour
-// across runs and across sessions.
+// for contrast.
 var tabTones = []string{"kind-net", "kind-logic", "kind-retry", "ok", "throttled"}
 
-// NewRunTab derives a run's tab: the scenario's first letter as the badge, and
-// a colour hashed from the scenario name. Deriving rather than storing means
-// two runs of one scenario are always the same colour, which is what makes the
-// strip scannable without reading it.
-func NewRunTab(id, scenario, when, href, listHref string) *RunTab {
+// NewProjectTab derives a project's tab from its name: the first letter as the
+// badge, and a colour hashed from the whole name. Derived rather than stored,
+// so a project's tab looks the same in every workspace it appears in and
+// nothing has to be persisted to keep it stable.
+func NewProjectTab(name, href string, runs int, current bool) ProjectTab {
 	badge := "?"
-	for _, r := range scenario {
+	for _, r := range name {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			badge = strings.ToUpper(string(r))
 			break
 		}
 	}
 	var h uint32 = 2166136261
-	for _, b := range []byte(scenario) {
+	for _, b := range []byte(name) {
 		h = (h ^ uint32(b)) * 16777619
 	}
-	return &RunTab{
-		ID:       id,
-		Label:    scenario,
-		Sub:      when,
-		Href:     href,
-		Badge:    badge,
-		Tone:     tabTones[int(h)%len(tabTones)],
-		ListHref: listHref,
+	return ProjectTab{
+		Name:    name,
+		Href:    href,
+		Runs:    runs,
+		Badge:   badge,
+		Tone:    tabTones[int(h)%len(tabTones)],
+		Current: current,
 	}
 }
 
@@ -334,7 +333,6 @@ var funcs = template.FuncMap{
 	"flameJS":    func() template.JS { return template.JS(mustRead("assets/flame.js")) },
 	"liveJS":     func() template.JS { return template.JS(mustRead("assets/live.js")) },
 	"shellJS":    func() template.JS { return template.JS(mustRead("assets/shell.js")) },
-	"tabsJS":     func() template.JS { return template.JS(mustRead("assets/tabs.js")) },
 	"dur":        humanDur,
 	"framePos":   framePos,
 	"barPos":     barPos,

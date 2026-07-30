@@ -87,9 +87,9 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 
 	render(w, report.RenderIndex, report.IndexPage{
 		Shell: report.Shell{
-			Title:      "Projects",
-			Crumbs:     []report.Crumb{{Label: "flowbench"}, {Label: "projects"}},
-			ProjectNav: s.projectNav(""),
+			Title:       "Projects",
+			Crumbs:      []report.Crumb{{Label: "flowbench"}, {Label: "projects"}},
+			ProjectTabs: s.projectTabs(""),
 		},
 		Projects: cards,
 	})
@@ -130,10 +130,11 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 
 	render(w, report.RenderRuns, report.RunsPage{
 		Shell: report.Shell{
-			Title:      p.Name,
-			Crumbs:     s.crumbs(p, ""),
-			ProjectNav: s.projectNav(p.Slug),
-			Nav:        s.nav(p, index, ""),
+			Title:           p.Name,
+			Crumbs:          s.crumbs(p, ""),
+			ProjectTabs:     s.projectTabs(p.Slug),
+			AllProjectsHref: s.allProjectsHref(),
+			Nav:             s.nav(p, index, ""),
 		},
 		Project: p.Name,
 		Store:   p.Store.Root(),
@@ -693,13 +694,12 @@ func (s *Server) shell(p store.Project, m store.Meta, index []store.Meta, view s
 		tabs = append(tabs, report.Tab{Label: "Prompts", Href: base + "/prompts", Count: n, Selected: view == "prompts"})
 	}
 	return report.Shell{
-		Title:      m.Scenario,
-		Crumbs:     s.crumbs(p, m.ID),
-		ProjectNav: s.projectNav(p.Slug),
-		Nav:        s.nav(p, index, m.ID),
-		Tabs:       tabs,
-		OpenTab: report.NewRunTab(p.Slug+"/"+m.ID, m.Scenario,
-			m.StartedAt.Local().Format("15:04"), base, "/p/"+p.Slug+"/"),
+		Title:           m.Scenario,
+		Crumbs:          s.crumbs(p, m.ID),
+		ProjectTabs:     s.projectTabs(p.Slug),
+		AllProjectsHref: s.allProjectsHref(),
+		Nav:             s.nav(p, index, m.ID),
+		Tabs:            tabs,
 	}
 }
 
@@ -727,24 +727,32 @@ func (s *Server) nav(p store.Project, index []store.Meta, current string) []repo
 	return out
 }
 
-// projectNav lists the workspace's projects for the sidebar, so switching
-// between them is a click from anywhere rather than a trip back to the root. A
-// single-project workspace has nothing to switch to, so it lists nothing.
-func (s *Server) projectNav(current string) []report.NavRun {
-	if _, single := s.ws.Single(); single && current != "" {
-		return nil
-	}
-	out := make([]report.NavRun, 0, len(s.ws.Projects()))
-	for _, p := range s.ws.Projects() {
+// projectTabs is the strip across the top: every project the server was given,
+// with the one being read marked. It replaces the sidebar's project list —
+// switching project is one click from wherever you are, rather than a trip
+// back to the workspace root — and needs no client state, since which projects
+// exist is the server's own configuration.
+//
+// A single-project workspace still gets its one tab: it is not a choice, but
+// it names where you are, which is what a title bar is for.
+func (s *Server) projectTabs(current string) []report.ProjectTab {
+	projects := s.ws.Projects()
+	out := make([]report.ProjectTab, 0, len(projects))
+	for _, p := range projects {
 		runs, _ := p.Runs()
-		out = append(out, report.NavRun{
-			Href:    "/p/" + p.Slug + "/",
-			Label:   p.Name,
-			Meta:    fmt.Sprint(len(runs)),
-			Current: p.Slug == current,
-		})
+		out = append(out, report.NewProjectTab(p.Name, "/p/"+p.Slug+"/", len(runs), p.Slug == current))
 	}
 	return out
+}
+
+// allProjectsHref is the workspace root, or empty when there is only one
+// project — that root redirects straight back in, so an overview button would
+// be a link to the page you are already on.
+func (s *Server) allProjectsHref() string {
+	if _, single := s.ws.Single(); single {
+		return ""
+	}
+	return "/"
 }
 
 func lastSegment(path string) string {
