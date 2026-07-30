@@ -42,6 +42,7 @@ func New(ws *store.Workspace) *Server {
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/outcomes", s.outcomes)
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/failures", s.failures)
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/compare", s.compare)
+	s.mux.HandleFunc("GET /p/{project}/runs/{id}/prompts", s.prompts)
 	s.mux.Handle("GET "+report.AssetPrefix+"{file}", report.ServeAssets())
 	return s
 }
@@ -484,6 +485,105 @@ func previousRun(peers []store.Meta, m store.Meta) (store.Meta, bool) {
 	return store.Meta{}, false
 }
 
+// prompts is the prompt diff view (#45): the observations a run recorded, and
+// one comparison between two of them — two variants within this run, or the
+// same variant against an earlier run of the scenario.
+//
+// Which two sides are being compared is URL state like every other selection in
+// the report, so a diff worth discussing is a link rather than a description of
+// where to click.
+func (s *Server) prompts(w http.ResponseWriter, r *http.Request) {
+	p, m, index, ok := s.runContext(w, r)
+	if !ok {
+		return
+	}
+	id := m.ID
+
+	folded, _ := p.Store.LoadFolded(id)
+	traces, _ := p.Store.LoadTraces(id)
+	samples, _ := p.Store.LoadSamples(id)
+
+	q := report.PromptQuery{
+		Obs:  r.URL.Query().Get("obs"),
+		A:    r.URL.Query().Get("a"),
+		B:    r.URL.Query().Get("b"),
+		With: r.URL.Query().Get("with"),
+		Mode: r.URL.Query().Get("mode"),
+		Base: s.runBase(p, id) + "/prompts",
+	}
+	if q.Mode != "inline" {
+		q.Mode = "split"
+	}
+
+	groups := report.SortGroupsForDisplay(report.Observations(traces))
+	groups, selected := report.SelectObservation(groups, q.Obs, q)
+
+	page := report.PromptsPage{
+		Shell:      s.shell(p, m, index, "prompts", len(report.FlameFrames(folded)), traces, samples.Kept),
+		RunHead:    head(m),
+		Groups:     groups,
+		Selected:   selected,
+		Mode:       q.Mode,
+		SplitHref:  q.Href("mode", "split"),
+		InlineHref: q.Href("mode", "inline"),
+		Cur:        s.compareRef(p, m),
+	}
+
+	if selected == nil {
+		// Observation is Python-surface-only (ADR 0009/0012), so most runs have
+		// none and the tab is not offered for them at all. Reaching the URL
+		// directly says why rather than showing an empty frame.
+		page.Note = "this run recorded no prompt observations. They come from ctx.prompt(...) in a Python-driven flow — the Go engine never makes an LLM call, so a YAML run has none by construction."
+		render(w, report.RenderPrompts, page)
+		return
+	}
+
+	// A baseline is only offered for the same scenario, exactly as the
+	// regression comparison scopes it: two runs of different flows have no
+	// observation in common to diff.
+	peers := sameScenario(index, m)
+	page.Baselines = promptBaselines(peers, q)
+
+	bm, haveB := store.Meta{}, false
+	if q.With != "" {
+		if cand, err := p.Store.Load(q.With); err == nil && cand.Scenario == m.Scenario && cand.ID != id {
+			bm, haveB = cand, true
+		}
+	}
+
+	switch {
+	case haveB:
+		baseTraces, _ := p.Store.LoadTraces(bm.ID)
+		page.Baseline = s.compareRef(p, bm)
+		page.Compare = report.CompareBaseline(selected, report.Observations(baseTraces), q.A,
+			page.Cur.When, page.Baseline.When)
+	default:
+		page.Compare = report.CompareVariants(selected, q.A, q.B, q)
+	}
+	page.Compare.SetMode(q.Mode)
+
+	if page.Compare == nil {
+		page.Note = "only one version of this observation was recorded, and one side is not a diff. Record a second variant, or pick a baseline run below."
+	}
+
+	render(w, report.RenderPrompts, page)
+}
+
+// promptBaselines lists the scenario's other runs as baseline choices, keeping
+// whatever observation and layout the reader already had.
+func promptBaselines(peers []store.Meta, q report.PromptQuery) []report.BaselineOption {
+	out := make([]report.BaselineOption, 0, len(peers))
+	for _, o := range peers {
+		out = append(out, report.BaselineOption{
+			ID:       o.ID,
+			When:     o.StartedAt.Local().Format("2006-01-02 15:04"),
+			Href:     q.Href("with", o.ID),
+			Selected: o.ID == q.With,
+		})
+	}
+	return out
+}
+
 func (s *Server) compareRef(p store.Project, m store.Meta) report.CompareRef {
 	return report.CompareRef{
 		ID:        m.ID,
@@ -586,12 +686,20 @@ func (s *Server) shell(p store.Project, m store.Meta, index []store.Meta, view s
 		{Label: "Outcomes", Href: base + "/outcomes", Count: runs, Selected: view == "outcomes"},
 		{Label: "Compare", Href: base + "/compare", Selected: view == "compare"},
 	}
+	// Prompt observation is Python-surface-only, so most runs have none and
+	// the tab would be a permanently empty room. It appears for the runs that
+	// recorded one.
+	if n := report.PromptTabCount(traces); n > 0 {
+		tabs = append(tabs, report.Tab{Label: "Prompts", Href: base + "/prompts", Count: n, Selected: view == "prompts"})
+	}
 	return report.Shell{
 		Title:      m.Scenario,
 		Crumbs:     s.crumbs(p, m.ID),
 		ProjectNav: s.projectNav(p.Slug),
 		Nav:        s.nav(p, index, m.ID),
 		Tabs:       tabs,
+		OpenTab: report.NewRunTab(p.Slug+"/"+m.ID, m.Scenario,
+			m.StartedAt.Local().Format("15:04"), base, "/p/"+p.Slug+"/"),
 	}
 }
 

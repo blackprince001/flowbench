@@ -1,0 +1,217 @@
+{{ define "content" }}
+
+{{ template "run-head" .RunHead }}
+{{ template "tabs" .Tabs }}
+
+{{ if .Note }}
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Prompts</h2>
+      <p class="card-kicker">captured completions, compared</p>
+    </div>
+  </div>
+  <div class="card-body"><p class="hint">{{ .Note }}</p></div>
+</section>
+{{ else }}
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Observations</h2>
+      <p class="card-kicker">every prompt this run recorded</p>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="obs-list">
+      {{ range .Groups }}
+      <a class="obs{{ if .Selected }} is-selected{{ end }}" href="{{ .Href }}">
+        <span class="obs-name">{{ .Base }}</span>
+        <span class="obs-step">in {{ .Step }}</span>
+        <span class="obs-variants">
+          {{ range .Variants }}<span class="obs-chip">{{ if .Variant }}{{ .Variant }}{{ else }}no variant{{ end }}</span>{{ end }}
+        </span>
+        <span class="obs-count">{{ .Count }} recorded</span>
+      </a>
+      {{ end }}
+    </div>
+  </div>
+</section>
+
+{{ with .Compare }}
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">{{ if eq .Kind "variant" }}Variant diff{{ else }}Against baseline{{ end }}</h2>
+      <p class="card-kicker">{{ .ComparingNote }}</p>
+    </div>
+    <div class="seg" role="group" aria-label="Diff layout">
+      <a class="seg-btn{{ if eq $.Mode "split" }} is-on{{ end }}" href="{{ $.SplitHref }}">side by side</a>
+      <a class="seg-btn{{ if eq $.Mode "inline" }} is-on{{ end }}" href="{{ $.InlineHref }}">inline</a>
+    </div>
+  </div>
+  <div class="card-body">
+
+    {{ if .BaselineNote }}<p class="hint">{{ .BaselineNote }}</p>{{ else }}
+
+    <div class="diff-heads">
+      <div class="diff-head">
+        <span class="compare-tag">{{ .Left.Label }}</span>
+        {{ if .Left.Sub }}<span class="diff-sub">{{ .Left.Sub }}</span>{{ end }}
+        <span class="hash mono" title="prompt identity (sha256 of the declared template, else of the recorded prompt)">#{{ .Left.Obs.ShortHash }}</span>
+      </div>
+      <div class="diff-head">
+        <span class="compare-tag">{{ .Right.Label }}</span>
+        {{ if .Right.Sub }}<span class="diff-sub">{{ .Right.Sub }}</span>{{ end }}
+        <span class="hash mono">#{{ .Right.Obs.ShortHash }}</span>
+      </div>
+    </div>
+
+    {{ if .PromptChanged }}
+    <p class="prompt-flag">
+      <span class="chip o-throttled">prompt changed</span>
+      the two sides asked different questions, so the output difference below is the edit, not drift under an unchanged prompt
+    </p>
+    <h3 class="sub-h">Prompt</h3>
+    {{ template "diff" .Prompt }}
+    {{ else }}
+    <p class="prompt-flag">
+      <span class="chip o-ok">same prompt</span>
+      both sides carry prompt <span class="mono">#{{ .Left.Obs.ShortHash }}</span>, so any difference below is the model's, not the author's
+    </p>
+    {{ end }}
+
+    <h3 class="sub-h">Completion</h3>
+    {{ template "diff" .Output }}
+
+    {{ if .Structural }}
+    <h3 class="sub-h">Structural</h3>
+    <p class="hint">Both completions are JSON, so the change is also readable field by field — each path is one an assertion could name.</p>
+    <table class="table">
+      <thead><tr><th>Path</th><th>Change</th><th>Baseline</th><th>This side</th></tr></thead>
+      <tbody>
+        {{ range .Structural }}
+        <tr>
+          <td class="mono">{{ .Path }}</td>
+          <td><span class="chip o-{{ if eq .Kind "added" }}ok{{ else if eq .Kind "removed" }}failed{{ else }}throttled{{ end }}">{{ .Kind }}</span></td>
+          <td class="mono" style="color:var(--ink-3)">{{ .Old }}</td>
+          <td class="mono">{{ .New }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ end }}
+
+    {{ if .UsageDeltas }}
+    <h3 class="sub-h">Token usage</h3>
+    <div class="tiles">
+      {{ range .UsageDeltas }}
+      <div class="tile">
+        <div class="tile-label">{{ .Label }}</div>
+        <div class="tile-value"{{ if .Tone }} style="--tone:var(--{{ .Tone }})"{{ end }}>{{ .Value }}</div>
+        {{ if .Sub }}<div class="tile-sub">{{ .Sub }}</div>{{ end }}
+      </div>
+      {{ end }}
+    </div>
+    {{ end }}
+
+    {{ if .VariantOpts }}
+    <h3 class="sub-h">Compare against</h3>
+    <div class="picker">
+      {{ range .VariantOpts }}
+      <a class="pick{{ if .Selected }} is-selected{{ end }}" href="{{ .Href }}" style="--tone:var(--kind-logic)">
+        <span class="pick-seq">{{ .Label }}</span><span class="pick-dur">{{ .Sub }}</span>
+      </a>
+      {{ end }}
+    </div>
+    {{ end }}
+
+    {{ end }}
+  </div>
+</section>
+{{ end }}
+
+{{ if .Baselines }}
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Baseline run</h2>
+      <p class="card-kicker">the same observation, in an earlier run of this scenario</p>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="picker">
+      {{ range .Baselines }}
+      <a class="pick{{ if .Selected }} is-selected{{ end }}" href="{{ .Href }}" style="--tone:var(--kind-net)">
+        <span class="pick-seq">{{ .ID }}</span><span class="pick-dur">{{ .When }}</span>
+      </a>
+      {{ end }}
+    </div>
+  </div>
+</section>
+{{ end }}
+
+{{ end }}
+{{ end }}
+
+
+{{ define "diff" }}
+{{ if .Stat.Identical }}
+<p class="diff-identical"><span class="chip o-ok">identical</span> nothing changed between the two sides</p>
+{{ else }}
+<p class="diff-stat mono">
+  {{ if .Stat.Changed }}<span class="d-changed">~{{ .Stat.Changed }} changed</span>{{ end }}
+  {{ if .Stat.Added }}<span class="d-added">+{{ .Stat.Added }} added</span>{{ end }}
+  {{ if .Stat.Removed }}<span class="d-removed">−{{ .Stat.Removed }} removed</span>{{ end }}
+</p>
+{{ if eq .Mode "inline" }}
+<div class="diff diff-inline">
+  {{ range .Rows }}
+    {{ if eq .Kind "same" }}
+      <div class="dline d-same"><span class="dno">{{ .LeftNo }}</span><span class="dtext">{{ range .Left }}{{ .Text }}{{ end }}</span></div>
+    {{ else }}
+      {{ if .Left }}<div class="dline d-removed"><span class="dno">{{ if .LeftNo }}{{ .LeftNo }}{{ end }}</span><span class="dtext">{{ range .Left }}{{ if .Changed }}<mark class="d-mark-del">{{ .Text }}</mark>{{ else }}{{ .Text }}{{ end }}{{ end }}</span></div>{{ end }}
+      {{ if .Right }}<div class="dline d-added"><span class="dno">{{ if .RightNo }}{{ .RightNo }}{{ end }}</span><span class="dtext">{{ range .Right }}{{ if .Changed }}<mark class="d-mark-add">{{ .Text }}</mark>{{ else }}{{ .Text }}{{ end }}{{ end }}</span></div>{{ end }}
+    {{ end }}
+  {{ end }}
+</div>
+{{ else }}
+<div class="diff diff-split">
+  {{ range .Rows }}
+  <div class="drow d-{{ .Kind }}">
+    <div class="dside dleft">
+      <span class="dno">{{ if .LeftNo }}{{ .LeftNo }}{{ end }}</span>
+      <span class="dtext">{{ range .Left }}{{ if .Changed }}<mark class="d-mark-del">{{ .Text }}</mark>{{ else }}{{ .Text }}{{ end }}{{ end }}</span>
+    </div>
+    <div class="dside dright">
+      <span class="dno">{{ if .RightNo }}{{ .RightNo }}{{ end }}</span>
+      <span class="dtext">{{ range .Right }}{{ if .Changed }}<mark class="d-mark-add">{{ .Text }}</mark>{{ else }}{{ .Text }}{{ end }}{{ end }}</span>
+    </div>
+  </div>
+  {{ end }}
+</div>
+{{ end }}
+{{ end }}
+{{ end }}
+
+
+{{ define "detail" }}
+{{ template "rail-head" "The prompt this side sent, in full. A diff shows what moved; the whole prompt is what it moved within." }}
+{{ with .Compare }}
+<section class="card panel">
+  <div class="card-head"><h2 class="card-title">{{ .Right.Label }}</h2></div>
+  <div class="card-body">
+    {{ template "facts" .Right.Facts }}
+    <h3 class="sub-h">Prompt</h3>
+    <pre class="body">{{ .Right.Obs.PromptText }}</pre>
+    <h3 class="sub-h">Completion</h3>
+    <pre class="body">{{ .Right.Obs.CompletionText }}</pre>
+  </div>
+</section>
+{{ else }}
+<section class="card panel is-empty">
+  <div class="card-head"><h2 class="card-title">Nothing selected</h2></div>
+  <div class="card-body"><p class="hint">Pick an observation to compare.</p></div>
+</section>
+{{ end }}
+{{ end }}

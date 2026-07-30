@@ -9,9 +9,10 @@ import (
 	"path"
 	"strings"
 	"time"
+	"unicode"
 )
 
-//go:embed assets/report.css assets/flame.js assets/live.js assets/shell.js assets/fonts/*.woff2 templates/*.html
+//go:embed assets/report.css assets/flame.js assets/live.js assets/shell.js assets/tabs.js assets/fonts/*.woff2 templates/*.html
 var assets embed.FS
 
 // AssetPrefix is the URL space the embedded binary assets live under. The
@@ -51,6 +52,27 @@ type Shell struct {
 	ProjectNav []NavRun
 	Nav        []NavRun
 	Tabs       []Tab
+	// OpenTab describes the run this page belongs to, for the window-style
+	// strip of runs across the top. The server renders exactly one — the one
+	// being read — and the browser remembers the rest, because which runs a
+	// reader is holding open is theirs, not the store's.
+	OpenTab *RunTab
+}
+
+// RunTab is one run in the top strip: its identity, a letter and a colour to
+// find it by, and where it goes. Badge and Tone are derived from the scenario
+// rather than stored, so two runs of one scenario always look alike and a
+// reader picks the right tab without reading it.
+type RunTab struct {
+	ID    string
+	Label string
+	Sub   string
+	Href  string
+	Badge string
+	Tone  string
+	// ListHref is where the strip's "+" goes: this project's run list, which
+	// is the only place another run can be opened from.
+	ListHref string
 }
 
 // Tab is one view of a run. Count is shown when the view has a natural size
@@ -60,6 +82,39 @@ type Tab struct {
 	Href     string
 	Count    int
 	Selected bool
+}
+
+// tabTones are the categorical slots a run tab's badge is coloured from —
+// the same validated set the span kinds use, so nothing new had to be checked
+// for contrast. The scenario name picks one, so a scenario keeps its colour
+// across runs and across sessions.
+var tabTones = []string{"kind-net", "kind-logic", "kind-retry", "ok", "throttled"}
+
+// NewRunTab derives a run's tab: the scenario's first letter as the badge, and
+// a colour hashed from the scenario name. Deriving rather than storing means
+// two runs of one scenario are always the same colour, which is what makes the
+// strip scannable without reading it.
+func NewRunTab(id, scenario, when, href, listHref string) *RunTab {
+	badge := "?"
+	for _, r := range scenario {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			badge = strings.ToUpper(string(r))
+			break
+		}
+	}
+	var h uint32 = 2166136261
+	for _, b := range []byte(scenario) {
+		h = (h ^ uint32(b)) * 16777619
+	}
+	return &RunTab{
+		ID:       id,
+		Label:    scenario,
+		Sub:      when,
+		Href:     href,
+		Badge:    badge,
+		Tone:     tabTones[int(h)%len(tabTones)],
+		ListHref: listHref,
+	}
 }
 
 // Crumb with no Href is the current page.
@@ -265,6 +320,7 @@ var (
 	outcomesTmpl  = parse("templates/outcomes.html")
 	failuresTmpl  = parse("templates/failures.html")
 	compareTmpl   = parse("templates/compare.html")
+	promptsTmpl   = parse("templates/prompts.html")
 	liveTmpl      = parse("templates/live.html")
 )
 
@@ -278,6 +334,7 @@ var funcs = template.FuncMap{
 	"flameJS":    func() template.JS { return template.JS(mustRead("assets/flame.js")) },
 	"liveJS":     func() template.JS { return template.JS(mustRead("assets/live.js")) },
 	"shellJS":    func() template.JS { return template.JS(mustRead("assets/shell.js")) },
+	"tabsJS":     func() template.JS { return template.JS(mustRead("assets/tabs.js")) },
 	"dur":        humanDur,
 	"framePos":   framePos,
 	"barPos":     barPos,
@@ -335,6 +392,11 @@ func RenderFailures(w io.Writer, p FailuresPage) error {
 // RenderCompare writes the run-versus-baseline comparison page.
 func RenderCompare(w io.Writer, p ComparePage) error {
 	return compareTmpl.ExecuteTemplate(w, "layout", p)
+}
+
+// RenderPrompts writes the prompt diff page.
+func RenderPrompts(w io.Writer, p PromptsPage) error {
+	return promptsTmpl.ExecuteTemplate(w, "layout", p)
 }
 
 // RenderLive writes the live view of an in-progress run.
