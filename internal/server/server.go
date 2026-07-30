@@ -42,6 +42,8 @@ func New(ws *store.Workspace) *Server {
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/outcomes", s.outcomes)
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/failures", s.failures)
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/compare", s.compare)
+	s.mux.HandleFunc("GET /p/{project}/runs/{id}/prompts", s.prompts)
+	s.mux.HandleFunc("GET /p/{project}/runs/{id}/charts", s.charts)
 	s.mux.Handle("GET "+report.AssetPrefix+"{file}", report.ServeAssets())
 	return s
 }
@@ -86,9 +88,9 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 
 	render(w, report.RenderIndex, report.IndexPage{
 		Shell: report.Shell{
-			Title:      "Projects",
-			Crumbs:     []report.Crumb{{Label: "flowbench"}, {Label: "projects"}},
-			ProjectNav: s.projectNav(""),
+			Title:       "Projects",
+			Crumbs:      []report.Crumb{{Label: "flowbench"}, {Label: "projects"}},
+			ProjectTabs: s.projectTabs(""),
 		},
 		Projects: cards,
 	})
@@ -129,10 +131,11 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 
 	render(w, report.RenderRuns, report.RunsPage{
 		Shell: report.Shell{
-			Title:      p.Name,
-			Crumbs:     s.crumbs(p, ""),
-			ProjectNav: s.projectNav(p.Slug),
-			Nav:        s.nav(p, index, ""),
+			Title:           p.Name,
+			Crumbs:          s.crumbs(p, ""),
+			ProjectTabs:     s.projectTabs(p.Slug),
+			AllProjectsHref: s.allProjectsHref(),
+			Nav:             s.nav(p, index, ""),
 		},
 		Project: p.Name,
 		Store:   p.Store.Root(),
@@ -166,13 +169,14 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 	}
 
 	base := s.runBase(p, id)
-	charts := report.LinkCharts([]report.LineChart{
-		report.ThroughputChart(series),
-		report.LatencyChart(series),
-		report.RatesChart(series),
-		vuChart(series, metrics),
-	}, base)
-	chart, charts := report.SelectChart(charts, r.URL.Query().Get("chart"))
+	// Expanding a chart is the charts tab's job, so the overview's small
+	// multiples link there. A ?chart= aimed at this page is an older link, and
+	// it is forwarded rather than ignored.
+	if key := r.URL.Query().Get("chart"); key != "" {
+		http.Redirect(w, r, base+"/charts?chart="+url.QueryEscape(key), http.StatusMovedPermanently)
+		return
+	}
+	charts := report.LinkCharts(runCharts(series, metrics), base+"/charts")
 	bucket := intParam(r, "at", -1)
 
 	// Attached is read from the run's own meta, not len(agentSeries) > 0 on
@@ -202,8 +206,7 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 			{Label: "p99", Value: m.P99.Round(time.Microsecond).String()},
 		},
 		Charts:  charts,
-		Chart:   chart,
-		All:     base,
+		All:     base + "/charts",
 		Tallies: report.Tallies(series),
 		Strip:   stripView(series, base, bucket),
 		Funnels: report.Funnels(folded, traces),
@@ -218,6 +221,64 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		page.Trend = report.TrendFrom(series, m.Thresholds)
 	}
 	render(w, report.RenderRun, page)
+}
+
+// charts is the run as time series, in a tab of its own: the small multiples,
+// and the one ?chart= names at full height with its per-series figures. The
+// overview keeps the grid — seeing the shape is the reason to open one — and
+// every expansion from there lands here.
+func (s *Server) charts(w http.ResponseWriter, r *http.Request) {
+	p, m, index, ok := s.runContext(w, r)
+	if !ok {
+		return
+	}
+	id := m.ID
+
+	folded, _ := p.Store.LoadFolded(id)
+	traces, _ := p.Store.LoadTraces(id)
+	series, _ := p.Store.LoadSeries(id)
+	samples, _ := p.Store.LoadSamples(id)
+	metrics, _ := p.Store.LoadMetrics(id)
+	agentSeries, _ := p.Store.LoadAgentSeries(id)
+
+	base := s.runBase(p, id)
+	charts := report.LinkCharts(runCharts(series, metrics), base+"/charts")
+	chart, charts := report.SelectChart(charts, r.URL.Query().Get("chart"))
+
+	page := report.ChartsPage{
+		Shell:   s.shell(p, m, index, "charts", len(report.FlameFrames(folded)), traces, samples.Kept),
+		RunHead: head(m),
+		Charts:  charts,
+		Rest:    report.ChartsExcept(charts, chart),
+		Chart:   chart,
+		All:     base + "/charts",
+	}
+	if m.AgentAttached {
+		agentSp := agentSpan(series, metrics, agentSeries)
+		page.Agent.Attached = true
+		page.Agent.Charts = []report.LineChart{
+			targetCPUChart(agentSp, metrics, agentSeries),
+			targetMemChart(agentSp, metrics, agentSeries),
+		}
+	}
+	if len(series.Points) == 0 {
+		page.Note = "this run recorded no series — a run cancelled before its first bucket closed has nothing to plot over time."
+	}
+	render(w, report.RenderCharts, page)
+}
+
+// runCharts is the run's own series, in the order they answer questions in:
+// how much got through, how long it took, what went wrong, and how many VUs
+// were pushing. Built in one place because the overview and the charts tab
+// must offer the same set — a chart missing from one of them would make the
+// other's links dead.
+func runCharts(series collector.Series, metrics []executor.MetricSample) []report.LineChart {
+	return []report.LineChart{
+		report.ThroughputChart(series),
+		report.LatencyChart(series),
+		report.RatesChart(series),
+		vuChart(series, metrics),
+	}
 }
 
 func (s *Server) flame(w http.ResponseWriter, r *http.Request) {
@@ -484,6 +545,105 @@ func previousRun(peers []store.Meta, m store.Meta) (store.Meta, bool) {
 	return store.Meta{}, false
 }
 
+// prompts is the prompt diff view (#45): the observations a run recorded, and
+// one comparison between two of them — two variants within this run, or the
+// same variant against an earlier run of the scenario.
+//
+// Which two sides are being compared is URL state like every other selection in
+// the report, so a diff worth discussing is a link rather than a description of
+// where to click.
+func (s *Server) prompts(w http.ResponseWriter, r *http.Request) {
+	p, m, index, ok := s.runContext(w, r)
+	if !ok {
+		return
+	}
+	id := m.ID
+
+	folded, _ := p.Store.LoadFolded(id)
+	traces, _ := p.Store.LoadTraces(id)
+	samples, _ := p.Store.LoadSamples(id)
+
+	q := report.PromptQuery{
+		Obs:  r.URL.Query().Get("obs"),
+		A:    r.URL.Query().Get("a"),
+		B:    r.URL.Query().Get("b"),
+		With: r.URL.Query().Get("with"),
+		Mode: r.URL.Query().Get("mode"),
+		Base: s.runBase(p, id) + "/prompts",
+	}
+	if q.Mode != "inline" {
+		q.Mode = "split"
+	}
+
+	groups := report.SortGroupsForDisplay(report.Observations(traces))
+	groups, selected := report.SelectObservation(groups, q.Obs, q)
+
+	page := report.PromptsPage{
+		Shell:      s.shell(p, m, index, "prompts", len(report.FlameFrames(folded)), traces, samples.Kept),
+		RunHead:    head(m),
+		Groups:     groups,
+		Selected:   selected,
+		Mode:       q.Mode,
+		SplitHref:  q.Href("mode", "split"),
+		InlineHref: q.Href("mode", "inline"),
+		Cur:        s.compareRef(p, m),
+	}
+
+	if selected == nil {
+		// Observation is Python-surface-only (ADR 0009/0012), so most runs have
+		// none and the tab is not offered for them at all. Reaching the URL
+		// directly says why rather than showing an empty frame.
+		page.Note = "this run recorded no prompt observations. They come from ctx.prompt(...) in a Python-driven flow — the Go engine never makes an LLM call, so a YAML run has none by construction."
+		render(w, report.RenderPrompts, page)
+		return
+	}
+
+	// A baseline is only offered for the same scenario, exactly as the
+	// regression comparison scopes it: two runs of different flows have no
+	// observation in common to diff.
+	peers := sameScenario(index, m)
+	page.Baselines = promptBaselines(peers, q)
+
+	bm, haveB := store.Meta{}, false
+	if q.With != "" {
+		if cand, err := p.Store.Load(q.With); err == nil && cand.Scenario == m.Scenario && cand.ID != id {
+			bm, haveB = cand, true
+		}
+	}
+
+	switch {
+	case haveB:
+		baseTraces, _ := p.Store.LoadTraces(bm.ID)
+		page.Baseline = s.compareRef(p, bm)
+		page.Compare = report.CompareBaseline(selected, report.Observations(baseTraces), q.A,
+			page.Cur.When, page.Baseline.When)
+	default:
+		page.Compare = report.CompareVariants(selected, q.A, q.B, q)
+	}
+	page.Compare.SetMode(q.Mode)
+
+	if page.Compare == nil {
+		page.Note = "only one version of this observation was recorded, and one side is not a diff. Record a second variant, or pick a baseline run below."
+	}
+
+	render(w, report.RenderPrompts, page)
+}
+
+// promptBaselines lists the scenario's other runs as baseline choices, keeping
+// whatever observation and layout the reader already had.
+func promptBaselines(peers []store.Meta, q report.PromptQuery) []report.BaselineOption {
+	out := make([]report.BaselineOption, 0, len(peers))
+	for _, o := range peers {
+		out = append(out, report.BaselineOption{
+			ID:       o.ID,
+			When:     o.StartedAt.Local().Format("2006-01-02 15:04"),
+			Href:     q.Href("with", o.ID),
+			Selected: o.ID == q.With,
+		})
+	}
+	return out
+}
+
 func (s *Server) compareRef(p store.Project, m store.Meta) report.CompareRef {
 	return report.CompareRef{
 		ID:        m.ID,
@@ -580,18 +740,26 @@ func (s *Server) shell(p store.Project, m store.Meta, index []store.Meta, view s
 	base := s.runBase(p, m.ID)
 	tabs := []report.Tab{
 		{Label: "Run", Href: base, Selected: view == "overview"},
+		{Label: "Over the run", Href: base + "/charts", Selected: view == "charts"},
 		{Label: "Flame graph", Href: base + "/flame", Count: frames, Selected: view == "flame"},
 		{Label: "Waterfall", Href: base + "/waterfall", Count: len(traces), Selected: view == "waterfall"},
 		{Label: "Failures", Href: base + "/failures", Count: report.FailingTraces(traces), Selected: view == "failures"},
 		{Label: "Outcomes", Href: base + "/outcomes", Count: runs, Selected: view == "outcomes"},
 		{Label: "Compare", Href: base + "/compare", Selected: view == "compare"},
 	}
+	// Prompt observation is Python-surface-only, so most runs have none and
+	// the tab would be a permanently empty room. It appears for the runs that
+	// recorded one.
+	if n := report.PromptTabCount(traces); n > 0 {
+		tabs = append(tabs, report.Tab{Label: "Prompts", Href: base + "/prompts", Count: n, Selected: view == "prompts"})
+	}
 	return report.Shell{
-		Title:      m.Scenario,
-		Crumbs:     s.crumbs(p, m.ID),
-		ProjectNav: s.projectNav(p.Slug),
-		Nav:        s.nav(p, index, m.ID),
-		Tabs:       tabs,
+		Title:           m.Scenario,
+		Crumbs:          s.crumbs(p, m.ID),
+		ProjectTabs:     s.projectTabs(p.Slug),
+		AllProjectsHref: s.allProjectsHref(),
+		Nav:             s.nav(p, index, m.ID),
+		Tabs:            tabs,
 	}
 }
 
@@ -619,24 +787,32 @@ func (s *Server) nav(p store.Project, index []store.Meta, current string) []repo
 	return out
 }
 
-// projectNav lists the workspace's projects for the sidebar, so switching
-// between them is a click from anywhere rather than a trip back to the root. A
-// single-project workspace has nothing to switch to, so it lists nothing.
-func (s *Server) projectNav(current string) []report.NavRun {
-	if _, single := s.ws.Single(); single && current != "" {
-		return nil
-	}
-	out := make([]report.NavRun, 0, len(s.ws.Projects()))
-	for _, p := range s.ws.Projects() {
+// projectTabs is the strip across the top: every project the server was given,
+// with the one being read marked. It replaces the sidebar's project list —
+// switching project is one click from wherever you are, rather than a trip
+// back to the workspace root — and needs no client state, since which projects
+// exist is the server's own configuration.
+//
+// A single-project workspace still gets its one tab: it is not a choice, but
+// it names where you are, which is what a title bar is for.
+func (s *Server) projectTabs(current string) []report.ProjectTab {
+	projects := s.ws.Projects()
+	out := make([]report.ProjectTab, 0, len(projects))
+	for _, p := range projects {
 		runs, _ := p.Runs()
-		out = append(out, report.NavRun{
-			Href:    "/p/" + p.Slug + "/",
-			Label:   p.Name,
-			Meta:    fmt.Sprint(len(runs)),
-			Current: p.Slug == current,
-		})
+		out = append(out, report.NewProjectTab(p.Name, "/p/"+p.Slug+"/", len(runs), p.Slug == current))
 	}
 	return out
+}
+
+// allProjectsHref is the workspace root, or empty when there is only one
+// project — that root redirects straight back in, so an overview button would
+// be a link to the page you are already on.
+func (s *Server) allProjectsHref() string {
+	if _, single := s.ws.Single(); single {
+		return ""
+	}
+	return "/"
 }
 
 func lastSegment(path string) string {

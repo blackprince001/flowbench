@@ -6,9 +6,11 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"time"
+	"unicode"
 )
 
 //go:embed assets/report.css assets/flame.js assets/live.js assets/shell.js assets/fonts/*.woff2 templates/*.html
@@ -37,6 +39,44 @@ func ServeAssets() http.Handler {
 	})
 }
 
+// The mark is the thing the tool draws: a flame graph in three bars — a wide
+// root, a narrower frame above it, and the leaf you were actually looking for
+// picked out in the network blue. It is one geometry rendered twice, because
+// the two uses cannot share a fill: inline in the page it takes currentColor
+// and the theme's own accent, while a favicon is a standalone document with no
+// stylesheet behind it and has to carry literal colours that work on a light
+// tab strip and a dark one alike.
+const logoGeometry = `<rect x="2" y="15.5" width="20" height="6.5" rx="2.2" %s/>` +
+	`<rect x="2" y="8.75" width="13" height="6.5" rx="2.2" %s/>` +
+	`<rect x="2" y="2" width="8.5" height="6.5" rx="2.2" %s/>`
+
+// logoMark is the inline mark for the sidebar's wordmark.
+func logoMark() template.HTML {
+	return template.HTML(fmt.Sprintf(
+		`<svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">`+logoGeometry+`</svg>`,
+		`fill="currentColor" opacity=".38"`,
+		`fill="currentColor" opacity=".62"`,
+		`fill="var(--kind-net)"`))
+}
+
+// LogoSVG is the mark as a standalone document, for anywhere with no
+// stylesheet behind it: the favicon, and the copy checked in under docs/assets
+// for the README. Its greys sit between the two themes' inks, so the mark
+// holds on a light page and a dark one alike — which is also what makes it
+// safe on GitHub, where the reader's theme is not ours to choose.
+func LogoSVG() string {
+	return fmt.Sprintf(
+		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">`+
+			logoGeometry+`</svg>`+"\n",
+		`fill="#8a8178"`, `fill="#b9b2ab"`, `fill="#3987e5"`)
+}
+
+// faviconURL is that document inline in the <link>, so it costs no request and
+// cannot 404.
+func faviconURL() template.URL {
+	return template.URL("data:image/svg+xml," + url.PathEscape(strings.TrimSpace(LogoSVG())))
+}
+
 // rowHeight is the flame-graph row pitch: 34px of frame plus a 2px gap, so
 // depth maps to a bottom offset by multiplication alone.
 const rowHeight = 36
@@ -46,11 +86,33 @@ const rowHeight = 36
 // rail is filled by each page's own "detail" template, not from here, because
 // what is worth inspecting is the page's business.
 type Shell struct {
-	Title      string
-	Crumbs     []Crumb
-	ProjectNav []NavRun
-	Nav        []NavRun
-	Tabs       []Tab
+	Title  string
+	Crumbs []Crumb
+	Nav    []NavRun
+	Tabs   []Tab
+	// Projects is the window-style strip across the top: one tab per project
+	// in the workspace, the current one marked. The server knows every
+	// project, so the strip needs no client state at all and works with
+	// JavaScript off — unlike the runs a reader happens to be holding open,
+	// which nobody but the browser could know.
+	ProjectTabs []ProjectTab
+	// AllProjectsHref is the workspace root, for the overview button beside
+	// the strip. Empty in a single-project workspace, which has no overview to
+	// go back to — the root redirects straight back in.
+	AllProjectsHref string
+}
+
+// ProjectTab is one project in the top strip: a letter and a colour to find it
+// by, its name, and how many runs it holds. Badge and Tone are derived from
+// the name rather than stored, so a project keeps its colour for as long as it
+// keeps its name and the strip is scannable without being read.
+type ProjectTab struct {
+	Name    string
+	Href    string
+	Runs    int
+	Badge   string
+	Tone    string
+	Current bool
 }
 
 // Tab is one view of a run. Count is shown when the view has a natural size
@@ -60,6 +122,37 @@ type Tab struct {
 	Href     string
 	Count    int
 	Selected bool
+}
+
+// tabTones are the categorical slots a project tab's badge is coloured from —
+// the same validated set the span kinds use, so nothing new had to be checked
+// for contrast.
+var tabTones = []string{"kind-net", "kind-logic", "kind-retry", "ok", "throttled"}
+
+// NewProjectTab derives a project's tab from its name: the first letter as the
+// badge, and a colour hashed from the whole name. Derived rather than stored,
+// so a project's tab looks the same in every workspace it appears in and
+// nothing has to be persisted to keep it stable.
+func NewProjectTab(name, href string, runs int, current bool) ProjectTab {
+	badge := "?"
+	for _, r := range name {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			badge = strings.ToUpper(string(r))
+			break
+		}
+	}
+	var h uint32 = 2166136261
+	for _, b := range []byte(name) {
+		h = (h ^ uint32(b)) * 16777619
+	}
+	return ProjectTab{
+		Name:    name,
+		Href:    href,
+		Runs:    runs,
+		Badge:   badge,
+		Tone:    tabTones[int(h)%len(tabTones)],
+		Current: current,
+	}
 }
 
 // Crumb with no Href is the current page.
@@ -171,8 +264,7 @@ type RunPage struct {
 	RunHead
 	Tiles   []Tile
 	Charts  []LineChart
-	Chart   *LineChart // the one opened full size, when ?chart= names it
-	All     string     // the link back to every chart at once
+	All     string // the charts tab, where one opens full size
 	Tallies []Tally
 	Strip   StripView
 	Funnels []Funnel // where flow-runs stopped, one per flow
@@ -183,6 +275,28 @@ type RunPage struct {
 	Agent   AgentOverlay  // the target-metrics overlay: charts once attached, an empty-state note otherwise
 	Trend   *TrendSection // soak runs only; nil otherwise
 	Links   []Jump
+}
+
+// ChartsPage is the run as time series: the small multiples, and — when
+// ?chart= names one — that chart at full height with its per-series figures.
+//
+// It is a tab of its own rather than an expansion inside the overview because
+// a chart worth opening is a chart worth reading beside the others, and
+// because the overview should stay the page you skim rather than the page that
+// grows a full-height plot in the middle of itself. The grid stays on the
+// overview all the same: seeing the shape is the reason to open one.
+type ChartsPage struct {
+	Shell
+	RunHead
+	Charts []LineChart // every chart, for the picker
+	// Rest is the grid under the expanded one: every chart *except* it. With
+	// nothing expanded that is all of them; with one open, showing it again
+	// below itself would be the same plot twice on one page.
+	Rest  []LineChart
+	Chart *LineChart // the one opened full size
+	All   string     // back to every chart at once
+	Agent AgentOverlay
+	Note  string // set when the run recorded no series at all
 }
 
 // Jump is a card on the overview that leads into one of the detail views,
@@ -265,6 +379,8 @@ var (
 	outcomesTmpl  = parse("templates/outcomes.html")
 	failuresTmpl  = parse("templates/failures.html")
 	compareTmpl   = parse("templates/compare.html")
+	promptsTmpl   = parse("templates/prompts.html")
+	chartsTmpl    = parse("templates/charts.html")
 	liveTmpl      = parse("templates/live.html")
 )
 
@@ -278,6 +394,8 @@ var funcs = template.FuncMap{
 	"flameJS":    func() template.JS { return template.JS(mustRead("assets/flame.js")) },
 	"liveJS":     func() template.JS { return template.JS(mustRead("assets/live.js")) },
 	"shellJS":    func() template.JS { return template.JS(mustRead("assets/shell.js")) },
+	"logo":       logoMark,
+	"favicon":    faviconURL,
 	"dur":        humanDur,
 	"framePos":   framePos,
 	"barPos":     barPos,
@@ -335,6 +453,16 @@ func RenderFailures(w io.Writer, p FailuresPage) error {
 // RenderCompare writes the run-versus-baseline comparison page.
 func RenderCompare(w io.Writer, p ComparePage) error {
 	return compareTmpl.ExecuteTemplate(w, "layout", p)
+}
+
+// RenderCharts writes the run's time-series page.
+func RenderCharts(w io.Writer, p ChartsPage) error {
+	return chartsTmpl.ExecuteTemplate(w, "layout", p)
+}
+
+// RenderPrompts writes the prompt diff page.
+func RenderPrompts(w io.Writer, p PromptsPage) error {
+	return promptsTmpl.ExecuteTemplate(w, "layout", p)
 }
 
 // RenderLive writes the live view of an in-progress run.

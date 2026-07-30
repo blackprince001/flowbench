@@ -1,11 +1,12 @@
-// Collapsing the run list or the detail rail. The state lives on <html> so the
-// stylesheet owns the layout, and in localStorage so a collapsed rail stays
-// collapsed as you move between runs. Loaded in <head> and delegated from
-// document, so the state is applied before first paint — a rail that flashes
-// open and then closes is worse than one that never collapsed.
+// Collapsing the run list, the detail rail, or the project tabs. The state
+// lives on <html> so the stylesheet owns the layout, and in localStorage so a
+// collapsed panel stays collapsed as you move between runs. Loaded in <head>
+// and delegated from document, so the state is applied before first paint — a
+// rail that flashes open and then closes is worse than one that never
+// collapsed.
 (() => {
   const root = document.documentElement;
-  const sides = { side: "fb-side", rail: "fb-rail" };
+  const sides = { side: "fb-side", rail: "fb-rail", tabs: "fb-tabs" };
 
   for (const [name, key] of Object.entries(sides)) {
     try {

@@ -196,6 +196,22 @@ func SelectChart(charts []LineChart, key string) (*LineChart, []LineChart) {
 	return nil, charts
 }
 
+// ChartsExcept is every chart but the one already open above the grid. A plot
+// drawn twice on one page is a reader wondering which of the two is the one
+// they clicked.
+func ChartsExcept(charts []LineChart, open *LineChart) []LineChart {
+	if open == nil {
+		return charts
+	}
+	out := make([]LineChart, 0, len(charts))
+	for _, c := range charts {
+		if c.Key != open.Key {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // timeFrac positions a bucket on the 0..1 axis by its start time, so an empty
 // bucket keeps its place and lanes on different sampling grids share the axis.
 func timeFrac(at, span time.Duration) float64 {

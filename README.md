@@ -1,8 +1,8 @@
+<img src="docs/assets/logo.svg" width="52" alt="">
+
 # FlowBench
 
 **Scripting-first API and flow testing toolkit. One flow, four execution profiles: integration, system, load/stress, soak.**
-
-Status: **scaffolding** — repo, docs, and work breakdown exist; no code yet. PRD is at v0.6 (DRAFT).
 
 ## TL;DR
 

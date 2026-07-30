@@ -1043,20 +1043,41 @@ func TestAssetRouteServesOnlyFonts(t *testing.T) {
 }
 
 // A small multiple is a summary; opening one has to give it the whole card plus
-// the detail there was no room for at four-up.
-func TestRunPageExpandsOneChart(t *testing.T) {
+// the detail there was no room for at four-up. That happens on the charts tab,
+// so the overview's job is to link there rather than to grow a full-height
+// plot in the middle of itself.
+func TestOverviewChartsLinkIntoTheChartsTab(t *testing.T) {
 	s, runBase := serve(t)
-	base := runBase
 
-	_, body := get(t, s, base)
-	if !strings.Contains(body, `href="`+base+`?chart=latency"`) {
-		t.Fatal("each chart should link to its own full-size view")
+	_, body := get(t, s, runBase)
+	if !strings.Contains(body, `href="`+runBase+`/charts?chart=latency"`) {
+		t.Fatal("each small multiple should open on the charts tab")
 	}
-	// Match the class attribute, not the bare word: the stylesheet is inlined
-	// and mentions every state class.
 	if strings.Contains(body, `class="chart is-expanded"`) {
-		t.Error("the grid of small multiples has nothing expanded")
+		t.Error("the overview's grid has nothing expanded")
 	}
+	if !strings.Contains(body, runBase+`/charts"`) {
+		t.Error("the run should offer the charts tab")
+	}
+}
+
+// Links written before the tab existed still land on the chart they named.
+func TestOldChartLinksRedirectToTheTab(t *testing.T) {
+	s, runBase := serve(t)
+
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, runBase+"?chart=latency", nil))
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("old chart link returned %d, want a permanent redirect", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != runBase+"/charts?chart=latency" {
+		t.Errorf("redirected to %q, which drops the chart that was asked for", got)
+	}
+}
+
+func TestChartsTabExpandsOneChart(t *testing.T) {
+	s, runBase := serve(t)
+	base := runBase + "/charts"
 
 	code, body := get(t, s, base+"?chart=latency")
 	if code != http.StatusOK {
@@ -1075,13 +1096,17 @@ func TestRunPageExpandsOneChart(t *testing.T) {
 			t.Errorf("expanded chart missing %q", want)
 		}
 	}
-	// The other charts stay one click away.
-	if !strings.Contains(body, `?chart=throughput"`) {
-		t.Error("the expanded view should offer the other charts")
+
+	// The other charts stay on the page: a chart worth opening is worth
+	// reading beside the ones it is being compared against.
+	if !strings.Contains(body, "Over the run") {
+		t.Error("the grid should stay under the expanded chart")
 	}
-	// A stale chart key degrades to the grid rather than erroring.
-	if code, body := get(t, s, base+"?chart=nope"); code != http.StatusOK || strings.Contains(body, `class="chart is-expanded"`) {
-		t.Errorf("an unknown chart should fall back to all of them, got %d", code)
+
+	// A stale key degrades to the grid rather than erroring.
+	code, body = get(t, s, base+"?chart=nonesuch")
+	if code != http.StatusOK || strings.Contains(body, `class="chart is-expanded"`) {
+		t.Errorf("unknown chart key should degrade to the grid, got code %d", code)
 	}
 }
 
@@ -1114,36 +1139,6 @@ func TestShellHasThreeColumns(t *testing.T) {
 	}
 }
 
-// The left column switches projects as well as runs, so moving between them
-// does not mean a trip back to the workspace root.
-func TestSidebarSwitchesProjects(t *testing.T) {
-	dir := t.TempDir()
-	a, b := filepath.Join(dir, "checkout"), filepath.Join(dir, "billing")
-	saveRun(t, a, nil)
-	id := saveRun(t, b, nil)
-	ws, err := store.NewWorkspace([]string{"Checkout=" + a, "Billing=" + b})
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := server.New(ws)
-
-	_, body := get(t, s, "/p/billing/runs/"+id)
-	if !strings.Contains(body, `id="nav-projects"`) {
-		t.Fatal("a multi-project workspace should list its projects in the sidebar")
-	}
-	if !strings.Contains(body, `href="/p/checkout/"`) {
-		t.Error("the other project should be one click away")
-	}
-
-	// One project is not a choice, so it is not offered inside a run.
-	s2, runBase := serve(t)
-	if _, single := get(t, s2, runBase); strings.Contains(single, `id="nav-projects"`) {
-		t.Error("a single-project workspace has nothing to switch between")
-	}
-}
-
-// Overview and dashboard were two tabs of one question. The merged page carries
-// both, and the old URL still lands on it.
 func TestDashboardRedirectsIntoTheRunPage(t *testing.T) {
 	s, runBase := serve(t)
 
@@ -1164,5 +1159,275 @@ func TestDashboardRedirectsIntoTheRunPage(t *testing.T) {
 	}
 	if strings.Contains(body, `>Dashboard<`) {
 		t.Error("the dashboard tab should be gone, not merely redirected")
+	}
+}
+
+// -- prompt diff view (issue #45) ------------------------------------------
+
+// promptRun is what the Python-driven producer writes: a run whose step opened
+// two prompt observations, one per variant. `edited` moves the concise
+// variant's prompt, which is the change the view exists to separate from the
+// model answering differently on its own.
+func promptRun(edited bool) *executor.Result {
+	concise := "Classify the ticket in one word."
+	answer := "refund_request"
+	if edited {
+		concise = "Classify the ticket in one word, lowercase."
+		answer = "refund"
+	}
+
+	root := span.New("flow:triage", 0)
+	root.Duration = 30 * time.Millisecond
+	step := root.Child("classify", 0)
+	step.Duration = 28 * time.Millisecond
+
+	add := func(name, variant, prompt, completion, hash string, out int) {
+		sp := step.Child(name, 0)
+		sp.Duration = 12 * time.Millisecond
+		sp.Payload = &span.Payload{
+			Prompt: prompt, Completion: completion, PromptHash: hash, Variant: variant,
+			Usage: &span.Usage{PromptTokens: 24, CompletionTokens: out, TotalTokens: 24 + out},
+		}
+	}
+	add("classify@concise", "concise", concise, answer, "hash-concise-"+answer, 3)
+	add("classify@verbose", "verbose", "Classify and explain.", "It is a refund_request, because the card was charged twice.", "hash-verbose", 14)
+
+	folded := span.NewFolded()
+	folded.Add(root)
+	return &executor.Result{
+		Duration:   time.Second,
+		Iterations: 1,
+		Samples:    []executor.Sample{{Flow: "triage", Service: 30 * time.Millisecond, Outcome: span.OutcomeOK}},
+		Folded:     folded,
+		Traces:     []*span.Span{root},
+	}
+}
+
+// servePrompts writes two runs of one scenario around a prompt edit — the #45
+// acceptance shape — and returns the newer run's base path and the older run's
+// id to use as a baseline.
+func servePrompts(t *testing.T) (*server.Server, string, string) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "triage")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for i, edited := range []bool{false, true} {
+		rd, err := st.Save(store.RunInfo{
+			Scenario:  "triage.py",
+			Mode:      "integration",
+			Target:    "local",
+			Initiator: "ada",
+			StartedAt: time.Date(2026, 7, 30, 9, i, 0, 0, time.UTC),
+		}, promptRun(edited), nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, filepath.Base(rd))
+	}
+	ws, err := store.NewWorkspace([]string{"triage=" + dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return server.New(ws), "/p/triage/runs/" + ids[1], ids[0]
+}
+
+func TestPromptsTabAppearsOnlyForRunsWithObservations(t *testing.T) {
+	s, runBase, _ := servePrompts(t)
+	_, body := get(t, s, runBase)
+	if !strings.Contains(body, runBase+"/prompts") {
+		t.Error("a run with observations should offer the Prompts tab")
+	}
+
+	// A run of ordinary HTTP steps has none, and an empty tab is worse than no
+	// tab: prompt observation is Python-surface-only by construction.
+	other, otherBase := serve(t)
+	_, body = get(t, other, otherBase)
+	if strings.Contains(body, otherBase+"/prompts") {
+		t.Error("a run with no observations should not offer the tab")
+	}
+}
+
+func TestPromptsPageDiffsTwoVariantsWithinTheRun(t *testing.T) {
+	s, runBase, _ := servePrompts(t)
+
+	code, body := get(t, s, runBase+"/prompts")
+	if code != http.StatusOK {
+		t.Fatalf("prompts page returned %d", code)
+	}
+	for _, want := range []string{"concise", "verbose", "Variant diff", "prompt changed"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("variant diff missing %q", want)
+		}
+	}
+}
+
+// The acceptance: around a prompt edit, the edited variant flags its changed
+// prompt and the untouched one reports an empty diff.
+func TestPromptsPageSeparatesAPromptEditFromAnUnchangedRerun(t *testing.T) {
+	s, runBase, baseline := servePrompts(t)
+
+	_, edited := get(t, s, runBase+"/prompts?with="+baseline+"&a=classify@concise")
+	if !strings.Contains(edited, "prompt changed") {
+		t.Error("the edited variant must flag its changed prompt hash")
+	}
+	if !strings.Contains(edited, "d-mark-add") {
+		t.Error("the edited variant's output diff should mark what changed")
+	}
+
+	_, steady := get(t, s, runBase+"/prompts?with="+baseline+"&a=classify@verbose")
+	if !strings.Contains(steady, "same prompt") {
+		t.Error("the untouched variant carries the same prompt hash in both runs")
+	}
+	if !strings.Contains(steady, "identical") {
+		t.Error("an unchanged prompt with an unchanged answer is an empty diff")
+	}
+}
+
+func TestPromptsPageOffersBothLayouts(t *testing.T) {
+	s, runBase, _ := servePrompts(t)
+
+	_, split := get(t, s, runBase+"/prompts")
+	if !strings.Contains(split, "diff-split") {
+		t.Error("side by side is the default layout")
+	}
+	_, inline := get(t, s, runBase+"/prompts?mode=inline")
+	if !strings.Contains(inline, "diff-inline") {
+		t.Error("?mode=inline switches the layout, so a layout is shareable too")
+	}
+}
+
+func TestPromptsPageOnARunWithoutObservationsExplainsItself(t *testing.T) {
+	s, runBase := serve(t)
+	code, body := get(t, s, runBase+"/prompts")
+	if code != http.StatusOK {
+		t.Fatalf("the page should render rather than 404: %d", code)
+	}
+	if !strings.Contains(body, "no prompt observations") {
+		t.Error("reaching the URL directly should say why it is empty")
+	}
+}
+
+// -- projects as tabs ------------------------------------------------------
+
+func TestEveryPageCarriesTheProjectStrip(t *testing.T) {
+	s, runBase := serve(t)
+	for _, path := range []string{projectOf(runBase), runBase, runBase + "/flame", runBase + "/waterfall", runBase + "/compare"} {
+		_, body := get(t, s, path)
+		if !strings.Contains(body, `class="tabstrip"`) {
+			t.Errorf("%s has no project strip", path)
+		}
+		if !strings.Contains(body, `class="ptab is-active"`) {
+			t.Errorf("%s does not mark the project it is in", path)
+		}
+	}
+}
+
+func TestProjectStripSwitchesBetweenProjects(t *testing.T) {
+	root := t.TempDir()
+	checkout := filepath.Join(root, "checkout")
+	billing := filepath.Join(root, "billing")
+	id := saveRun(t, checkout, nil)
+	saveRun(t, billing, nil)
+
+	ws, err := store.NewWorkspace([]string{"Checkout API=" + checkout, "Billing=" + billing})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := server.New(ws)
+
+	_, body := get(t, srv, "/p/checkout-api/runs/"+id)
+	for _, want := range []string{"Checkout API", "Billing", `href="/p/billing/"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("strip missing %q — switching project should be one click", want)
+		}
+	}
+	// Exactly one tab is the one you are in.
+	if got := strings.Count(body, `class="ptab is-active"`); got != 1 {
+		t.Errorf("%d active tabs, want 1", got)
+	}
+	// And the overview button exists, because there is more than one project.
+	if !strings.Contains(body, `class="tabstrip-all"`) {
+		t.Error("a multi-project workspace should offer the overview")
+	}
+}
+
+func TestSingleProjectStripNamesItWithoutOfferingAnOverview(t *testing.T) {
+	s, runBase := serve(t)
+	_, body := get(t, s, runBase)
+	if !strings.Contains(body, `class="ptab is-active"`) {
+		t.Error("the one project should still name itself")
+	}
+	// The workspace root redirects straight back in, so an overview button
+	// would link to the page you are already on.
+	if strings.Contains(body, `class="tabstrip-all"`) {
+		t.Error("a single-project workspace has no overview to go to")
+	}
+}
+
+func TestProjectBadgeAndColourFollowTheName(t *testing.T) {
+	root := t.TempDir()
+	checkout := filepath.Join(root, "checkout")
+	id := saveRun(t, checkout, nil)
+	ws, err := store.NewWorkspace([]string{"Checkout API=" + checkout})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := server.New(ws)
+
+	tab := regexp.MustCompile(`<a class="ptab is-active"[^>]*style="--tone:var\(--([a-z-]+)\)"`)
+	_, onRun := get(t, srv, "/p/checkout-api/runs/"+id)
+	_, onList := get(t, srv, "/p/checkout-api/")
+
+	a, b := tab.FindStringSubmatch(onRun), tab.FindStringSubmatch(onList)
+	if a == nil || b == nil {
+		t.Fatal("both pages should render the project tab")
+	}
+	if a[1] != b[1] {
+		t.Errorf("a project changed colour between pages: %q vs %q", a[1], b[1])
+	}
+	if !strings.Contains(onRun, `>C</span>`) {
+		t.Error("the badge should be the project's first letter")
+	}
+}
+
+func TestOverviewButtonAppearsWhereItLeadsSomewhereElse(t *testing.T) {
+	root := t.TempDir()
+	a, b := filepath.Join(root, "checkout"), filepath.Join(root, "billing")
+	id := saveRun(t, a, nil)
+	saveRun(t, b, nil)
+	ws, err := store.NewWorkspace([]string{"Checkout=" + a, "Billing=" + b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := server.New(ws)
+
+	for _, path := range []string{"/p/checkout/", "/p/checkout/runs/" + id} {
+		if _, body := get(t, srv, path); !strings.Contains(body, `class="tabstrip-all"`) {
+			t.Errorf("%s should offer the way back to all projects", path)
+		}
+	}
+	// Not on the overview itself, which would be a link to the page you are on.
+	if _, body := get(t, srv, "/"); strings.Contains(body, `class="tabstrip-all"`) {
+		t.Error("the workspace root should not link to itself")
+	}
+}
+
+func TestProjectStripFoldsAway(t *testing.T) {
+	s, runBase := serve(t)
+	_, body := get(t, s, runBase)
+
+	if !strings.Contains(body, `data-toggle="tabs"`) {
+		t.Error("the strip should offer a control to fold it out of the way")
+	}
+	// The button and the script have to agree on the name, or the fold works
+	// for one page and forgets by the next.
+	if !strings.Contains(body, `"fb-tabs"`) {
+		t.Error("the fold state should be persisted like the rails' are")
 	}
 }

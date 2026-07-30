@@ -1,13 +1,15 @@
 {{ define "content" }}
 
-<h1 class="page-title">{{ .Project }}</h1>
-<p class="byline">
-  <b>{{ .Store }}</b>
-  <span class="byline-sep" aria-hidden="true">•</span>
-  <b>{{ .Total }} runs</b>
-  <span class="byline-sep" aria-hidden="true">•</span>
-  <b>{{ len .Groups }} scenarios</b>
-</p>
+<header class="page-head">
+  <h1 class="page-title">{{ .Project }}</h1>
+  <p class="byline">
+    <b>{{ .Store }}</b>
+    <span class="byline-sep" aria-hidden="true">•</span>
+    <b>{{ .Total }} runs</b>
+    <span class="byline-sep" aria-hidden="true">•</span>
+    <b>{{ len .Groups }} scenarios</b>
+  </p>
+</header>
 
 {{ if .Groups }}
 {{ range .Groups }}

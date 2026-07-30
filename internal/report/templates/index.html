@@ -1,9 +1,11 @@
 {{ define "content" }}
 
-<h1 class="page-title">Projects</h1>
-<p class="byline"><b>{{ len .Projects }} run stores</b></p>
+<header class="page-head">
+  <h1 class="page-title">Projects</h1>
+  <p class="byline"><b>{{ len .Projects }} run stores</b></p>
+</header>
 
-<div class="jumps">
+<div class="jumps projects">
   {{ range .Projects }}
   <a class="jump project" href="{{ .Href }}">
     <span class="jump-title">{{ .Name }}</span>

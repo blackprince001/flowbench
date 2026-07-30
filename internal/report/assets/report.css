@@ -144,6 +144,9 @@
 
 body {
   margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   background: var(--ground);
   color: var(--ink);
   font-family: var(--sans);
@@ -173,6 +176,29 @@ a { color: inherit; }
   min-height: 100vh;
   padding: 14px;
 }
+
+/* With a tab strip above it, the content becomes the window's content area: a
+   surface floating on the chrome's ground, inset on every side so the ground
+   reads as what it sits on rather than as a band above it. It grows to fill
+   whatever the strip leaves — flex rather than a viewport calculation, since
+   the strip is a different height folded than open. Without a strip, the shell
+   is the page and stays flat. */
+:root:has(.tabstrip) .shell {
+  flex: 1;
+  min-height: 0;
+  margin: 0 12px 12px;
+  background: color-mix(in oklab, var(--surface) 30%, var(--ground));
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+}
+
+/* Each column is placed explicitly. Without that, hiding a rail does not leave
+   its track empty — the remaining items slide down into the first free track,
+   so a collapsed run list drops the page into the `auto` column and it shrinks
+   to its own content with the 1fr track left as a void beside it. */
+.side { grid-column: 1; }
+.main { grid-column: 2; }
+.rail { grid-column: 3; }
 
 .side {
   width: 232px;
@@ -217,14 +243,19 @@ a { color: inherit; }
 :root[data-rail="off"] .rail { display: none; }
 :root:has(.rail:empty) .detail-btn { display: none; }
 
+/* The topbar carries the same width and centring as the flow beneath it, and
+   the breadcrumb leads, so a crumb trail starts exactly where the page title
+   does. The two toggles ride together at the far end rather than pushing the
+   trail out of alignment by their own width. */
 .topbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 4px;
+  width: 100%;
+  max-width: var(--flow, 1080px);
+  margin: 0 auto 4px;
 }
 .topbar .crumbs { margin: 0; flex: 1; min-width: 0; }
-.detail-btn { margin-left: auto; }
 
 /* Two 14px bars, one narrow: a panel beside a page. The side button's narrow
    bar leads, the detail button's trails, so each points at what it toggles. */
@@ -282,11 +313,9 @@ a { color: inherit; }
   letter-spacing: 0.02em;
 }
 .brand-mark {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   flex: none;
-  border-radius: 4px;
-  background: linear-gradient(135deg, var(--kind-net), var(--kind-retry));
 }
 
 .nav-group { display: flex; flex-direction: column; gap: 1px; }
@@ -342,7 +371,21 @@ a { color: inherit; }
 /* The flow's own gap owns the vertical rhythm, so nothing inside it carries a
    stacking margin of its own. */
 .flow > * { margin-block: 0; }
-.page-head { display: flex; flex-direction: column; gap: 5px; }
+/* Title on the left, the run's facts on the right of the same line — the
+   facts are reference, not a subtitle, and reading them as a column under the
+   title made them look like one. They wrap under it when there is no room. */
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 20px;
+  margin-bottom: 22px;
+}
+.page-head .page-title { margin: 0; }
+/* margin-left rather than justify-content, so the facts stay right-aligned on
+   the line they wrap onto as well as beside the title. */
+.page-head .byline { margin: 0 0 0 auto; text-align: right; justify-content: flex-end; }
 
 /* Header --------------------------------------------------------------- */
 
@@ -351,9 +394,7 @@ a { color: inherit; }
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  font: 11px/1 var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font: 12px/1 var(--sans);
   color: var(--ink-3);
   margin-bottom: 14px;
 }
@@ -370,18 +411,20 @@ a { color: inherit; }
   text-wrap: balance;
 }
 
+/* The byline reads as a sentence of facts about the run, so it is set in the
+   sans at its natural case. Mono and small caps made a target name and a
+   commit look like column headings rather than like the answer to "which run
+   is this". */
 .byline {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  font: 11px/1.6 var(--mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font: 12px/1.6 var(--sans);
   color: var(--ink-3);
   margin: 0 0 26px;
 }
-.byline b { color: var(--ink-2); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
+.byline b { color: var(--ink-2); font-weight: 500; }
 .byline-sep { color: var(--hairline); }
 
 /* A pill states the run's verdict in a word; the colour only reinforces it. */
@@ -465,6 +508,13 @@ a { color: inherit; }
 .jump-title { font-size: 13.5px; font-weight: 600; }
 .jump-value { font-size: 21px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 4px; }
 .jump-note { font: 11px/1.5 var(--mono); color: var(--ink-3); }
+
+/* A project card is wider than the "ways in" cards that share this grid: it
+   carries a name, a scenario filename and a store path, all of which are long
+   and none of which should wrap. Three across a laptop rather than four or
+   five, so each card is landscape — the height is unchanged, it is the width
+   that grew. */
+.jumps.projects { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
 
 .jump.project { gap: 5px; }
 .project-latest { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--ink-2); }
@@ -1392,6 +1442,8 @@ a.frame { text-decoration: none; }
    there is no column to collapse into. */
 @media (max-width: 860px) {
   .shell { grid-template-columns: minmax(0, 1fr); }
+  /* One column: the explicit placements above would create implicit tracks. */
+  .side, .main, .rail { grid-column: auto; }
   .side, :root[data-side="off"] .side { display: flex; position: static; max-height: none; width: auto; }
   .rail, :root[data-rail="off"] .rail { display: flex; position: static; max-height: none; width: auto; }
   .rail:empty { display: none; }
@@ -1409,4 +1461,259 @@ a.frame { text-decoration: none; }
 
 @media (prefers-reduced-motion: no-preference) {
   .nav-item, .frame, .row-link { transition: background-color 90ms ease, outline-color 90ms ease, filter 90ms ease; }
+}
+
+/* Projects ------------------------------------------------------------- */
+
+/* A window-style strip across the top: the workspace's projects, each found by
+   a coloured letter before it is read. It sits outside .shell so it spans the
+   whole width like a title bar, above all three columns, and it replaces the
+   sidebar's project list — switching project is one click from wherever you
+   are rather than a trip back to the workspace root. */
+.tabstrip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: var(--ground);
+}
+
+/* Folded, the strip keeps only the control that unfolds it — a bar you can
+   put away without losing the way back. The chevron turns over to say which
+   way it will go, so the same button reads correctly in both states. */
+:root[data-tabs="off"] .tabstrip-tabs,
+:root[data-tabs="off"] .tabstrip-all { display: none; }
+:root[data-tabs="off"] .tabstrip { padding-block: 2px; }
+:root[data-tabs="off"] .tabstrip-fold-mark { transform: rotate(180deg); }
+
+.tabstrip-fold {
+  flex: none;
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.tabstrip-fold:hover { background: var(--surface); color: var(--ink); }
+.tabstrip-fold-mark { width: 12px; height: 12px; }
+.tabstrip-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabstrip-tabs::-webkit-scrollbar { display: none; }
+
+/* The overview button, in the position a window puts its tab-exposé control.
+   Four panes: what the workspace root shows. */
+.tabstrip-all {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--ink-3);
+  text-decoration: none;
+}
+.tabstrip-all:hover { background: var(--surface); color: var(--ink); }
+.tabstrip-all-mark { width: 13px; height: 13px; fill: currentColor; }
+
+.ptab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 240px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  text-decoration: none;
+  color: var(--ink-3);
+  flex: none;
+}
+.ptab:hover { background: var(--surface); color: var(--ink-2); }
+.ptab.is-active {
+  background: var(--surface);
+  border-color: var(--hairline);
+  color: var(--ink);
+}
+
+/* The badge is the tab's handle: one letter from the project's name, in a
+   colour hashed from it, so the strip is scannable without reading a word. */
+.ptab-badge {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  font: 600 11px/1 var(--mono);
+  color: #fff;
+  background: var(--tone);
+}
+.ptab-name {
+  font: 500 12.5px/1 var(--sans);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* The run count is the one fact worth carrying here: which project has
+   anything in it. It fades on the tabs you are not reading. */
+.ptab-runs { font: 11px/1 var(--mono); color: var(--ink-3); flex: none; }
+
+/* The strip is chrome, and chrome is the first thing to go when the window is
+   the size of a phone: the breadcrumb still names the project. */
+@media (max-width: 860px) {
+  .tabstrip { display: none; }
+}
+
+/* Prompt diff ---------------------------------------------------------- */
+
+/* The observation list is the page's index: one row per prompt the run
+   recorded, its variants stated as chips so a reader sees what there is to
+   compare before choosing anything. */
+.obs-list { display: flex; flex-direction: column; gap: 4px; }
+.obs {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--ink-2);
+}
+.obs:hover { border-color: var(--ink-3); background: var(--raised); }
+.obs.is-selected { background: var(--raised); border-color: var(--kind-logic); color: var(--ink); }
+.obs-name { font: 500 13px/1 var(--mono); color: var(--ink); }
+.obs-step { font: 11px/1 var(--mono); color: var(--ink-3); }
+.obs-variants { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.obs-chip {
+  font: 500 10px/1 var(--mono);
+  letter-spacing: 0.04em;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--kind-logic) var(--tint), var(--surface));
+  color: var(--ink);
+}
+.obs-count { font: 11px/1 var(--mono); color: var(--ink-3); white-space: nowrap; }
+
+/* Two headers over two columns, aligned to the diff below them so the label
+   above a side always names the side under it. */
+.diff-heads { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.diff-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.diff-sub { font: 11px/1 var(--mono); color: var(--ink-3); }
+.hash { font: 11px/1 var(--mono); color: var(--ink-3); }
+
+/* The prompt's own verdict leads the card: an output that moved under a
+   changed prompt is the author's edit, not the model drifting, and reading the
+   completions without knowing which is the mistake this line prevents. */
+.prompt-flag {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.diff-stat { display: flex; gap: 12px; font-size: 11px; margin: 0 0 8px; }
+.d-added { color: var(--ok); }
+.d-removed { color: var(--failed); }
+.d-changed { color: var(--throttled); }
+.diff-identical {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  color: var(--ink-3);
+  margin: 0 0 8px;
+}
+
+.diff {
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--ground);
+  font: 12px/1.65 var(--mono);
+}
+.drow { display: grid; grid-template-columns: 1fr 1fr; }
+.dside { display: flex; gap: 10px; padding: 2px 10px; min-width: 0; border-right: 1px solid var(--hairline-soft); }
+.dside:last-child { border-right: 0; }
+.dline { display: flex; gap: 10px; padding: 2px 10px; }
+.dno {
+  flex: none;
+  width: 26px;
+  text-align: right;
+  color: var(--ink-3);
+  font-size: 11px;
+  user-select: none;
+}
+.dtext { white-space: pre-wrap; word-break: break-word; min-width: 0; color: var(--ink-2); }
+
+/* Tinted rows carry the row-level verdict; the marks inside carry the
+   word-level one. Both are pale enough that the text stays the thing being
+   read — a diff whose colour shouts is a diff nobody reads twice. */
+.d-changed .dleft, .d-removed { background: color-mix(in oklab, var(--failed) 7%, transparent); }
+.d-changed .dright, .d-added { background: color-mix(in oklab, var(--ok) 7%, transparent); }
+.d-same .dtext, .d-same .dno { color: var(--ink-3); }
+
+/* Neither mark relies on its colour: the deletion is struck through and the
+   addition is underlined, so the two are told apart in greyscale and under
+   deuteranopia, where red and green are the same colour. */
+.d-mark-del,
+.d-mark-add {
+  border-radius: 3px;
+  padding: 0 1px;
+  color: var(--ink);
+}
+.d-mark-del {
+  background: color-mix(in oklab, var(--failed) 26%, transparent);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, var(--failed) 70%, transparent);
+}
+.d-mark-add {
+  background: color-mix(in oklab, var(--ok) 26%, transparent);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-decoration-color: color-mix(in oklab, var(--ok) 70%, transparent);
+}
+
+/* A segmented control for the layout switch. It is two links, so the layout is
+   part of the URL and survives being shared like every other selection. */
+.seg {
+  display: inline-flex;
+  padding: 3px;
+  gap: 3px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+}
+.seg-btn {
+  padding: 5px 10px;
+  border-radius: 6px;
+  font: 500 11px/1 var(--mono);
+  color: var(--ink-3);
+  text-decoration: none;
+}
+.seg-btn:hover { color: var(--ink); }
+.seg-btn.is-on { background: var(--raised); color: var(--ink); }
+
+@media (max-width: 860px) {
+  /* One column: two half-width columns of prose is unreadable on a phone, and
+     the inline layout says the same thing in the width available. */
+  .drow, .diff-heads { grid-template-columns: minmax(0, 1fr); }
+  .dside { border-right: 0; }
+  .obs { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .obs-variants { justify-content: flex-start; }
 }
