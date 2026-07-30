@@ -15,7 +15,7 @@ from .ir import build_scenario
 from .profile import Profile
 from .redaction import SecretSet, flagged
 from .span import OUTCOME_OK, Span
-from .store import Sample, write_run
+from .store import Sample, prior_identities, write_run
 from .target import TargetConfig, resolve_target_via_binary
 
 _LIVE_MODES = ("integration", "system")
@@ -119,10 +119,16 @@ class Flow:
     secrets = SecretSet(flagged())
     roots, samples = [], []
     failed = 0
+    # A step's identity is declared -- it is the function's name -- so it is
+    # known before anything runs. An observation's is not: it exists because a
+    # step's body opened one, under whatever variant label the author's code
+    # chose, so the run itself is what discovers it.
+    identities = {func.__name__ for func, _, _ in self._steps}
 
     for i, row in enumerate(rows):
       iter_start = time.monotonic()
       result = self._run_iteration(cfg, row, secrets)
+      identities |= result.identities
       dispatch = iter_start - run_start
       service = time.monotonic() - iter_start
 
@@ -152,8 +158,12 @@ class Flow:
     iterations = len(samples)
     print(f"{iterations} iteration(s): {iterations - failed} passed, {failed} failed")
 
+    scenario = Path(self._main_file() or f"{self.name}.py").name
+    self._warn_on_lost_identities(store, scenario, identities, clean=failed == 0)
+
     info = {
-      "scenario": Path(self._main_file() or f"{self.name}.py").name,
+      "scenario": scenario,
+      "identities": identities,
       "mode": profile.mode,
       "initiator": initiator,
       "target": cfg.name,
@@ -164,6 +174,34 @@ class Flow:
     }
     run_dir = write_run(store, info, roots, samples, secrets)
     print(f"run saved to {run_dir}")
+
+  def _warn_on_lost_identities(self, store, scenario, current, clean):
+    """Warns when a name earlier runs of this scenario recorded is gone.
+
+    Folding is by structural name (ADR 0007), so renaming a step -- or a
+    variant label, which is the same thing one level down: `classify@concise`
+    is an identity, not a note on one -- silently splits a flame graph into a
+    before and an after. The Go parser warns on the YAML side by comparing
+    declared step ids; an observation is declared nowhere, so the comparison
+    has to be against what a previous run actually recorded.
+
+    Only a clean run is grounds for the warning. A run that failed part way
+    stopped short of identities it would otherwise have reached, and reporting
+    those as renames would be blaming the author for the failure they are
+    already looking at.
+    """
+    if not clean:
+      return
+    prior = prior_identities(store, scenario)
+    if prior is None:
+      return
+    for name in sorted(prior - current):
+      print(
+        f"flowbench: warning: {scenario} no longer records {name!r}; prior "
+        "runs reference that name, so cross-run folding for it will break -- "
+        "if this is a rename, flame data continuity is lost",
+        file=sys.stderr,
+      )
 
   def _run_iteration(self, cfg, row, secrets):
     driver = LiveDriver(cfg, has_data_pool=self.data is not None, secrets=secrets)

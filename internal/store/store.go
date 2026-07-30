@@ -69,6 +69,20 @@ type Meta struct {
 	Thresholds []collector.Outcome `json:"thresholds,omitempty"`
 	Breached   bool                `json:"breached,omitempty"`
 
+	// Identities are the structural span names this run recorded that an
+	// author chose — its steps, and the prompt observations its code opened,
+	// as the dot-paths folding keys them by (`classify.classify@concise`).
+	// Kept so the next run of the same scenario can tell a rename from a
+	// disappearance: folding is by name (ADR 0007), so a renamed variant
+	// silently splits a flame graph into a before and an after.
+	//
+	// Written by the Python-driven producer, which is the only one that can
+	// discover them — an observation is declared nowhere, it exists because a
+	// step's body opened one. The engine's own step ids are declared, so the
+	// YAML side warns from the parser instead (internal/parser's
+	// Options.PriorStepIDs, still unwired to the store).
+	Identities []string `json:"identities,omitempty"`
+
 	// AgentAttached reports whether a target-metrics agent (issue #32)
 	// contributed at least one sample to this run — derived from the saved
 	// agent series itself, never a caller-supplied flag, so the two can

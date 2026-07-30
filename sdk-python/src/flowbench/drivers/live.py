@@ -178,11 +178,15 @@ class IterationResult:
   Python DSL exposes no abort_run; every failure aborts the flow).
   """
 
-  def __init__(self, spans, outcome, failures, throttled):
+  def __init__(self, spans, outcome, failures, throttled, identities):
     self.spans = spans
     self.outcome = outcome
     self.failures = failures  # list of (step_id, detail)
     self.throttled = throttled
+    # Span paths of the observations this iteration recorded. Unlike a step,
+    # an observation is not declared anywhere -- it exists because a step's
+    # body opened one -- so the only way to know its identity is to run it.
+    self.identities = identities
 
 
 class LiveDriver:
@@ -207,6 +211,7 @@ class LiveDriver:
     self.failures = []  # list of (step_id, detail)
     self.outcome = OUTCOME_OK
     self.throttled = False
+    self.identities = set()
 
   def close(self):
     self._instr.detach()
@@ -224,7 +229,15 @@ class LiveDriver:
     self._row = row
 
   def result(self):
-    return IterationResult(self.spans, self.outcome, self.failures, self.throttled)
+    return IterationResult(
+      self.spans, self.outcome, self.failures, self.throttled, self.identities
+    )
+
+  def note_observation(self, span_name):
+    """Remembers that this step opened an observation under this identity, as
+    the span path folding will key it by.
+    """
+    self.identities.add(f"{self._current_step_id}.{span_name}")
 
   def _elapsed(self):
     return time.monotonic() - self._anchor
@@ -536,6 +549,7 @@ class LivePromptObservation:
         paced = driver._current_span.child("pace", driver._elapsed() - waited)
         paced.duration = waited
     self._span = driver._current_span.child(self.span_name, driver._elapsed())
+    driver.note_observation(self.span_name)
     self._scope = driver._instr.enter_scope(self._span)
     self._throttled_before = driver._instr.throttled
     return self
