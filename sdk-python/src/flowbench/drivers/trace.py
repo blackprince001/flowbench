@@ -155,6 +155,20 @@ class TraceDriver:
     self.set_request("grpc", spec)
     return Response(self)
 
+  def prompt(
+    self, name, *, template=None, variant=None, timeout=None, pace=None, burst=None
+  ):
+    # Observation is Python-surface-only by construction (ADR 0009/0012): it
+    # wraps a call the flow's own code makes, and the Go engine runs no Python
+    # at execution time, so there is no IR this could compile to. Refused here
+    # rather than dropped, since a flow whose prompt silently vanished would
+    # run at VU scale recording nothing.
+    raise FlowCompileError(
+      f"step {self.step_id!r} observes the prompt {name!r}, which only the "
+      "Python-driven path can run -- execute it with `python <file>.py` "
+      "rather than `flowbench run`"
+    )
+
   def set_request(self, kind, spec):
     if self.spec is not None:
       raise FlowCompileError(

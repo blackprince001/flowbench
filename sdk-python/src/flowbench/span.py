@@ -38,6 +38,7 @@ class Span:
     self._call_status = 0
     self._retry_after = ""
     self._failure = ""
+    self._observation = None
 
   def child(self, name, start):
     c = Span(name, start)
@@ -55,6 +56,19 @@ class Span:
 
   def set_failure(self, detail):
     self._failure = detail
+
+  def set_observation(self, prompt, completion, prompt_hash, variant, usage):
+    """Records a prompt observation's captured pair and its identity (ADR
+    0009). Held by reference like the bodies, but unlike them it is never
+    dropped: a diff needs both sides to exist on every iteration.
+    """
+    self._observation = {
+      "prompt": prompt,
+      "completion": completion,
+      "prompt_hash": prompt_hash,
+      "variant": variant,
+      "usage": usage,
+    }
 
   def self_time(self):
     self_dur = self.duration
@@ -87,6 +101,7 @@ def finalize(root, secrets, max_bytes):
     or root._raw_req is not None
     or root._raw_resp is not None
     or root._failure != ""
+    or root._observation is not None
   ):
     payload = {}
     if root._call_method:
@@ -112,11 +127,42 @@ def finalize(root, secrets, max_bytes):
         payload["response"] = response
       if truncated_req or truncated_resp:
         payload["truncated"] = True
+    if root._observation is not None:
+      _add_observation(payload, root._observation, secrets, max_bytes)
     root.payload = payload
     root._raw_req = root._raw_resp = None
     root._failure = ""
+    root._observation = None
   for c in root.children:
     finalize(c, secrets, max_bytes)
+
+
+def _add_observation(payload, observation, secrets, max_bytes):
+  """The captured pair, always -- an observation keeps its prompt and
+  completion whatever its outcome, because a diff needs both sides (ADR 0009).
+  Redaction and the size cap still apply; the cap is the only thing that is
+  allowed to shorten them.
+  """
+  payload["prompt"], truncated_prompt = _cap_text(
+    observation["prompt"], secrets, max_bytes
+  )
+  payload["completion"], truncated_completion = _cap_text(
+    observation["completion"], secrets, max_bytes
+  )
+  payload["prompt_hash"] = observation["prompt_hash"]
+  if observation["variant"]:
+    payload["variant"] = observation["variant"]
+  if observation["usage"]:
+    payload["usage"] = observation["usage"]
+  if truncated_prompt or truncated_completion:
+    payload["truncated"] = True
+
+
+def _cap_text(text, secrets, max_bytes):
+  redacted = secrets.redact(text)
+  if max_bytes > 0 and len(redacted.encode("utf-8")) > max_bytes:
+    return redacted.encode("utf-8")[:max_bytes].decode("utf-8", errors="replace"), True
+  return redacted, False
 
 
 def _cap_body(data, secrets, max_bytes):

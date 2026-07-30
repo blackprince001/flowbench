@@ -16,10 +16,17 @@ import os
 import time
 
 from .. import target as target_mod
-from ..errors import FlowExecutionError
+from ..errors import FlowCompileError, FlowExecutionError
 from ..eval import compare
 from ..instrument import Instrumentation
 from ..jsonpath import query_json
+from ..prompt import (
+  hash_prompt,
+  normalize_usage,
+  parse_timeout,
+  render,
+  wait_for_pace,
+)
 from ..redaction import SecretSet
 from ..retry_exec import backoff_delay, retryable
 from ..span import OUTCOME_FAILED, OUTCOME_OK, OUTCOME_THROTTLED, Span
@@ -57,6 +64,22 @@ class LiveValue:
 
   def __repr__(self):
     return f"LiveValue({self.value!r})"
+
+
+class RecordedText(str):
+  """A prompt or completion a step recorded -- the real string, so the flow's
+  own code can parse, slice and chain it as it would any other, and an
+  assertion subject, so `expect(p.completion).to_contain(...)` needs no
+  machinery of its own (PRD 10.9).
+  """
+
+  def __new__(cls, text, kind, driver):
+    self = super().__new__(cls, text)
+    self.kind = kind
+    self.key = None
+    self.value = text
+    self._driver = driver
+    return self
 
 
 class PendingLiveExtraction:
@@ -176,6 +199,7 @@ class LiveDriver:
     self._current_step_id = None
     self._current_retry = None
     self._call_made = False
+    self._observed = 0
     self._instr = Instrumentation(self._elapsed)
     self._instr.attach()
 
@@ -212,6 +236,7 @@ class LiveDriver:
     self._current_retry = retry.to_ir() if retry is not None else None
     self._current_span = Span(step_id, self._elapsed())
     self._call_made = False
+    self._observed = 0
     self._instr.begin_step(self._current_span)
 
   def end_step(self):
@@ -221,8 +246,20 @@ class LiveDriver:
     # A step earns its span by putting a request on the wire. ctx.http is one
     # way; a call the step's own code makes -- its SDK, its helper, its LLM
     # client -- is another, and auto-instrumentation sees those too, so a step
-    # that never touches ctx.http is no longer empty by definition.
-    if not self._call_made and not self._instr.recorded:
+    # that never touches ctx.http is no longer empty by definition. A recorded
+    # observation counts as well: it is an exchange with a provider whatever
+    # carried it, and not every client is one instrumentation can see -- a
+    # `requests`-based SDK, or a model reached over something that is not HTTP.
+    # A step that already failed is exempt: it has said what went wrong, and
+    # the authoring rule laid over the top of that would bury the finding --
+    # "made no HTTP call" is not what happened when the provider's client threw
+    # before it got one out.
+    if (
+      step.outcome != OUTCOME_FAILED
+      and not self._call_made
+      and not self._instr.recorded
+      and not self._observed
+    ):
       raise FlowExecutionError(
         f"step {step_id!r} made no HTTP call; every @flow.step function must "
         "make one, through ctx.http or through the flow's own client"
@@ -320,6 +357,23 @@ class LiveDriver:
     raise FlowExecutionError(
       "ctx.grpc() is not yet supported by live execution -- run "
       "`flowbench run <file>.py` instead (the Go engine supports grpc steps)"
+    )
+
+  def prompt(
+    self, name, *, template=None, variant=None, timeout=None, pace=None, burst=None
+  ):
+    if self._current_span is None:
+      raise FlowExecutionError(
+        "ctx.prompt(...) is only available inside a @flow.step function"
+      )
+    return LivePromptObservation(
+      self,
+      name=name,
+      template=template,
+      variant=variant,
+      timeout=timeout,
+      pace=pace,
+      burst=burst,
     )
 
   def set_var(self, key, value):
@@ -421,6 +475,135 @@ class LiveDriver:
     self._current_span.set_failure(detail)
     self.failures.append((self._current_step_id, detail))
     raise FlowAbortedError()
+
+
+class LivePromptObservation:
+  """One observed LLM exchange: `with ctx.prompt("classify") as p:` … around
+  the call the flow's own code makes (ADR 0009, PRD 10.9).
+
+  FlowBench does not make the call, template the prompt, or set a model
+  parameter. What the wrapper does is four things the call site is the only
+  place to do them:
+
+    - emits the observation's span (`classify`, or `classify@concise` under a
+      variant label) with the SDK's own HTTP parented beneath it, so the
+      provider round-trip is never opaque in the flame graph;
+    - holds the recorded pair for capture, on every iteration whatever the
+      outcome, because a diff needs both sides;
+    - hashes the prompt's identity -- the author's `template=` when there is
+      one, else the recorded content;
+    - paces repetition against a declared ceiling before the call goes out.
+
+  A `timeout=` is measured rather than enforced: the call belongs to the
+  author's SDK and FlowBench has no handle to cancel it, so an overrun is
+  reported after the call returns. Pass the same bound to the SDK's own
+  timeout argument to actually cut it short.
+
+  An async client inside the block is recorded like any other, including a
+  batch gathered concurrently -- they all land under the observation. What is
+  not supported is two *observations* open at once: the recording parent is
+  driver state rather than per-task, and pacing sleeps the thread, so a batch
+  of concurrent ctx.prompt blocks would cross their spans and serialize on the
+  guard. Gather the calls inside one observation, or take the observations one
+  at a time.
+  """
+
+  def __init__(self, driver, *, name, template, variant, timeout, pace, burst):
+    self.name = name
+    self.variant = variant
+    self.span_name = f"{name}@{variant}" if variant else name
+    self.prompt = None
+    self.completion = None
+    self.prompt_hash = None
+    self.usage = None
+    self._driver = driver
+    self._template = template
+    self._timeout = None if timeout is None else parse_timeout(timeout)
+    self._pace = pace
+    self._burst = burst
+    self._span = None
+    self._scope = None
+    self._throttled_before = False
+
+  def __enter__(self):
+    driver = self._driver
+    if self._pace is not None:
+      waited = wait_for_pace(self.name, self._pace, self._burst)
+      if waited > 0:
+        # A sibling of the observation, like a retry's backoff span: the wait
+        # is the flow's own, and folding it into the prompt span would inflate
+        # every latency figure the observation reports.
+        paced = driver._current_span.child("pace", driver._elapsed() - waited)
+        paced.duration = waited
+    self._span = driver._current_span.child(self.span_name, driver._elapsed())
+    self._scope = driver._instr.enter_scope(self._span)
+    self._throttled_before = driver._instr.throttled
+    return self
+
+  def __exit__(self, exc_type, exc, tb):
+    driver = self._driver
+    driver._instr.exit_scope(self._scope)
+    self._span.duration = driver._elapsed() - self._span.start
+
+    # A provider 429 reached the call span through instrumentation; the
+    # observation carries it up. Marked, not aborted -- there is no assertion
+    # to classify at, and aborting would be cutting third-party code off
+    # mid-flight (ADR 0006, and the same rule #24 settled for SDK calls).
+    if driver._instr.throttled and not self._throttled_before:
+      self._span.outcome = OUTCOME_THROTTLED
+
+    if exc is not None:
+      # Two kinds of exception pass through untouched: a failure the driver
+      # already recorded (a failed assertion, a refused host), which is on its
+      # way out carrying its own detail, and FlowBench's own contract errors,
+      # which are the flow being written wrong and must stay loud rather than
+      # becoming data. What is left is the provider's call raising, and that is
+      # this observation failing.
+      if isinstance(exc, (FlowAbortedError, FlowExecutionError, FlowCompileError)):
+        return False
+      self._span.outcome = OUTCOME_FAILED
+      driver._record_failure(
+        self._span, f"{self.span_name}: {type(exc).__name__}: {exc}"
+      )
+
+    if self.prompt is None:
+      raise FlowExecutionError(
+        f"observation {self.span_name!r} recorded nothing; call "
+        "p.record(prompt, completion) inside the with-block -- an observation "
+        "nobody records is invisible to the diff view"
+      )
+    if self._timeout is not None and self._span.duration > self._timeout:
+      self._span.outcome = OUTCOME_FAILED
+      driver._record_failure(
+        self._span,
+        f"{self.span_name}: took {self._span.duration:.3f}s, over its "
+        f"{self._timeout:g}s timeout",
+      )
+    return False
+
+  def record(self, prompt, completion, usage=None):
+    """Hands the exchange over: what was sent, what came back, and the token
+    counts if the provider reported them (a mapping, or the usage object the
+    SDK returned -- prompt/completion or input/output naming, either way).
+    """
+    if self.prompt is not None:
+      raise FlowExecutionError(
+        f"observation {self.span_name!r} recorded twice; one wrapped call is "
+        "one observation, so a second call belongs in its own ctx.prompt(...) "
+        "block"
+      )
+    self.prompt = RecordedText(render(prompt), "prompt", self._driver)
+    self.completion = RecordedText(render(completion), "completion", self._driver)
+    self.prompt_hash = hash_prompt(self._template, str(self.prompt))
+    self.usage = normalize_usage(usage)
+    self._span.set_observation(
+      str(self.prompt),
+      str(self.completion),
+      self.prompt_hash,
+      self.variant,
+      self.usage,
+    )
+    self._driver._observed += 1
 
 
 def _unwrap(value):

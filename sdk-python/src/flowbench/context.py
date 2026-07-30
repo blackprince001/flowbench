@@ -4,9 +4,16 @@ compile-time TraceDriver (drivers/trace.py) or the real-execution LiveDriver
 (drivers/live.py). Neither driver's types leak in here.
 """
 
+import re
+
 from .errors import FlowCompileError
 
 _METHODS = ("get", "post", "put", "patch", "delete")
+
+# ir.validate.go's identRe. A span name is a structural identity, and `.` and
+# `@` are reserved for dot-paths and for `name@variant` respectively -- an
+# observation called "a.b" would fold as two levels of nothing.
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 
 # Matches ir.GraphQLErrorPolicy. Unset means "fail", so a broken query is a
 # failed step rather than a pass nobody asserted on.
@@ -160,6 +167,61 @@ class GRPC:
     )
 
 
+class Prompt:
+  """``ctx.prompt(...)`` — wraps one LLM call the flow's own code makes.
+
+  FlowBench never makes the call, templates the prompt, or sets a model
+  parameter (ADR 0009): the block's own code does that with whatever SDK it
+  already uses, and hands the exchange over with ``p.record(...)``.
+
+      with ctx.prompt("classify", template=SYSTEM, pace="20/m") as p:
+          reply = client.chat.completions.create(model=..., messages=msgs)
+          p.record(msgs, reply.choices[0].message.content, usage=reply.usage)
+
+  ``variant=`` is a label, not machinery: what varies is the block's own code,
+  and the label is what gives that version its own span identity
+  (``classify@concise``) so folding, metrics and diffs stay per-variant.
+  """
+
+  def __init__(self, driver):
+    self._driver = driver
+
+  def __call__(
+    self,
+    name,
+    *,
+    template=None,
+    variant=None,
+    timeout=None,
+    pace=None,
+    burst=None,
+  ):
+    if not isinstance(name, str) or not _IDENT_RE.match(name):
+      raise FlowCompileError(
+        f"ctx.prompt(name) must match {_IDENT_RE.pattern} (dots and @ are "
+        f"reserved for span names), got {name!r}"
+      )
+    if variant is not None and (
+      not isinstance(variant, str) or not _IDENT_RE.match(variant)
+    ):
+      raise FlowCompileError(
+        f"ctx.prompt(variant=...) must match {_IDENT_RE.pattern}, got {variant!r}"
+      )
+    if burst is not None and pace is None:
+      raise FlowCompileError(
+        "ctx.prompt(burst=...) is an allowance against a pace, and this "
+        "observation declares none"
+      )
+    return self._driver.prompt(
+      name,
+      template=template,
+      variant=variant,
+      timeout=timeout,
+      pace=pace,
+      burst=burst,
+    )
+
+
 def _make_method(verb):
   def method(self, url, *, json=None, headers=None, query=None):
     return self._call(verb.upper(), url, json=json, headers=headers, query=query)
@@ -207,6 +269,7 @@ class Context:
     self.graphql = GraphQL(driver)
     self.ws = WS(driver)
     self.grpc = GRPC(driver)
+    self.prompt = Prompt(driver)
     self.vars = VarsProxy(driver)
     self.env = EnvProxy(driver)
     self._has_data_pool = has_data_pool
