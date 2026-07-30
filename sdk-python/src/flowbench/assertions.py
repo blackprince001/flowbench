@@ -1,4 +1,9 @@
-from .drivers.live import LiveAssertionBuilder, LiveValue, PendingLiveExtraction
+from .drivers.live import (
+  LiveAssertionBuilder,
+  LiveValue,
+  PendingLiveExtraction,
+  RecordedText,
+)
 from .drivers.trace import PendingExtraction, Subject
 from .errors import FlowCompileError, FlowExecutionError
 from .template import TemplateRef
@@ -72,6 +77,11 @@ def expect(subject):
     return LiveAssertionBuilder(
       LiveValue(subject.value, kind="body", driver=subject._driver, key=subject.path)
     )
+  # A recorded prompt or completion is a real string the step's own code can
+  # use, and an assertion subject like any other -- PRD 10.9's "assertions on
+  # completions are ordinary expect(...) calls, no special machinery".
+  if isinstance(subject, RecordedText):
+    return LiveAssertionBuilder(subject)
   if isinstance(subject, LiveValue):
     if subject.kind in ("user", "env"):
       raise FlowExecutionError(
