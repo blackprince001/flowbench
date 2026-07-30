@@ -1043,20 +1043,41 @@ func TestAssetRouteServesOnlyFonts(t *testing.T) {
 }
 
 // A small multiple is a summary; opening one has to give it the whole card plus
-// the detail there was no room for at four-up.
-func TestRunPageExpandsOneChart(t *testing.T) {
+// the detail there was no room for at four-up. That happens on the charts tab,
+// so the overview's job is to link there rather than to grow a full-height
+// plot in the middle of itself.
+func TestOverviewChartsLinkIntoTheChartsTab(t *testing.T) {
 	s, runBase := serve(t)
-	base := runBase
 
-	_, body := get(t, s, base)
-	if !strings.Contains(body, `href="`+base+`?chart=latency"`) {
-		t.Fatal("each chart should link to its own full-size view")
+	_, body := get(t, s, runBase)
+	if !strings.Contains(body, `href="`+runBase+`/charts?chart=latency"`) {
+		t.Fatal("each small multiple should open on the charts tab")
 	}
-	// Match the class attribute, not the bare word: the stylesheet is inlined
-	// and mentions every state class.
 	if strings.Contains(body, `class="chart is-expanded"`) {
-		t.Error("the grid of small multiples has nothing expanded")
+		t.Error("the overview's grid has nothing expanded")
 	}
+	if !strings.Contains(body, runBase+`/charts"`) {
+		t.Error("the run should offer the charts tab")
+	}
+}
+
+// Links written before the tab existed still land on the chart they named.
+func TestOldChartLinksRedirectToTheTab(t *testing.T) {
+	s, runBase := serve(t)
+
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, runBase+"?chart=latency", nil))
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("old chart link returned %d, want a permanent redirect", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != runBase+"/charts?chart=latency" {
+		t.Errorf("redirected to %q, which drops the chart that was asked for", got)
+	}
+}
+
+func TestChartsTabExpandsOneChart(t *testing.T) {
+	s, runBase := serve(t)
+	base := runBase + "/charts"
 
 	code, body := get(t, s, base+"?chart=latency")
 	if code != http.StatusOK {
@@ -1075,13 +1096,17 @@ func TestRunPageExpandsOneChart(t *testing.T) {
 			t.Errorf("expanded chart missing %q", want)
 		}
 	}
-	// The other charts stay one click away.
-	if !strings.Contains(body, `?chart=throughput"`) {
-		t.Error("the expanded view should offer the other charts")
+
+	// The other charts stay on the page: a chart worth opening is worth
+	// reading beside the ones it is being compared against.
+	if !strings.Contains(body, "Over the run") {
+		t.Error("the grid should stay under the expanded chart")
 	}
-	// A stale chart key degrades to the grid rather than erroring.
-	if code, body := get(t, s, base+"?chart=nope"); code != http.StatusOK || strings.Contains(body, `class="chart is-expanded"`) {
-		t.Errorf("an unknown chart should fall back to all of them, got %d", code)
+
+	// A stale key degrades to the grid rather than erroring.
+	code, body = get(t, s, base+"?chart=nonesuch")
+	if code != http.StatusOK || strings.Contains(body, `class="chart is-expanded"`) {
+		t.Errorf("unknown chart key should degrade to the grid, got code %d", code)
 	}
 }
 

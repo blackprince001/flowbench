@@ -42,49 +42,11 @@
 </section>
 {{ end }}
 
-{{ if .Chart }}
-<section class="card">
-  <div class="card-head">
-    <div>
-      <h2 class="card-title">{{ .Chart.Title }}</h2>
-      <p class="card-kicker">peak {{ .Chart.Peak }} at {{ .Chart.PeakAt }}</p>
-    </div>
-    <p class="card-note"><a class="span-link" href="{{ .All }}">&lsaquo; all charts</a></p>
-  </div>
-  <div class="card-body">
-    {{ template "linechart" .Chart }}
-    {{ if .Chart.Lines }}
-    <table class="table compact chart-stats">
-      <thead>
-        <tr><th>Series</th><th class="num">Min</th><th class="num">Mean</th><th class="num">Max</th><th class="num">Last</th></tr>
-      </thead>
-      <tbody>
-        {{ range .Chart.Lines }}
-        <tr>
-          <td><span class="chart-key" style="--tone:var(--{{ .Tone }})">{{ .Label }}</span></td>
-          <td class="num">{{ .Min }}</td>
-          <td class="num">{{ .Mean }}</td>
-          <td class="num">{{ .Max }}</td>
-          <td class="num">{{ .Last }}</td>
-        </tr>
-        {{ end }}
-      </tbody>
-    </table>
-    {{ end }}
-    <nav class="picker chart-picker" aria-label="Other charts">
-      {{ range .Charts }}
-      <a class="pick{{ if .Expanded }} is-selected{{ end }}" href="{{ .Href }}" style="--tone:var(--kind-net)">
-        <span class="pick-seq">{{ .Title }}</span>
-      </a>
-      {{ end }}
-    </nav>
-  </div>
-</section>
-{{ else if .Charts }}
+{{ if .Charts }}
 <section class="card">
   <div class="card-head">
     <h2 class="card-title">Over the run</h2>
-    <p class="card-note">click a chart to open it full size</p>
+    <p class="card-note"><a class="span-link" href="{{ .All }}">click a chart to open it full size &rsaquo;</a></p>
   </div>
   <div class="card-body">
     <div class="charts">

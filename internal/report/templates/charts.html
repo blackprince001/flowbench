@@ -1,0 +1,106 @@
+{{ define "content" }}
+
+{{ template "run-head" .RunHead }}
+{{ template "tabs" .Tabs }}
+{{ template "chart-defs" }}
+
+{{ if .Note }}
+<section class="card">
+  <div class="card-head"><h2 class="card-title">Over the run</h2></div>
+  <div class="card-body"><p class="hint">{{ .Note }}</p></div>
+</section>
+{{ else }}
+
+{{ if .Chart }}
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">{{ .Chart.Title }}</h2>
+      <p class="card-kicker">peak {{ .Chart.Peak }} at {{ .Chart.PeakAt }}</p>
+    </div>
+    <p class="card-note"><a class="span-link" href="{{ .All }}">&lsaquo; all charts</a></p>
+  </div>
+  <div class="card-body">
+    {{ template "linechart" .Chart }}
+    {{ if .Chart.Lines }}
+    <table class="table compact chart-stats">
+      <thead>
+        <tr><th>Series</th><th class="num">Min</th><th class="num">Mean</th><th class="num">Max</th><th class="num">Last</th></tr>
+      </thead>
+      <tbody>
+        {{ range .Chart.Lines }}
+        <tr>
+          <td><span class="chart-key" style="--tone:var(--{{ .Tone }})">{{ .Label }}</span></td>
+          <td class="num">{{ .Min }}</td>
+          <td class="num">{{ .Mean }}</td>
+          <td class="num">{{ .Max }}</td>
+          <td class="num">{{ .Last }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ end }}
+    <nav class="picker chart-picker" aria-label="Other charts">
+      {{ range .Charts }}
+      <a class="pick{{ if .Expanded }} is-selected{{ end }}" href="{{ .Href }}" style="--tone:var(--kind-net)">
+        <span class="pick-seq">{{ .Title }}</span>
+      </a>
+      {{ end }}
+    </nav>
+  </div>
+</section>
+{{ end }}
+
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Over the run</h2>
+    <p class="card-note">{{ if .Chart }}the rest of the run's series{{ else }}click a chart to open it full size{{ end }}</p>
+  </div>
+  <div class="card-body">
+    <div class="charts">
+      {{ range .Charts }}{{ template "linechart" . }}{{ end }}
+    </div>
+  </div>
+</section>
+
+{{ if .Agent.Charts }}
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Target resources</h2>
+    <p class="card-note">from the attached agent, on this run's clock</p>
+  </div>
+  <div class="card-body">
+    <div class="charts">
+      {{ range .Agent.Charts }}{{ template "linechart" . }}{{ end }}
+    </div>
+  </div>
+</section>
+{{ end }}
+
+{{ end }}
+{{ end }}
+
+{{ define "detail" }}
+{{ template "rail-head" "What a chart is drawn from: one point per bucket, the width picked so a run stays under 300 of them." }}
+<section class="card panel{{ if not .Chart }} is-empty{{ end }}">
+  {{ if .Chart }}
+  <div class="card-head"><h2 class="card-title">{{ .Chart.Title }}</h2></div>
+  <div class="card-body">
+    <dl class="facts">
+      {{ range .Chart.Lines }}
+      <div class="fact">
+        <dt><span class="chart-key" style="--tone:var(--{{ .Tone }})">{{ .Label }}</span></dt>
+        <dd>{{ .Mean }} mean · {{ .Max }} peak</dd>
+      </div>
+      {{ end }}
+    </dl>
+    <p class="hint">Peak {{ .Chart.Peak }} at {{ .Chart.PeakAt }}.</p>
+  </div>
+  {{ else }}
+  <div class="card-head"><h2 class="card-title">No chart open</h2></div>
+  <div class="card-body">
+    <p class="hint">Pick one of the plots to read it at full height, with its per-series minimum, mean, maximum and last value.</p>
+  </div>
+  {{ end }}
+</section>
+{{ end }}

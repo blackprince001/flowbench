@@ -43,6 +43,7 @@ func New(ws *store.Workspace) *Server {
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/failures", s.failures)
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/compare", s.compare)
 	s.mux.HandleFunc("GET /p/{project}/runs/{id}/prompts", s.prompts)
+	s.mux.HandleFunc("GET /p/{project}/runs/{id}/charts", s.charts)
 	s.mux.Handle("GET "+report.AssetPrefix+"{file}", report.ServeAssets())
 	return s
 }
@@ -168,13 +169,14 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 	}
 
 	base := s.runBase(p, id)
-	charts := report.LinkCharts([]report.LineChart{
-		report.ThroughputChart(series),
-		report.LatencyChart(series),
-		report.RatesChart(series),
-		vuChart(series, metrics),
-	}, base)
-	chart, charts := report.SelectChart(charts, r.URL.Query().Get("chart"))
+	// Expanding a chart is the charts tab's job, so the overview's small
+	// multiples link there. A ?chart= aimed at this page is an older link, and
+	// it is forwarded rather than ignored.
+	if key := r.URL.Query().Get("chart"); key != "" {
+		http.Redirect(w, r, base+"/charts?chart="+url.QueryEscape(key), http.StatusMovedPermanently)
+		return
+	}
+	charts := report.LinkCharts(runCharts(series, metrics), base+"/charts")
 	bucket := intParam(r, "at", -1)
 
 	// Attached is read from the run's own meta, not len(agentSeries) > 0 on
@@ -204,8 +206,7 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 			{Label: "p99", Value: m.P99.Round(time.Microsecond).String()},
 		},
 		Charts:  charts,
-		Chart:   chart,
-		All:     base,
+		All:     base + "/charts",
 		Tallies: report.Tallies(series),
 		Strip:   stripView(series, base, bucket),
 		Funnels: report.Funnels(folded, traces),
@@ -220,6 +221,63 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		page.Trend = report.TrendFrom(series, m.Thresholds)
 	}
 	render(w, report.RenderRun, page)
+}
+
+// charts is the run as time series, in a tab of its own: the small multiples,
+// and the one ?chart= names at full height with its per-series figures. The
+// overview keeps the grid — seeing the shape is the reason to open one — and
+// every expansion from there lands here.
+func (s *Server) charts(w http.ResponseWriter, r *http.Request) {
+	p, m, index, ok := s.runContext(w, r)
+	if !ok {
+		return
+	}
+	id := m.ID
+
+	folded, _ := p.Store.LoadFolded(id)
+	traces, _ := p.Store.LoadTraces(id)
+	series, _ := p.Store.LoadSeries(id)
+	samples, _ := p.Store.LoadSamples(id)
+	metrics, _ := p.Store.LoadMetrics(id)
+	agentSeries, _ := p.Store.LoadAgentSeries(id)
+
+	base := s.runBase(p, id)
+	charts := report.LinkCharts(runCharts(series, metrics), base+"/charts")
+	chart, charts := report.SelectChart(charts, r.URL.Query().Get("chart"))
+
+	page := report.ChartsPage{
+		Shell:   s.shell(p, m, index, "charts", len(report.FlameFrames(folded)), traces, samples.Kept),
+		RunHead: head(m),
+		Charts:  charts,
+		Chart:   chart,
+		All:     base + "/charts",
+	}
+	if m.AgentAttached {
+		agentSp := agentSpan(series, metrics, agentSeries)
+		page.Agent.Attached = true
+		page.Agent.Charts = []report.LineChart{
+			targetCPUChart(agentSp, metrics, agentSeries),
+			targetMemChart(agentSp, metrics, agentSeries),
+		}
+	}
+	if len(series.Points) == 0 {
+		page.Note = "this run recorded no series — a run cancelled before its first bucket closed has nothing to plot over time."
+	}
+	render(w, report.RenderCharts, page)
+}
+
+// runCharts is the run's own series, in the order they answer questions in:
+// how much got through, how long it took, what went wrong, and how many VUs
+// were pushing. Built in one place because the overview and the charts tab
+// must offer the same set — a chart missing from one of them would make the
+// other's links dead.
+func runCharts(series collector.Series, metrics []executor.MetricSample) []report.LineChart {
+	return []report.LineChart{
+		report.ThroughputChart(series),
+		report.LatencyChart(series),
+		report.RatesChart(series),
+		vuChart(series, metrics),
+	}
 }
 
 func (s *Server) flame(w http.ResponseWriter, r *http.Request) {
@@ -681,6 +739,7 @@ func (s *Server) shell(p store.Project, m store.Meta, index []store.Meta, view s
 	base := s.runBase(p, m.ID)
 	tabs := []report.Tab{
 		{Label: "Run", Href: base, Selected: view == "overview"},
+		{Label: "Over the run", Href: base + "/charts", Selected: view == "charts"},
 		{Label: "Flame graph", Href: base + "/flame", Count: frames, Selected: view == "flame"},
 		{Label: "Waterfall", Href: base + "/waterfall", Count: len(traces), Selected: view == "waterfall"},
 		{Label: "Failures", Href: base + "/failures", Count: report.FailingTraces(traces), Selected: view == "failures"},

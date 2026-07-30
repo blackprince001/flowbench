@@ -225,8 +225,7 @@ type RunPage struct {
 	RunHead
 	Tiles   []Tile
 	Charts  []LineChart
-	Chart   *LineChart // the one opened full size, when ?chart= names it
-	All     string     // the link back to every chart at once
+	All     string // the charts tab, where one opens full size
 	Tallies []Tally
 	Strip   StripView
 	Funnels []Funnel // where flow-runs stopped, one per flow
@@ -237,6 +236,24 @@ type RunPage struct {
 	Agent   AgentOverlay  // the target-metrics overlay: charts once attached, an empty-state note otherwise
 	Trend   *TrendSection // soak runs only; nil otherwise
 	Links   []Jump
+}
+
+// ChartsPage is the run as time series: the small multiples, and — when
+// ?chart= names one — that chart at full height with its per-series figures.
+//
+// It is a tab of its own rather than an expansion inside the overview because
+// a chart worth opening is a chart worth reading beside the others, and
+// because the overview should stay the page you skim rather than the page that
+// grows a full-height plot in the middle of itself. The grid stays on the
+// overview all the same: seeing the shape is the reason to open one.
+type ChartsPage struct {
+	Shell
+	RunHead
+	Charts []LineChart
+	Chart  *LineChart // the one opened full size
+	All    string     // back to every chart at once
+	Agent  AgentOverlay
+	Note   string // set when the run recorded no series at all
 }
 
 // Jump is a card on the overview that leads into one of the detail views,
@@ -320,6 +337,7 @@ var (
 	failuresTmpl  = parse("templates/failures.html")
 	compareTmpl   = parse("templates/compare.html")
 	promptsTmpl   = parse("templates/prompts.html")
+	chartsTmpl    = parse("templates/charts.html")
 	liveTmpl      = parse("templates/live.html")
 )
 
@@ -390,6 +408,11 @@ func RenderFailures(w io.Writer, p FailuresPage) error {
 // RenderCompare writes the run-versus-baseline comparison page.
 func RenderCompare(w io.Writer, p ComparePage) error {
 	return compareTmpl.ExecuteTemplate(w, "layout", p)
+}
+
+// RenderCharts writes the run's time-series page.
+func RenderCharts(w io.Writer, p ChartsPage) error {
+	return chartsTmpl.ExecuteTemplate(w, "layout", p)
 }
 
 // RenderPrompts writes the prompt diff page.
