@@ -27,6 +27,37 @@ type Payload struct {
 	Request    string `json:"request,omitempty"`
 	Response   string `json:"response,omitempty"`
 	Truncated  bool   `json:"truncated,omitempty"`
+
+	// A prompt observation's captured pair and identity (ADR 0009), written by
+	// the Python-driven producer — the engine never makes an LLM call, so it
+	// never sets these. They live here because the run store is one format both
+	// producers write and the results server reads: without the fields, a
+	// Python-recorded exchange would decode away to nothing on the way into the
+	// diff view (#45).
+	//
+	// Unlike the bodies, the pair is captured on every iteration whatever the
+	// outcome — a diff needs both sides — though redaction and the size cap
+	// still apply.
+	Prompt     string `json:"prompt,omitempty"`
+	Completion string `json:"completion,omitempty"`
+	// PromptHash identifies the prompt itself: the author's declared template
+	// when there is one, else the recorded content. It is what separates "the
+	// prompt changed" from "the output changed under the same prompt".
+	PromptHash string `json:"prompt_hash,omitempty"`
+	// Variant is the label that gave this observation its own span identity
+	// (`classify@concise`), carried explicitly so a reader groups by it without
+	// having to re-derive it from the span name.
+	Variant string `json:"variant,omitempty"`
+	Usage   *Usage `json:"usage,omitempty"`
+}
+
+// Usage is what the provider reported an observation cost, in one vocabulary:
+// OpenAI names them prompt/completion, Anthropic input/output, and the SDK
+// normalizes before writing so the results server has one thing to read.
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
 }
 
 // SetRaw records the call's bodies by reference for possible capture later.
