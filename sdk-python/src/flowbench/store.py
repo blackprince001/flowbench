@@ -246,6 +246,8 @@ def write_run(store_root, info, roots, samples, secrets):
     "p95": _ns(percentile(samples, 0.95)),
     "p99": _ns(percentile(samples, 0.99)),
   }
+  if info.get("identities"):
+    meta["identities"] = sorted(info["identities"])
   if info.get("commit"):
     meta["commit"] = info["commit"]
   if info.get("dirty"):
@@ -262,6 +264,28 @@ def write_run(store_root, info, roots, samples, secrets):
 
   _append_index(store_root, meta)
   return run_dir
+
+
+def prior_identities(store_root, scenario):
+  """The structural identities the newest earlier run of this scenario
+  recorded, or None when there is nothing to compare against -- no earlier
+  run, or one written before identities were kept (a Go-produced run keeps
+  none, since the engine's step ids are declared rather than discovered).
+
+  None and the empty set are deliberately different: one means "unknown", the
+  other means "that run recorded nothing", and only the second is grounds for
+  a warning.
+  """
+  try:
+    with (Path(store_root) / "index.json").open() as f:
+      index = json.load(f)
+  except (FileNotFoundError, ValueError):
+    return None
+  for meta in index:  # newest first
+    if meta.get("scenario") == scenario:
+      identities = meta.get("identities")
+      return None if identities is None else set(identities)
+  return None
 
 
 def _write_json(path, value):
