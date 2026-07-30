@@ -35,10 +35,11 @@ jobs:
       # The same gate CI runs on main — a tag must never outrun the checks.
       - name: test
         run: |
-          gofmt -l . | tee /dev/stderr | test -z "$(cat)"
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then echo "unformatted: $unformatted"; exit 1; fi
           go vet ./...
           uv sync --locked --project sdk-python
-          FLOWBENCH_PYTHON="$PWD/sdk-python/.venv/bin/python" FLOWBENCH_REQUIRE_PYTHON=1 go test ./...
+          FLOWBENCH_PYTHON="$PWD/sdk-python/.venv/bin/python" FLOWBENCH_REQUIRE_PYTHON=1 go test -race ./...
           uv run --locked --directory sdk-python pytest -q
           # the SDK's two version declarations must agree before either ships
           pkg="$(uv run --locked --directory sdk-python python -c 'import flowbench; print(flowbench.__version__)')"
@@ -93,7 +94,9 @@ jobs:
 
       - name: checksums
         run: |
-          cd dist && rm -rf stage && sha256sum * > checksums.txt
+          # Named rather than globbed with *, so checksums.txt can never
+          # end up listing itself.
+          cd dist && rm -rf stage && sha256sum flowbench* > checksums.txt
 
       - name: publish release
         env:
