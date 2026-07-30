@@ -43,11 +43,4 @@
 ## Project
 
 * [Architecture](project/architecture.md)
-* [Development](project/development.md)
-* [Rollout checklist](project/rollout-checklist.md)
-* [PRD](prd.md)
 * [Glossary](CONTEXT.md)
-* [Milestones](planning/milestones.md)
-* [Benchmarks](benchmarks/10k-vu-footprint.md)
-* [Work log](log.md)
-* [Decision records](decisions/README.md)

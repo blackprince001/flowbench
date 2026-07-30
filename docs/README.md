@@ -20,6 +20,6 @@ Flows can also observe prompt calls: your code calls whatever LLM SDK it already
 - New here: [Installation](getting-started/installation.md), then the [Quickstart](getting-started/quickstart.md) — one YAML flow to a first stress run and flame graph in under ten minutes.
 - Writing flows: the [Guide](guide/flows.md) walks the authoring surface end to end; the [Cookbook](cookbook/README.md) holds worked patterns, each runnable from `examples/`.
 - Looking something up: the [CLI](reference/cli.md), [YAML DSL](reference/yaml-dsl.md), and [Python API](reference/python-api.md) references are complete.
-- Why is it built this way: [Architecture](project/architecture.md), the [PRD](prd.md), and the nineteen [decision records](decisions/README.md).
+- Why is it built this way: [Architecture](project/architecture.md).
 
 One vocabulary runs through everything — a flow is never a "test case", a throttle is never an "error". The [glossary](CONTEXT.md) is the source of truth for the words.
