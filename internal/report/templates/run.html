@@ -83,6 +83,23 @@
 </section>
 {{ end }}
 
+{{ if .Knee }}
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">Knee point</h2>
+    <p class="card-note">how the stress ramp broke</p>
+  </div>
+  <div class="card-body">
+    {{ if .Knee.Found }}
+    <p><span class="chip o-{{ .Knee.Tone }}">{{ .Knee.Class }}</span> {{ .Knee.Detail }}</p>
+    {{ if .Knee.Where }}<p class="hint">{{ .Knee.Where }}</p>{{ end }}
+    {{ else }}
+    <p class="hint">{{ .Knee.Note }}</p>
+    {{ end }}
+  </div>
+</section>
+{{ end }}
+
 {{ if .Steps }}
 <section class="card">
   <div class="card-head">

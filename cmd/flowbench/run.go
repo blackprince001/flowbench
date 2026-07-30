@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/blackprince001/flowbench/internal/adapters"
+	"github.com/blackprince001/flowbench/internal/agent"
 	"github.com/blackprince001/flowbench/internal/auth"
 	"github.com/blackprince001/flowbench/internal/collector"
 	"github.com/blackprince001/flowbench/internal/data"
@@ -193,6 +194,7 @@ func executeLoad(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, 
 		outcomes = append(outcomes, collector.EvaluateTrends(res)...)
 	}
 	breached := printOutcomes(stdout, outcomes)
+	printKnee(stdout, sc.Profile.Mode, res, outcomes, agentSeries)
 
 	// Persist the run artifact regardless of pass/fail — a breaching run is
 	// exactly the one worth keeping. A store failure is a warning, not an exit.
@@ -239,6 +241,18 @@ func printOutcomes(w io.Writer, outcomes []collector.Outcome) bool {
 		fmt.Fprintf(w, "  %s: %s  (%s)\n", o.Expr, status, o.Detail)
 	}
 	return breached
+}
+
+// printKnee prints the stress knee classification (issue #39) — the same
+// finding the store persists (the PRD's knee_point_found), computed by the
+// same collector routine, so the terminal and the report never disagree.
+func printKnee(w io.Writer, mode ir.Mode, res *executor.Result, outcomes []collector.Outcome, agentSeries []agent.PolledSample) {
+	if mode != ir.ModeStress {
+		return
+	}
+	if k := collector.ClassifyKnee(res, outcomes, agentSeries); k != nil {
+		fmt.Fprintf(w, "  knee_point_found: %s — %s\n", k.Class, k.Detail)
+	}
 }
 
 // executeOnce runs each flow at one VU — once per fixture row when the flow

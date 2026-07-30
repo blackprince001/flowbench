@@ -1431,3 +1431,105 @@ func TestProjectStripFoldsAway(t *testing.T) {
 		t.Error("the fold state should be persisted like the rails' are")
 	}
 }
+
+// kneeStressRun is a 10s stress run that throttles hard in its second half:
+// the shape issue #39's classifier reads a knee out of.
+func kneeStressRun() *executor.Result {
+	folded := span.NewFolded()
+	var samples []executor.Sample
+	for i := range 500 {
+		at := time.Duration(i) * 20 * time.Millisecond
+		s := executor.Sample{Flow: "checkout", Actual: at, Service: 15 * time.Millisecond, Outcome: span.OutcomeOK}
+		if at >= 5*time.Second {
+			s.Outcome, s.Throttled = span.OutcomeThrottled, true
+		}
+		samples = append(samples, s)
+	}
+	return &executor.Result{
+		Duration:   10 * time.Second,
+		Iterations: len(samples),
+		Outcomes:   executor.Tally(samples),
+		Samples:    samples,
+		Folded:     folded,
+	}
+}
+
+// flatAgentSeries polls a 4-core target once a second for 10s with CPU pinned
+// near 40% and memory flat — the "enforced limit, not saturation" signature.
+func flatAgentSeries() []agent.PolledSample {
+	var series []agent.PolledSample
+	cpu := 100.0
+	for i := 0; i <= 10; i++ {
+		series = append(series, agent.PolledSample{
+			At:     time.Duration(i) * time.Second,
+			Sample: agent.Sample{CPUSeconds: cpu, NumCPU: 4, MemUsedBytes: 2 << 30, MemTotalBytes: 8 << 30},
+		})
+		cpu += 1.6
+	}
+	return series
+}
+
+// Issue #39's report half: a stress run whose thresholds broke shows the knee
+// card, and states the throttled (not degraded) finding the store classified.
+func TestRunPageShowsThrottledKneePoint(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "svc")
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rd, err := st.Save(
+		store.RunInfo{Scenario: "stress.flow.yaml", Mode: "stress", StartedAt: time.Now()},
+		kneeStressRun(),
+		[]collector.Outcome{{Expr: "throttle_rate < 5%", Pass: false, Detail: "throttle_rate = 50.00%, want < 5.00%"}},
+		flatAgentSeries(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := store.NewWorkspace([]string{"svc=" + dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, body := get(t, server.New(ws), "/p/svc/runs/"+filepath.Base(rd))
+	for _, want := range []string{"Knee point", "throttled", "rate limit"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("stress run page missing %q", want)
+		}
+	}
+	if strings.Contains(body, "genuinely saturating") {
+		t.Error("a flat-resource throttle knee must not read as degraded")
+	}
+}
+
+// A stress run that held its gates states that plainly rather than showing
+// nothing — and never fabricates a hold for a breached run with no
+// classification (a run written before issue #39).
+func TestRunPageKneeEmptyStates(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "svc")
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rd, err := st.Save(
+		store.RunInfo{Scenario: "stress.flow.yaml", Mode: "stress", StartedAt: time.Now()},
+		throttledRun(),
+		[]collector.Outcome{{Expr: "throttle_rate < 50%", Pass: true, Detail: "throttle_rate = 10.00%, want < 50.00%"}},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := store.NewWorkspace([]string{"svc=" + dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, body := get(t, server.New(ws), "/p/svc/runs/"+filepath.Base(rd))
+	if !strings.Contains(body, "Knee point") {
+		t.Error("a stress run should always carry the knee card")
+	}
+	if !strings.Contains(body, "held for the whole ramp") {
+		t.Error("a clean stress run should say the thresholds held")
+	}
+}
