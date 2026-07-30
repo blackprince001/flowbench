@@ -1,0 +1,36 @@
+---
+// A tiny stroked set, 16px on a 24 grid, one path each. Cards tint them with
+// currentColor so the icon carries the card's accent.
+interface Props {
+  name: keyof typeof PATHS;
+  size?: number;
+}
+
+const PATHS = {
+  layers: "M12 3 3 8l9 5 9-5-9-5ZM3 13l9 5 9-5M3 17.5l9 5 9-5",
+  gauge: "M12 21a9 9 0 1 1 9-9M12 12l5.5-3.5",
+  spans: "M4 6h16M4 12h10M4 18h6",
+  box: "M21 8v8l-9 5-9-5V8l9-5 9 5ZM3 8l9 5 9-5M12 13v8",
+  shield: "M12 3l7.5 3v6c0 4.5-3.2 7.6-7.5 9-4.3-1.4-7.5-4.5-7.5-9V6L12 3Z",
+  pulse: "M3 12h4l2.5-6 4 12L16 12h5",
+  check: "M4 12.5 9 17.5 20 6.5",
+  dash: "M6 12h12",
+  arrow: "M4 12h14M13 6.5 18.5 12 13 17.5",
+} as const;
+
+const { name, size = 16 } = Astro.props;
+---
+
+<svg
+  viewBox="0 0 24 24"
+  width={size}
+  height={size}
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.7"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  aria-hidden="true"
+>
+  <path d={PATHS[name]}></path>
+</svg>

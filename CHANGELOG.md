@@ -2,6 +2,24 @@
 
 Human-curated, newest first. Versions are tags; the tag is the source of truth. Until v1, minor versions may change surfaces without a deprecation cycle — the run-store format written by the two producers (Go engine, Python SDK) is the compatibility contract to watch.
 
+## v0.1.1 — 2026-07-30
+
+### Added
+
+- **The Python SDK is on PyPI: `pip install flowbench`.** Installing it previously meant downloading a wheel off a GitHub release or pointing pip at a checkout. Publishing uses PyPI's Trusted Publishing, so there is no API token in the repository's secrets (ADR 0005's reasoning, applied to a new credential). The wheel and sdist stay attached to the release too, and the published bytes are the same ones the checksums cover.
+- **The project is licensed Apache 2.0.** There was no `LICENSE` file at all; there is now one at the root and a copy inside the SDK package, so the license travels with the wheel.
+
+### Fixed
+
+- **A step with a `body` now says it is sending JSON.** The engine sent request bodies with no `Content-Type` at all, so a target that requires one answered `415`, and one that quietly ignores the body reported a confusing `400` — while the same flow run through `python flow.py` sent `application/json`, because httpx added it. The two surfaces now agree, and a conformance test reads the headers off the wire so they stay that way.
+
+### Changed
+
+- **flowbench identifies itself.** Requests carried Go's default `Go-http-client/1.1`; they now carry `flowbench/<version>` (`flowbench/<version> (python)` from the SDK's direct-execution path). If you have a WAF rule, an access-log filter, or an allow-list keyed on the old value, update it.
+- Both headers are only added when the step does not declare them, so an explicit `headers:` entry still wins. Declaring one **empty** (`Content-Type: ""`) sends no such header at all — the way to test what a target does without one. See the [YAML reference](docs/reference/yaml-dsl.md#headers-the-engine-adds).
+
+The run store is untouched: captures record request bodies and responses, never request headers, so runs written by v0.1.0 and v0.1.1 stay comparable.
+
 ## v0.1.0 — 2026-07-30
 
 The first cut of the toolkit: everything from milestones M1–M4, dogfood-ready per the [rollout checklist](docs/project/rollout-checklist.md).

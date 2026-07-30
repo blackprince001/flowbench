@@ -1,0 +1,209 @@
+---
+import {
+  DOCS_URL,
+  LICENSE_URL,
+  RELEASE_TAG,
+  RELEASES_URL,
+  REPO_URL,
+} from "../content/site";
+
+const COLUMNS = [
+  {
+    title: "Product",
+    links: [
+      { label: "The results server", href: "#product" },
+      { label: "Capabilities", href: "#features" },
+      { label: "How it works", href: "#workflow" },
+      { label: "Install", href: "#install" },
+    ],
+  },
+  {
+    title: "Docs",
+    links: [
+      { label: "Documentation", href: DOCS_URL, external: true },
+      { label: "Quickstart", href: DOCS_URL, external: true },
+      { label: "YAML DSL", href: DOCS_URL, external: true },
+      { label: "Python SDK", href: DOCS_URL, external: true },
+    ],
+  },
+  {
+    title: "Project",
+    links: [
+      { label: "GitHub", href: REPO_URL, external: true },
+      { label: "Releases", href: RELEASES_URL, external: true },
+      { label: "Issues", href: `${REPO_URL}/issues`, external: true },
+      { label: "License", href: LICENSE_URL, external: true },
+    ],
+  },
+];
+
+const YEAR = 2026;
+---
+
+<footer class="site-footer">
+  <div class="shell">
+    <div class="cols">
+      <div class="brand">
+        <p class="wordmark">Flowbench</p>
+        <p class="blurb">
+          A scripting-first API and flow testing toolkit. One authored flow, one Go engine, four
+          execution profiles.
+        </p>
+      </div>
+
+      {
+        COLUMNS.map((column) => (
+          <nav aria-label={column.title}>
+            <h2>{column.title}</h2>
+            <ul>
+              {column.links.map((link) => (
+                <li>
+                  <a
+                    href={link.href}
+                    rel={"external" in link && link.external ? "noopener" : undefined}
+                    target={"external" in link && link.external ? "_blank" : undefined}
+                  >
+                    {link.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        ))
+      }
+    </div>
+
+    <div class="base">
+      <p>© {YEAR} Flowbench · Open source</p>
+      <p class="mono">{RELEASE_TAG}</p>
+    </div>
+  </div>
+
+  {/* The mark's three bars, scaled until they are architecture rather than a
+      logo: the load builds downward and the widest bar slips under the page
+      edge. */}
+  <div class="mark" aria-hidden="true">
+    <i class="b1"></i>
+    <i class="b2"></i>
+    <i class="b3"></i>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    position: relative;
+    padding-top: clamp(3rem, 6vw, 4.5rem);
+    border-top: 1px solid var(--hairline-soft);
+    overflow: clip;
+  }
+
+  .cols {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
+    gap: clamp(1.75rem, 4vw, 3rem);
+  }
+
+  .wordmark {
+    color: var(--ink);
+    font-size: 1.0625rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+  }
+
+  .blurb {
+    max-width: 34ch;
+    margin-top: 0.625rem;
+    color: var(--ink-3);
+    font-size: 0.875rem;
+    line-height: 1.6;
+  }
+
+  nav h2 {
+    color: var(--ink-3);
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  nav ul {
+    display: grid;
+    gap: 0.625rem;
+    margin: 1rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  nav a {
+    color: var(--ink-2);
+    font-size: 0.9375rem;
+    text-decoration: none;
+    transition: color 160ms var(--ease-out);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    nav a:hover {
+      color: var(--ink);
+    }
+  }
+
+  .base {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: clamp(2.5rem, 5vw, 3.5rem);
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--hairline-soft);
+    color: var(--ink-3);
+    font-size: 0.8125rem;
+  }
+
+  /* Oversized and half-clipped by the page edge, so it reads as the ground the
+     footer sits on rather than a logo someone enlarged. Plain divs: bar widths
+     mirror the logo's 8.5 / 13 / 20 proportions. */
+  .mark {
+    --bar-h: clamp(2.25rem, 6vw, 4.25rem);
+    display: grid;
+    justify-items: start;
+    gap: clamp(0.5rem, 1.2vw, 0.875rem);
+    width: 100%;
+    max-width: var(--shell);
+    margin: clamp(2.5rem, 6vw, 4rem) auto 0;
+    padding-inline: var(--gutter);
+  }
+
+  .mark i {
+    height: var(--bar-h);
+    border-radius: clamp(0.875rem, 2vw, 1.5rem);
+  }
+
+  .b1 {
+    width: 42.5%;
+    background: color-mix(in oklab, var(--blue) 42%, var(--ground));
+  }
+
+  .b2 {
+    width: 65%;
+    background: var(--raised);
+  }
+
+  /* The widest bar runs under the page edge — the document ends mid-bar, so
+     it reads as cut, not finished. Negative margin rather than translate: the
+     layout itself stops 45% into the bar instead of reserving dead ground. */
+  .b3 {
+    width: 100%;
+    background: color-mix(in oklab, var(--raised) 55%, var(--ground));
+    margin-bottom: calc(var(--bar-h) * -0.55);
+  }
+
+  @media (max-width: 760px) {
+    .cols {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .brand {
+      grid-column: 1 / -1;
+    }
+  }
+</style>

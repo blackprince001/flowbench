@@ -5,6 +5,18 @@ IR (ADR 0002) and execute on the Go engine at full VU scale, or run here
 directly (`python file.py`) as the Python-driven producer, writing to the same
 run store (ADR 0012).
 
+## Install
+
+```sh
+pip install flowbench      # or: uv add flowbench
+```
+
+Python 3.10+, and `httpx` is the only dependency. Running a flow at VU scale,
+or resolving a named target, also needs the `flowbench` engine binary — see
+[installation](https://github.com/blackprince001/flowbench/blob/main/docs/getting-started/installation.md).
+Passing `base_url=` to `flow.run()` skips target resolution and needs nothing
+but this package.
+
 ## Prompt observation
 
 FlowBench never makes the LLM call, templates a prompt, or sets a model
@@ -74,3 +86,7 @@ fixture and diffs the resulting IR against the YAML parser's output for the
 representation. It picks up `sdk-python/.venv` automatically, so run `uv sync`
 before `go test ./...`, or point `FLOWBENCH_PYTHON` at an interpreter of your
 own. Without either it skips rather than fails.
+
+## License
+
+[Apache 2.0](LICENSE).

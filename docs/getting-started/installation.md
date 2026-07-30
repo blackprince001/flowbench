@@ -34,7 +34,15 @@ Host sampling is implemented for **Linux only** in v1 — the agent reads `/proc
 
 ## The Python SDK
 
-The SDK requires Python 3.10+ and depends only on `httpx`. It is distributed as a package built from `sdk-python/` — install it from a checkout:
+The SDK requires Python 3.10+ and depends only on `httpx`:
+
+```bash
+pip install flowbench
+# or
+uv add flowbench
+```
+
+To work against a checkout instead — developing the SDK itself, or tracking `main`:
 
 ```bash
 pip install ./sdk-python
@@ -42,7 +50,7 @@ pip install ./sdk-python
 uv sync --project sdk-python
 ```
 
-A release also attaches the built wheel, which installs the same way. The SDK shells out to the `flowbench` binary to resolve named targets, so install the CLI too — or pass `base_url=` to `flow.run()` and skip target resolution entirely. See [the Python SDK guide](../guide/python-sdk.md).
+A release also attaches the wheel and sdist, which install the same way. The SDK shells out to the `flowbench` binary to resolve named targets, so install the CLI too — or pass `base_url=` to `flow.run()` and skip target resolution entirely. See [the Python SDK guide](../guide/python-sdk.md).
 
 ## Verifying the install
 

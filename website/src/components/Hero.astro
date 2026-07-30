@@ -1,0 +1,179 @@
+---
+import {
+  PRIMARY_CTA,
+  RELEASE_TAG,
+  RELEASE_TEXT,
+  RELEASES_URL,
+  SECONDARY_CTA,
+} from "../content/site";
+---
+
+<section class="hero">
+  <div class="shell inner">
+    <a class="badge" href={RELEASES_URL} rel="noopener" target="_blank">
+      <span class="tag">{RELEASE_TAG}</span>
+      <span class="txt">{RELEASE_TEXT}</span>
+      <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
+        <path
+          d="M4.5 2.5 8 6l-3.5 3.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          stroke-linecap="round"
+          stroke-linejoin="round"></path>
+      </svg>
+    </a>
+
+    <h1>One Flow. <br class="turn" />Every test profile.</h1>
+
+    <p class="lede">
+      Author API journeys once in YAML or Python. Run them from integration to stress and soak,
+      then see exactly where the time, and the failure, went.
+    </p>
+
+    <div class="actions">
+      <a class="btn btn-primary" href={PRIMARY_CTA.href} rel="noopener" target="_blank">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor">
+          <path
+            d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.23.49-2.7-1.07-2.7-1.07-.36-.93-.89-1.18-.89-1.18-.73-.5.05-.49.05-.49.81.06 1.23.83 1.23.83.72 1.23 1.89.88 2.35.67.07-.52.28-.88.51-1.08-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+          ></path>
+        </svg>
+        {PRIMARY_CTA.label}
+      </a>
+      <a class="btn btn-secondary" href={SECONDARY_CTA.href} rel="noopener" target="_blank">
+        {SECONDARY_CTA.label}
+        <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
+          <path
+            d="M3 9 9 3M4.5 3H9v4.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </a>
+    </div>
+  </div>
+</section>
+
+<style>
+  .hero {
+    position: relative;
+    padding-top: clamp(8rem, 15vw, 10.5rem);
+    padding-bottom: clamp(3rem, 7vw, 4.5rem);
+    overflow: clip;
+  }
+
+  /* A single cool wash behind the headline. It is the only light source on the
+     page above the product stage, so the eye lands on the copy. */
+  .hero::before {
+    content: "";
+    position: absolute;
+    inset: -30% 50% auto;
+    width: min(980px, 120%);
+    aspect-ratio: 1;
+    translate: 50% 0;
+    background: radial-gradient(
+      circle at center,
+      color-mix(in oklab, var(--blue) 14%, transparent) 0%,
+      transparent 62%
+    );
+    pointer-events: none;
+  }
+
+  .inner {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  /* Two-part announcement pill: a solid version chip inside a tinted capsule,
+     then the claim and a chevron that promises the release notes. */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.3125rem 0.875rem 0.3125rem 0.3125rem;
+    background: color-mix(in oklab, var(--blue) 13%, var(--ground));
+    border-radius: var(--radius-pill);
+    color: var(--blue-soft);
+    font-size: 0.875rem;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    text-decoration: none;
+    transition: background-color 160ms var(--ease-out);
+  }
+
+  .tag {
+    padding: 0.25rem 0.6875rem;
+    background: var(--blue);
+    border-radius: var(--radius-pill);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
+  .badge svg {
+    transition: translate 180ms var(--ease-out);
+  }
+
+  h1 {
+    max-width: 15ch;
+    margin-top: 1.875rem;
+    /* "Every test profile." has to fit one line once the break is on, so the
+       floor is set by the narrowest viewport, not by taste. */
+    font-size: clamp(2.25rem, 8.5vw, 5.5rem);
+    font-weight: 500;
+    line-height: 0.96;
+    letter-spacing: -0.04em;
+  }
+
+  /* Below ~640px the headline reads better wrapping on its own. */
+  .turn {
+    display: none;
+  }
+
+  @media (min-width: 640px) {
+    .turn {
+      display: inline;
+    }
+  }
+
+  .lede {
+    max-width: 48ch;
+    margin-top: 1.625rem;
+    font-size: clamp(1.0625rem, 1.4vw, 1.1875rem);
+    color: var(--ink-2);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-top: 2.25rem;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .badge:hover {
+      background: color-mix(in oklab, var(--blue) 20%, var(--ground));
+    }
+    .badge:hover svg {
+      translate: 2px 0;
+    }
+  }
+
+  @media (max-width: 420px) {
+    .actions {
+      width: 100%;
+      flex-direction: column;
+    }
+    .actions :global(.btn) {
+      width: 100%;
+    }
+  }
+</style>

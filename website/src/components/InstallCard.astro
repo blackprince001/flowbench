@@ -1,0 +1,334 @@
+---
+import { Code } from "astro:components";
+import Icon from "./Icon.astro";
+import { codeTheme } from "../lib/code-theme";
+import { DOCS_URL, PRIMARY_CTA, RELEASES_URL, SECONDARY_CTA } from "../content/site";
+
+// Only the paths docs/getting-started/installation.md actually documents.
+// No Homebrew tap exists, so none is offered.
+const METHODS = [
+  {
+    id: "release",
+    label: "Release binary",
+    note: "Every release ships archives per platform plus checksums.txt.",
+    code: `tar -xzf flowbench_<version>_<os>_<arch>.tar.gz
+sudo mv flowbench /usr/local/bin/
+
+flowbench version`,
+  },
+  {
+    id: "source",
+    label: "From source",
+    note: "Pure Go, no CGO — cross-compiles with GOOS/GOARCH.",
+    code: `git clone https://github.com/blackprince001/flowbench
+cd flowbench
+
+go build -o flowbench ./cmd/flowbench`,
+  },
+  {
+    id: "python",
+    label: "Python SDK",
+    code: `pip install flowbench
+# or
+uv add flowbench`,
+    note: "Python 3.10+, depends only on httpx.",
+  },
+];
+
+const INCLUDED = [
+  "Engine + CLI",
+  "YAML flow DSL",
+  "Python SDK",
+  "Results server",
+  "Target agent",
+  "Prompt diffs",
+];
+---
+
+<section id="install" class="install">
+  <div class="shell">
+    <header class="section-head">
+      <span class="eyebrow">Install</span>
+      <h2>One binary. No account, no tier, no seat.</h2>
+      <p>
+        Everything below is in the box. There is no paid edition holding a feature back — the
+        only thing a release gates is which platform archive you download.
+      </p>
+    </header>
+
+    <div class="card">
+      <div class="left">
+        <ul class="included">
+          {
+            INCLUDED.map((item) => (
+              <li>
+                <Icon name="check" size={13} />
+                {item}
+              </li>
+            ))
+          }
+        </ul>
+
+        <div class="actions">
+          <a class="btn btn-primary" href={PRIMARY_CTA.href} rel="noopener" target="_blank">
+            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor">
+              <path
+                d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.23.49-2.7-1.07-2.7-1.07-.36-.93-.89-1.18-.89-1.18-.73-.5.05-.49.05-.49.81.06 1.23.83 1.23.83.72 1.23 1.89.88 2.35.67.07-.52.28-.88.51-1.08-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+              ></path>
+            </svg>
+            {PRIMARY_CTA.label}
+          </a>
+          <a class="btn btn-secondary" href={SECONDARY_CTA.href} rel="noopener" target="_blank">
+            {SECONDARY_CTA.label}
+            <Icon name="arrow" size={13} />
+          </a>
+        </div>
+
+        <p class="note">
+          Archives and <a href={RELEASES_URL} rel="noopener" target="_blank">checksums.txt</a> are
+          attached to every
+          <a href={`${DOCS_URL}`} rel="noopener" target="_blank">release</a>. The agent is
+          Linux-only in v1; it fails open elsewhere.
+        </p>
+      </div>
+
+      <div class="window">
+        <div class="tabs" role="tablist" aria-label="Install method">
+          <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          {
+            METHODS.map((method, i) => (
+              <button
+                type="button"
+                role="tab"
+                id={`m-${method.id}`}
+                aria-controls={`p-${method.id}`}
+                aria-selected={i === 0 ? "true" : "false"}
+                tabindex={i === 0 ? undefined : "-1"}
+              >
+                {method.label}
+              </button>
+            ))
+          }
+        </div>
+        <div class="panes">
+          {
+            METHODS.map((method, i) => (
+              <div
+                class="pane"
+                id={`p-${method.id}`}
+                role="tabpanel"
+                aria-labelledby={`m-${method.id}`}
+                data-active={i === 0 ? "" : undefined}
+              >
+                <Code code={method.code} lang="bash" theme={codeTheme} />
+                <p class="hint">{method.note}</p>
+              </div>
+            ))
+          }
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  const list = document.querySelector<HTMLElement>('[aria-label="Install method"]');
+  if (list) {
+    const tabs = Array.from(list.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+
+    const select = (tab: HTMLButtonElement, focus = false) => {
+      for (const other of tabs) {
+        const on = other === tab;
+        other.setAttribute("aria-selected", String(on));
+        other.tabIndex = on ? 0 : -1;
+        const panel = document.getElementById(other.getAttribute("aria-controls") ?? "");
+        if (panel) panel.toggleAttribute("data-active", on);
+      }
+      if (focus) tab.focus();
+    };
+
+    list.addEventListener("click", (event) => {
+      const tab = (event.target as HTMLElement).closest<HTMLButtonElement>('[role="tab"]');
+      if (tab) select(tab);
+    });
+
+    list.addEventListener("keydown", (event) => {
+      const i = tabs.indexOf(document.activeElement as HTMLButtonElement);
+      if (i < 0) return;
+      const next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[
+        event.key
+      ];
+      if (next === undefined) return;
+      event.preventDefault();
+      select(tabs[(next + tabs.length) % tabs.length]!, true);
+    });
+  }
+</script>
+
+<style>
+  .install {
+    padding-block: clamp(3.5rem, 8vw, 6.5rem);
+  }
+
+  .card {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    align-items: center;
+    gap: clamp(1.75rem, 4vw, 3.5rem);
+    margin-top: clamp(2.5rem, 5vw, 4rem);
+    padding: clamp(1.5rem, 3vw, 2.5rem);
+    background: color-mix(in oklab, var(--surface) 72%, var(--ground));
+    border: 1px solid var(--hairline-soft);
+    border-radius: var(--radius-stage);
+  }
+
+  .included {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.625rem 1rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .included li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--ink-2);
+    font-size: 0.9375rem;
+  }
+
+  .included :global(svg) {
+    flex: none;
+    color: var(--green);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 1.75rem;
+  }
+
+  .note {
+    margin-top: 1.25rem;
+    color: var(--ink-3);
+    font-size: 0.8125rem;
+    line-height: 1.55;
+  }
+
+  .note a {
+    color: var(--ink-2);
+    text-decoration-color: var(--hairline);
+  }
+
+  .window {
+    background: var(--ground);
+    border: 1px solid var(--hairline);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  .tabs {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.5rem 0.5rem 0.5rem 0.875rem;
+    border-bottom: 1px solid var(--hairline-soft);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .dots {
+    display: inline-flex;
+    flex: none;
+    gap: 0.3125rem;
+    margin-right: 0.5rem;
+  }
+
+  .dots i {
+    width: 8px;
+    height: 8px;
+    background: var(--raised);
+    border: 1px solid var(--hairline);
+    border-radius: 50%;
+  }
+
+  .tabs button {
+    flex: none;
+    min-height: 32px;
+    padding-inline: 0.75rem;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-pill);
+    color: var(--ink-3);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color 160ms var(--ease-out),
+      color 160ms var(--ease-out);
+  }
+
+  .tabs button[aria-selected="true"] {
+    background: var(--raised);
+    color: var(--ink);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .tabs button:hover {
+      color: var(--ink-2);
+    }
+  }
+
+  .panes {
+    padding: 1.25rem 1.375rem 1.375rem;
+  }
+
+  .pane {
+    min-height: 8.5rem;
+  }
+
+  :global(html.js) .pane {
+    display: none;
+  }
+
+  :global(html.js) .pane[data-active] {
+    display: block;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    :global(html.js) .pane[data-active] {
+      animation: pane-in 200ms var(--ease-out) both;
+    }
+  }
+
+  @keyframes pane-in {
+    from {
+      opacity: 0;
+      translate: 0 4px;
+    }
+  }
+
+  .hint {
+    margin-top: 1rem;
+    color: var(--ink-3);
+    font-size: 0.8125rem;
+  }
+
+  .install :global(pre) {
+    margin: 0;
+    background: none !important;
+    font-size: 0.8125rem;
+    line-height: 1.7;
+    overflow-x: auto;
+  }
+
+  @media (max-width: 900px) {
+    .card {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

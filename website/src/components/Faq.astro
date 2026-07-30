@@ -1,0 +1,167 @@
+---
+import { DOCS_URL } from "../content/site";
+
+// Native <details>, so the accordion works before any script runs. Every answer
+// is sourced from the repository docs, not written fresh for the marketing page.
+const ITEMS = [
+  {
+    q: "Is Flowbench a hosted service?",
+    a: "No. v1 is packages and binaries: no accounts, no hosted control plane, no deployment dependency. You install it, point it at a target you are allowed to load, and read the results locally. Teams and hosting are explicitly deferred.",
+  },
+  {
+    q: "Which protocols are supported?",
+    a: "HTTP, gRPC, GraphQL and WebSocket, each with its own adapter. Phase spans — DNS, connect, TLS, TTFB, transfer — are recorded per call, so the flame graph attributes time to the phase rather than the whole request.",
+  },
+  {
+    q: "How is this different from running a functional suite and a load tool separately?",
+    a: "Those two answer different questions in different vocabularies, and you reconcile them by hand. Flowbench executes one authored flow under both, through one collector — so the assertion that failed and the p95 that moved are facts about the same run, in the same result model.",
+  },
+  {
+    q: "Can the same flow run from Python?",
+    a: "Yes. The Python SDK expresses the same model as the YAML DSL. Run the file through the CLI and the Go engine executes it at whatever scale the profile asks for; run it with Python directly and the process executes it for integration and system work.",
+  },
+  {
+    q: "Where are results stored?",
+    a: "In a plain directory per run under runs/ — meta, metrics, series, folded spans and traces, as JSON. Around 420 KB for a 2,000 flow-run stress run. No database, nothing to migrate, and diffable in git if you want it there.",
+  },
+  {
+    q: "How does it keep a load test off the wrong host?",
+    a: "The target file is a host allow-list: a flow can only reach hosts under base_urls. It also carries max_vus and max_rps ceilings and an optional disallowed_modes list, and a run that would exceed any of them is refused before a single request is generated.",
+  },
+  {
+    q: "Does a throttled response fail the run?",
+    a: "It depends on the question the profile is asking. Integration and system count throttles as failures — you asked whether it works. Load, stress and soak count them as data, because a rate limiter doing its job is a finding, not a fault. as_error overrides the default per step.",
+  },
+  {
+    q: "Can I use it in CI?",
+    a: "Yes, and that is the point of thresholds. A load-family run exits 0 when they held, 1 on a breach, abort or interrupt, and 2 on a pre-run error like a parse failure or a safety-gate refusal. The verdict is persisted with the run, so nobody re-derives it later.",
+  },
+];
+---
+
+<section id="faq" class="faq">
+  <div class="shell">
+    <header class="section-head">
+      <span class="eyebrow">FAQ</span>
+      <h2>The questions that decide it.</h2>
+      <p>
+        Short answers here, the long ones in <a href={DOCS_URL} rel="noopener" target="_blank"
+          >the documentation</a
+        >.
+      </p>
+    </header>
+
+    <div class="list">
+      {
+        ITEMS.map((item) => (
+          <details>
+            <summary>
+              <span>{item.q}</span>
+              <span class="sign" aria-hidden="true" />
+            </summary>
+            <p>{item.a}</p>
+          </details>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<style>
+  .faq {
+    padding-block: clamp(3.5rem, 8vw, 6.5rem);
+  }
+
+  .list {
+    max-width: 46rem;
+    margin: clamp(2.5rem, 5vw, 4rem) auto 0;
+    border-top: 1px solid var(--hairline-soft);
+  }
+
+  details {
+    border-bottom: 1px solid var(--hairline-soft);
+  }
+
+  summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    padding: 1.375rem 0.25rem;
+    color: var(--ink);
+    font-size: 1.0625rem;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    list-style: none;
+    cursor: pointer;
+    transition: color 160ms var(--ease-out);
+  }
+
+  summary::-webkit-details-marker {
+    display: none;
+  }
+
+  /* A plus that becomes a minus: two bars, one of which rotates away. */
+  .sign {
+    position: relative;
+    flex: none;
+    width: 16px;
+    height: 16px;
+    color: var(--ink-3);
+  }
+
+  .sign::before,
+  .sign::after {
+    content: "";
+    position: absolute;
+    inset: 50% 0 auto;
+    height: 1.5px;
+    background: currentColor;
+    border-radius: 2px;
+    translate: 0 -50%;
+    transition: rotate 220ms var(--ease-out);
+  }
+
+  .sign::after {
+    rotate: 90deg;
+  }
+
+  details[open] .sign::after {
+    rotate: 0deg;
+  }
+
+  details[open] summary {
+    color: var(--ink);
+  }
+
+  details[open] .sign {
+    color: var(--blue);
+  }
+
+  details p {
+    max-width: 62ch;
+    padding: 0 3rem 1.5rem 0.25rem;
+    color: var(--ink-2);
+    font-size: 0.9375rem;
+    line-height: 1.65;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    summary:hover .sign {
+      color: var(--ink-2);
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    details[open] p {
+      animation: answer-in 240ms var(--ease-out) both;
+    }
+  }
+
+  @keyframes answer-in {
+    from {
+      opacity: 0;
+      translate: 0 -4px;
+    }
+  }
+</style>

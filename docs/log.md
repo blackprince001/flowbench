@@ -2,6 +2,24 @@
 
 ## 2026-07-30
 
+- **`pip install flowbench` works now, and the project has a license.** The SDK has been buildable since the release pipeline landed and installable by nobody: you had to download a wheel off a GitHub release or point pip at a checkout. The name was still free on PyPI, which is not a thing to leave to chance.
+
+  **Trusted Publishing rather than an API token.** ADR 0005 refuses a bespoke secrets mechanism, and a long-lived PyPI token in repository secrets is exactly that — an OIDC exchange scoped to this repository, workflow and environment leaves nothing to leak or rotate. The publish is a separate job for that reason (the id-token permission belongs to it alone) and runs last for another: a PyPI version can never be replaced, so nothing reaches it until the binaries are built, the tests have passed and the GitHub release exists. It publishes the artifact the release job uploaded rather than building a second time, so the bytes on PyPI are the bytes the checksums cover.
+
+  **The tag is now the version.** The old gate checked the SDK's two version declarations against each other, which could pass while both disagreed with the tag — harmless when a wheel was just a release asset, permanent once PyPI has it. There is one declaration now (`_version.py`, read by setuptools without importing the package) and it is checked against the tag before anything is built. Prerelease tags skip PyPI entirely: `v0.2.0-rc.1` is not a PEP 440 version, and normalizing it silently is worse than not publishing it.
+
+  Licensing was the actual blocker — publishing an unlicensed package is not something to do and then fix. Apache 2.0, at the root and copied into the SDK so it ships inside the wheel.
+
+- **The engine was sending JSON without saying so.** A `call:` step with a `body:` went out with no `Content-Type` header at all. Every example in the docs but one omitted it too, and they all passed — because the local Go stubs decode a body whatever it claims to be. Against a real API the same flow gets a `415`, or a handler that sees nothing and answers `400`, and the flow author blames their own service.
+
+  Worse, the two surfaces disagreed. `python flow.py` sent `application/json` the whole time, because httpx adds it when you pass `json=`. The same flow, two runners, different bytes — precisely what ADR 0002's conformance suite exists to prevent, and it missed this because it compares IR and run outcomes, and neither records what was on the wire. The parity test now reads the request headers off a stub and compares them; reverting the engine fix makes it say `Content-Type diverged: go="" python="application/json"`.
+
+  **It is a fact, not a default.** The parser marshals every `body:` to JSON and the validator refuses anything else, so by the time a request is built the type is known rather than guessed. That is the line drawn for what the engine may add: something it has already established, never something about the user's API it cannot know. Target-level default headers were considered and dropped for that reason — `X-Tenant` is configuration, and `auth:` already covers the common case.
+
+  The default lives in `BuildRequest`, not in parsing, so the IR stays exactly what the author wrote and the conformance comparison is unaffected. A declared header wins in whatever case it is written; an empty one suppresses the header entirely, which keeps "what does my target do without a Content-Type?" a question a flow can ask. For `User-Agent` that suppression needs the key present and empty, since Go substitutes its own agent for an absent one — the one piece of this that is not obvious from reading it.
+
+  **And it now says who is calling.** Requests carried `Go-http-client/1.1`; they carry `flowbench/<version>` now, with the SDK's direct path adding `(python)` so an access log names the runner. That is a visible change at every target, which is why it is a Changed entry in the changelog and not a silent fix.
+
 - **A gRPC call could lose its phase breakdown, and CI finally said so.** `TestUnaryCallRoundTrip` failed once with the `grpc_call` leg holding `connect` alone — no `ttfb`, no `transfer`. Not flake to be re-run: grpc-go writes the request to the transport and *then* calls the stats handler for `OutPayload` (`csAttempt.sendMsg`), while `InHeader` is delivered on the transport's own reader goroutine. Against a fast in-process target, under enough scheduling pressure, the answer is observed before the send it answers.
 
   The phase recorder required the send first, so in that window `ttfb` was skipped — and because `transfer` keys off the headers `ttfb` records, it was skipped too. A user hitting a fast target on a busy box would silently lose the breakdown the gRPC stats handler exists to provide, which is the one thing its own test comment claims for it.

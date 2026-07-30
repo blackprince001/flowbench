@@ -35,7 +35,6 @@ steps:
     headers:
       X-Request-Id: "{{ request_id }}"
       Authorization: "Bearer {{ env.DEMO_TOKEN }}"
-      Content-Type: application/json
     body:
       { "request_id": "{{ request_id }}", "step": "echo_back" }
     extract:

@@ -1,0 +1,9 @@
+# build output
+dist/
+# generated types
+.astro/
+
+node_modules/
+
+npm-debug.log*
+.DS_Store

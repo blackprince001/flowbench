@@ -222,3 +222,121 @@ func TestBuildRequestExpandsTemplates(t *testing.T) {
 		t.Error("unresolved template should fail BuildRequest")
 	}
 }
+
+func TestBuildRequestDefaultsContentType(t *testing.T) {
+	identity := func(ref string) (string, error) { return ref, nil }
+
+	for _, tc := range []struct {
+		name    string
+		spec    *ir.CallSpec
+		want    string
+		present bool
+	}{
+		{
+			name:    "json body says so",
+			spec:    &ir.CallSpec{Method: "POST", URL: "/pay", Body: json.RawMessage(`{"amount":1}`)},
+			want:    "application/json",
+			present: true,
+		},
+		{
+			name: "declared wins",
+			spec: &ir.CallSpec{Method: "POST", URL: "/pay", Body: json.RawMessage(`{"amount":1}`),
+				Headers: map[string]string{"Content-Type": "application/vnd.api+json"}},
+			want:    "application/vnd.api+json",
+			present: true,
+		},
+		{
+			name: "declared in any case still wins, and only once",
+			spec: &ir.CallSpec{Method: "POST", URL: "/pay", Body: json.RawMessage(`{"amount":1}`),
+				Headers: map[string]string{"content-type": "text/plain"}},
+			want:    "text/plain",
+			present: true,
+		},
+		{
+			name: "an empty value is kept, for the send path to drop",
+			spec: &ir.CallSpec{Method: "POST", URL: "/pay", Body: json.RawMessage(`{"amount":1}`),
+				Headers: map[string]string{"Content-Type": ""}},
+			want:    "",
+			present: true,
+		},
+		{
+			name:    "no body, nothing to describe",
+			spec:    &ir.CallSpec{Method: "GET", URL: "/orders"},
+			present: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := adapters.BuildRequest(tc.spec, identity)
+			if err != nil {
+				t.Fatalf("BuildRequest: %v", err)
+			}
+			var got string
+			var found int
+			for k, v := range req.Headers {
+				if strings.EqualFold(k, "Content-Type") {
+					got, found = v, found+1
+				}
+			}
+			if found > 1 {
+				t.Fatalf("Content-Type declared %d times: %v", found, req.Headers)
+			}
+			if (found == 1) != tc.present {
+				t.Fatalf("Content-Type present = %v, want %v (headers %v)", found == 1, tc.present, req.Headers)
+			}
+			if got != tc.want {
+				t.Errorf("Content-Type = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The defaults are only worth anything if they reach the wire, so this reads
+// them back off a real request rather than off the Request struct.
+func TestSentHeaderDefaults(t *testing.T) {
+	got := make(chan http.Header, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.Header.Clone()
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	send := func(t *testing.T, req *adapters.Request) http.Header {
+		t.Helper()
+		req.URL = srv.URL + "/echo"
+		if _, _, err := adapters.NewSession(adapters.SessionOptions{}).
+			Do(context.Background(), "s", req, time.Now()); err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		return <-got
+	}
+
+	t.Run("identifies itself", func(t *testing.T) {
+		h := send(t, &adapters.Request{Method: "GET"})
+		if ua := h.Get("User-Agent"); !strings.HasPrefix(ua, "flowbench/") {
+			t.Errorf("User-Agent = %q, want a flowbench/ token", ua)
+		}
+	})
+
+	t.Run("declared user-agent wins", func(t *testing.T) {
+		h := send(t, &adapters.Request{Method: "GET", Headers: map[string]string{"User-Agent": "checkout-probe/2"}})
+		if ua := h.Get("User-Agent"); ua != "checkout-probe/2" {
+			t.Errorf("User-Agent = %q", ua)
+		}
+	})
+
+	t.Run("empty suppresses rather than blanks", func(t *testing.T) {
+		h := send(t, &adapters.Request{
+			Method:  "POST",
+			Body:    []byte(`{"amount":1}`),
+			Headers: map[string]string{"Content-Type": "", "User-Agent": ""},
+		})
+		if _, ok := h["Content-Type"]; ok {
+			t.Errorf("Content-Type should be absent, got %q", h.Get("Content-Type"))
+		}
+		// Go substitutes its own agent for an absent header, so suppression
+		// failing here would ship Go-http-client to every target.
+		if _, ok := h["User-Agent"]; ok {
+			t.Errorf("User-Agent should be absent, got %q", h.Get("User-Agent"))
+		}
+	})
+}

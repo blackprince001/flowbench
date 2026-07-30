@@ -36,3 +36,7 @@ The docs are a book: [docs/README.md](docs/README.md) is the front page, [docs/S
 - [Cookbook](docs/cookbook/README.md) — worked patterns, each runnable from [examples/](examples/)
 - [Reference](docs/reference/cli.md) — [CLI](docs/reference/cli.md), [YAML DSL](docs/reference/yaml-dsl.md), [Python API](docs/reference/python-api.md)
 - [Project](docs/project/architecture.md) — [architecture](docs/project/architecture.md), the [PRD](docs/prd.md), [glossary](docs/CONTEXT.md), [decision records](docs/decisions/README.md), [milestones](docs/planning/milestones.md), [work log](docs/log.md), [rollout checklist](docs/project/rollout-checklist.md)
+
+## License
+
+[Apache 2.0](LICENSE).

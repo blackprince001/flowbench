@@ -1,0 +1,88 @@
+---
+import Icon from "./Icon.astro";
+import { PRIMARY_CTA, SECONDARY_CTA } from "../content/site";
+---
+
+<section class="cta">
+  <div class="shell">
+    <h2>Stop rewriting the same journey.</h2>
+    <p>Author it once. Change the profile. Keep the evidence.</p>
+
+    <div class="actions">
+      <a class="btn btn-primary" href={PRIMARY_CTA.href} rel="noopener" target="_blank">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor">
+          <path
+            d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.23.49-2.7-1.07-2.7-1.07-.36-.93-.89-1.18-.89-1.18-.73-.5.05-.49.05-.49.81.06 1.23.83 1.23.83.72 1.23 1.89.88 2.35.67.07-.52.28-.88.51-1.08-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+          ></path>
+        </svg>
+        {PRIMARY_CTA.label}
+      </a>
+      <a class="btn btn-secondary" href={SECONDARY_CTA.href} rel="noopener" target="_blank">
+        {SECONDARY_CTA.label}
+        <Icon name="arrow" size={13} />
+      </a>
+    </div>
+  </div>
+</section>
+
+<style>
+  .cta {
+    position: relative;
+    padding-block: clamp(4.5rem, 10vw, 8rem);
+    text-align: center;
+    overflow: clip;
+  }
+
+  /* The same wash that lit the hero, closing the page where it opened. */
+  .cta::before {
+    content: "";
+    position: absolute;
+    inset: -40% 50% auto;
+    width: min(900px, 130%);
+    aspect-ratio: 1;
+    translate: 50% 0;
+    background: radial-gradient(
+      circle at center,
+      color-mix(in oklab, var(--blue) 15%, transparent) 0%,
+      transparent 62%
+    );
+    pointer-events: none;
+  }
+
+  .shell {
+    position: relative;
+  }
+
+  h2 {
+    max-width: 18ch;
+    margin-inline: auto;
+    font-size: clamp(2.125rem, 5.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.035em;
+  }
+
+  p {
+    max-width: 40ch;
+    margin: 1.25rem auto 0;
+    color: var(--ink-2);
+    font-size: clamp(1rem, 1.4vw, 1.125rem);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-top: 2.25rem;
+  }
+
+  @media (max-width: 420px) {
+    .actions {
+      width: 100%;
+      flex-direction: column;
+    }
+    .actions :global(.btn) {
+      width: 100%;
+    }
+  }
+</style>

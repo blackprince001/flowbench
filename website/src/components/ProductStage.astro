@@ -1,0 +1,293 @@
+---
+import { Image } from "astro:assets";
+import dashboard from "../assets/product/dashboard.png";
+import flame from "../assets/product/flame.png";
+import waterfall from "../assets/product/waterfall.png";
+import outcomes from "../assets/product/outcomes.png";
+
+// These are the results server itself, captured from runs/load-local by
+// website/scripts/capture.sh — a real 2,000 flow-run stress run that came back
+// 49.2% throttled and still passed its thresholds. Nothing here is drawn.
+const SCENES = [
+  {
+    id: "dashboard",
+    label: "Dashboard",
+    image: dashboard,
+    alt: "The Flowbench run overview: flow-runs, duration, error rate, throttle rate and percentile tiles above the outcome strip.",
+  },
+  {
+    id: "flame",
+    label: "Flame graph",
+    image: flame,
+    alt: "The Flowbench flame graph with spans folded across every iteration and one frame selected.",
+  },
+  {
+    id: "waterfall",
+    label: "Waterfall",
+    image: waterfall,
+    alt: "The Flowbench waterfall for a single captured trace, span by span with start, duration and outcome.",
+  },
+  {
+    id: "outcomes",
+    label: "Outcomes",
+    image: outcomes,
+    alt: "Every flow-run in the run as a grid, filtered to the 984 throttled ones.",
+  },
+];
+---
+
+<section id="product" class="stage">
+  <div class="field">
+    <div class="notch">
+      <div class="switch" role="tablist" aria-label="Product views">
+        {
+          SCENES.map((scene, i) => (
+            <button
+              type="button"
+              role="tab"
+              id={`tab-${scene.id}`}
+              aria-controls={`scene-${scene.id}`}
+              aria-selected={i === 0 ? "true" : "false"}
+              tabindex={i === 0 ? undefined : "-1"}
+            >
+              {scene.label}
+            </button>
+          ))
+        }
+      </div>
+    </div>
+
+    <div class="frames">
+      {
+        SCENES.map((scene, i) => (
+          <figure
+            class="scene"
+            id={`scene-${scene.id}`}
+            role="tabpanel"
+            aria-labelledby={`tab-${scene.id}`}
+            data-active={i === 0 ? "" : undefined}
+          >
+            <div class="viewport">
+              <Image
+                src={scene.image}
+                alt={scene.alt}
+                widths={[720, 1120, 1600, 2240]}
+                sizes="(max-width: 1180px) 94vw, 1120px"
+                loading={i === 0 ? "eager" : "lazy"}
+                fetchpriority={i === 0 ? "high" : undefined}
+              />
+            </div>
+            <figcaption>{scene.label}</figcaption>
+          </figure>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<script>
+  // Progressive: without this, `html.js` is absent, the switcher is hidden and
+  // all four views stack with their captions. With it, one view at a time.
+  const list = document.querySelector<HTMLElement>('[role="tablist"]');
+  if (list) {
+    const tabs = Array.from(list.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+
+    const select = (tab: HTMLButtonElement, focus = false) => {
+      for (const other of tabs) {
+        const on = other === tab;
+        other.setAttribute("aria-selected", String(on));
+        other.tabIndex = on ? 0 : -1;
+        const panel = document.getElementById(other.getAttribute("aria-controls") ?? "");
+        if (panel) panel.toggleAttribute("data-active", on);
+      }
+      if (focus) tab.focus();
+    };
+
+    list.addEventListener("click", (event) => {
+      const tab = (event.target as HTMLElement).closest<HTMLButtonElement>('[role="tab"]');
+      if (tab) select(tab);
+    });
+
+    list.addEventListener("keydown", (event) => {
+      const i = tabs.indexOf(document.activeElement as HTMLButtonElement);
+      if (i < 0) return;
+      const next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[
+        event.key
+      ];
+      if (next === undefined) return;
+      event.preventDefault();
+      select(tabs[(next + tabs.length) % tabs.length]!, true);
+    });
+  }
+</script>
+
+<style>
+  /* A saturated field, full-bleed, with the product sitting on it. The page
+     ground is near-black, so this band is the one place the page is loud. */
+  .field {
+    position: relative;
+    /* Without the switcher hanging from it, the field needs its own top gap. */
+    padding-block: clamp(2rem, 5vw, 3.5rem) clamp(1.5rem, 4vw, 3rem);
+    padding-inline: clamp(0.75rem, 3vw, 2.5rem);
+    background:
+      radial-gradient(90% 70% at 12% 0%, #2f5fd0 0%, transparent 58%),
+      radial-gradient(80% 65% at 88% 4%, #6c3bd0 0%, transparent 55%),
+      radial-gradient(120% 90% at 50% 100%, #0b2a63 0%, transparent 70%),
+      linear-gradient(180deg, #1b3a8a 0%, #12245c 45%, #0a1230 100%);
+  }
+
+  /* The switcher hangs from the top edge in the page's own colour, so it reads
+     as the page cut into the field rather than a control placed on it. */
+  /* Full-bleed so the field never shows a sliver of gradient beside the
+     switcher — on narrow screens the bar runs edge to edge. */
+  .notch {
+    display: none;
+    justify-content: center;
+    margin-inline: calc(-1 * clamp(0.75rem, 3vw, 2.5rem));
+  }
+
+  :global(html.js) .notch {
+    display: flex;
+  }
+
+  :global(html.js) .field {
+    padding-top: 0;
+  }
+
+  .switch {
+    display: flex;
+    gap: 0.125rem;
+    /* A flex item defaults to min-width:auto, which is the full width of four
+       tabs — that beat max-width and pushed the whole page wide on mobile. */
+    min-width: 0;
+    max-width: 100%;
+    padding: 0.5rem 0.75rem 0.875rem;
+    background: var(--ground);
+    border-radius: 0 0 26px 26px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .switch::-webkit-scrollbar {
+    display: none;
+  }
+
+  .switch button {
+    flex: none;
+    min-height: 40px;
+    padding-inline: 1rem;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-pill);
+    color: var(--ink-3);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color 180ms var(--ease-out),
+      color 180ms var(--ease-out);
+  }
+
+  .switch button[aria-selected="true"] {
+    background: var(--raised);
+    color: var(--ink);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .switch button:hover {
+      color: var(--ink-2);
+    }
+  }
+
+  .frames {
+    max-width: 1120px;
+    margin-inline: auto;
+  }
+
+  :global(html.js) .frames {
+    margin-top: clamp(1rem, 3vw, 2rem);
+  }
+
+  .scene {
+    margin: 0;
+  }
+
+  .viewport {
+    overflow: hidden;
+    border: 1px solid rgb(245 243 240 / 0.1);
+    border-radius: clamp(10px, 1.4vw, 18px);
+    box-shadow:
+      0 2px 6px rgb(4 8 24 / 0.4),
+      0 40px 90px rgb(4 8 24 / 0.55);
+  }
+
+  .viewport :global(img) {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  figcaption {
+    padding-block: 0.75rem 1.75rem;
+    color: rgb(245 243 240 / 0.75);
+    font-size: 0.875rem;
+    text-align: center;
+  }
+
+  /* With JS the four scenes stack in place and cross-fade. Every capture has
+     the same aspect ratio, so the frame never resizes between views. */
+  :global(html.js) .frames {
+    position: relative;
+    aspect-ratio: 1440 / 940;
+  }
+
+  :global(html.js) .scene {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    scale: 0.985;
+    visibility: hidden;
+    transition:
+      opacity 300ms var(--ease-out),
+      scale 400ms var(--ease-out),
+      visibility 0s linear 300ms;
+  }
+
+  :global(html.js) .scene[data-active] {
+    opacity: 1;
+    scale: 1;
+    visibility: visible;
+    transition-delay: 0s;
+  }
+
+  :global(html.js) figcaption {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :global(html.js) .scene {
+      scale: 1;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .switch {
+      width: 100%;
+      max-width: none;
+      padding-inline: 0.75rem;
+      border-radius: 0 0 22px 22px;
+    }
+    .switch button {
+      padding-inline: 0.75rem;
+      font-size: 0.875rem;
+    }
+  }
+</style>

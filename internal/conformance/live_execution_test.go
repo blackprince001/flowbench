@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -45,26 +46,58 @@ func flowbenchBinary(t *testing.T, repoRoot string) string {
 	return builtBin
 }
 
+// headerLog records the request headers a stub saw. Outcomes alone cannot
+// catch two surfaces describing the same request differently -- a stub parses
+// a body whatever the Content-Type says -- so the wire is read directly.
+type headerLog struct {
+	mu   sync.Mutex
+	seen []http.Header
+}
+
+func (l *headerLog) add(h http.Header) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.seen = append(l.seen, h.Clone())
+}
+
+// take returns what was recorded and clears it, so the second surface's run
+// starts from empty.
+func (l *headerLog) take() []http.Header {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := l.seen
+	l.seen = nil
+	return out
+}
+
 // liveCheckoutStub serves the authenticated_checkout_live fixture's three
 // endpoints, throttling the first /orders hit once so both entry points
-// exercise the retry path identically.
-func liveCheckoutStub() (*httptest.Server, *int32) {
+// exercise the retry path identically. The login hits are the ones whose
+// headers are recorded: that step carries a body, so it is where a
+// Content-Type divergence would show.
+func liveCheckoutStub() (*httptest.Server, *int32, *headerLog) {
 	var orderHits int32
+	logins := &headerLog{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /auth/login", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"data":{"access_token":"tok-live"}}`))
+		logins.add(r.Header)
+		if _, err := w.Write([]byte(`{"data":{"access_token":"tok-live"}}`)); err != nil {
+			return
+		}
 	})
 	mux.HandleFunc("POST /orders", func(w http.ResponseWriter, r *http.Request) {
 		if atomic.AddInt32(&orderHits, 1) == 1 {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
-		w.Write([]byte(`{"data":{"id":"ord-live-1"}}`))
+		if _, err := w.Write([]byte(`{"data":{"id":"ord-live-1"}}`)); err != nil {
+			return
+		}
 	})
 	mux.HandleFunc("POST /orders/{id}/pay", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 	})
-	return httptest.NewServer(mux), &orderHits
+	return httptest.NewServer(mux), &orderHits, logins
 }
 
 // TestAuthenticatedCheckoutLiveExecutionParity is issue #25's acceptance
@@ -81,7 +114,7 @@ func TestAuthenticatedCheckoutLiveExecutionParity(t *testing.T) {
 	bin := flowbenchBinary(t, repoRoot)
 	flowsDir := filepath.Join(repoRoot, "tests", "flows")
 
-	srv, orderHits := liveCheckoutStub()
+	srv, orderHits, logins := liveCheckoutStub()
 	defer srv.Close()
 
 	targetsDir := t.TempDir()
@@ -101,6 +134,7 @@ func TestAuthenticatedCheckoutLiveExecutionParity(t *testing.T) {
 		t.Fatalf("flowbench run (yaml): %v\n%s", err, out)
 	}
 
+	loginGo := logins.take()
 	atomic.StoreInt32(orderHits, 0) // fair, independent retry exercise for the second run
 
 	// Entry point B: python3 authenticated_checkout_live.py, direct
@@ -117,6 +151,25 @@ func TestAuthenticatedCheckoutLiveExecutionParity(t *testing.T) {
 	)
 	if out, err := runPy.CombinedOutput(); err != nil {
 		t.Fatalf("python direct execution: %v\n%s", err, out)
+	}
+
+	loginPy := logins.take()
+	if len(loginGo) == 0 || len(loginPy) == 0 {
+		t.Fatalf("no login hits recorded: go=%d python=%d", len(loginGo), len(loginPy))
+	}
+	// Both surfaces send the same body, so they owe the target the same
+	// account of it. Nothing downstream notices when they disagree -- the
+	// stub decodes JSON either way -- but a real target answers 415.
+	ctGo, ctPy := loginGo[0].Get("Content-Type"), loginPy[0].Get("Content-Type")
+	if ctGo != ctPy || ctGo != "application/json" {
+		t.Errorf("Content-Type diverged: go=%q python=%q", ctGo, ctPy)
+	}
+	// The product token is shared; what follows it names the runner, which is
+	// the point -- an access log should say which surface made the call.
+	for surface, h := range map[string]http.Header{"go": loginGo[0], "python": loginPy[0]} {
+		if ua := h.Get("User-Agent"); !strings.HasPrefix(ua, "flowbench/") {
+			t.Errorf("%s User-Agent = %q, want a flowbench/ token", surface, ua)
+		}
 	}
 
 	stGo, err := store.Open(storeGo)
