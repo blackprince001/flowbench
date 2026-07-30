@@ -1,6 +1,9 @@
 package report_test
 
 import (
+	"flag"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +12,8 @@ import (
 	"github.com/blackprince001/flowbench/internal/report"
 	"github.com/blackprince001/flowbench/internal/span"
 )
+
+var update = flag.Bool("update", false, "rewrite golden files")
 
 // trace builds a flow root the way the executor does: the root stamped with its
 // offset into the run, its steps stamped from the iteration's own anchor.
@@ -322,4 +327,29 @@ func TestRenderOutcomesShowsEveryFlowRun(t *testing.T) {
 		t.Fatalf("RenderOutcomes: %v", err)
 	}
 	check(t, sb.String(), `class="cell o-ok`, `class="cell o-throttled is-selected"`, "Flow-run #1", "all 3 flow-runs")
+}
+
+// The mark ships twice: inline in every page, and as a file under docs/assets
+// that the README can point at, because GitHub strips inline SVG from
+// markdown. One geometry, two renderings, so this pins the file to the code
+// that draws it — regenerate with `go test ./internal/report -run Logo -update`.
+func TestLogoFileMatchesTheMark(t *testing.T) {
+	path := filepath.Join("..", "..", "docs", "assets", "logo.svg")
+	want := report.LogoSVG()
+	if *update {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(want), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the checked-in mark: %v", err)
+	}
+	if string(got) != want {
+		t.Errorf("docs/assets/logo.svg has drifted from the mark the pages draw:\ngot  %s\nwant %s", got, want)
+	}
 }

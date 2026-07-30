@@ -313,11 +313,9 @@ a { color: inherit; }
   letter-spacing: 0.02em;
 }
 .brand-mark {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   flex: none;
-  border-radius: 4px;
-  background: linear-gradient(135deg, var(--kind-net), var(--kind-retry));
 }
 
 .nav-group { display: flex; flex-direction: column; gap: 1px; }

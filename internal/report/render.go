@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -36,6 +37,44 @@ func ServeAssets() http.Handler {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		w.Write(b)
 	})
+}
+
+// The mark is the thing the tool draws: a flame graph in three bars — a wide
+// root, a narrower frame above it, and the leaf you were actually looking for
+// picked out in the network blue. It is one geometry rendered twice, because
+// the two uses cannot share a fill: inline in the page it takes currentColor
+// and the theme's own accent, while a favicon is a standalone document with no
+// stylesheet behind it and has to carry literal colours that work on a light
+// tab strip and a dark one alike.
+const logoGeometry = `<rect x="2" y="15.5" width="20" height="6.5" rx="2.2" %s/>` +
+	`<rect x="2" y="8.75" width="13" height="6.5" rx="2.2" %s/>` +
+	`<rect x="2" y="2" width="8.5" height="6.5" rx="2.2" %s/>`
+
+// logoMark is the inline mark for the sidebar's wordmark.
+func logoMark() template.HTML {
+	return template.HTML(fmt.Sprintf(
+		`<svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">`+logoGeometry+`</svg>`,
+		`fill="currentColor" opacity=".38"`,
+		`fill="currentColor" opacity=".62"`,
+		`fill="var(--kind-net)"`))
+}
+
+// LogoSVG is the mark as a standalone document, for anywhere with no
+// stylesheet behind it: the favicon, and the copy checked in under docs/assets
+// for the README. Its greys sit between the two themes' inks, so the mark
+// holds on a light page and a dark one alike — which is also what makes it
+// safe on GitHub, where the reader's theme is not ours to choose.
+func LogoSVG() string {
+	return fmt.Sprintf(
+		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">`+
+			logoGeometry+`</svg>`+"\n",
+		`fill="#8a8178"`, `fill="#b9b2ab"`, `fill="#3987e5"`)
+}
+
+// faviconURL is that document inline in the <link>, so it costs no request and
+// cannot 404.
+func faviconURL() template.URL {
+	return template.URL("data:image/svg+xml," + url.PathEscape(strings.TrimSpace(LogoSVG())))
 }
 
 // rowHeight is the flame-graph row pitch: 34px of frame plus a 2px gap, so
@@ -355,6 +394,8 @@ var funcs = template.FuncMap{
 	"flameJS":    func() template.JS { return template.JS(mustRead("assets/flame.js")) },
 	"liveJS":     func() template.JS { return template.JS(mustRead("assets/live.js")) },
 	"shellJS":    func() template.JS { return template.JS(mustRead("assets/shell.js")) },
+	"logo":       logoMark,
+	"favicon":    faviconURL,
 	"dur":        humanDur,
 	"framePos":   framePos,
 	"barPos":     barPos,

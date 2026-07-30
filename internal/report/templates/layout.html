@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:,">
+<link rel="icon" type="image/svg+xml" href="{{ favicon }}">
 <title>{{ .Title }} — flowbench</title>
 <style>{{ css }}</style>
 <script>{{ shellJS }}</script>
@@ -48,7 +48,7 @@
 <div class="shell">
 
   <nav class="side" aria-label="Runs and projects">
-    <div class="brand"><span class="brand-mark" aria-hidden="true"></span>flowbench</div>
+    <div class="brand">{{ logo }}flowbench</div>
     {{ if .Nav }}
     <div class="nav-group">
       <div class="nav-label" id="nav-runs">Runs</div>
