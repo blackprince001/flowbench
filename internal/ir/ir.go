@@ -17,7 +17,6 @@ const (
 	StepGRPC    StepType = "grpc"
 	StepWait    StepType = "wait"
 	StepPoll    StepType = "poll"
-	StepVerify  StepType = "verify"
 )
 
 type Mode string
@@ -93,7 +92,6 @@ type Step struct {
 	GRPC    *GRPCSpec    `json:"grpc,omitempty"`
 	Wait    *WaitSpec    `json:"wait,omitempty"`
 	Poll    *PollSpec    `json:"poll,omitempty"`
-	Verify  *VerifySpec  `json:"verify,omitempty"`
 
 	Extract   []Extraction  `json:"extract,omitempty"`
 	Assert    []Assertion   `json:"assert,omitempty"`
@@ -264,12 +262,6 @@ type PollSpec struct {
 	Interval    Duration    `json:"interval"`
 	Timeout     Duration    `json:"timeout,omitempty"`
 	MaxAttempts int         `json:"max_attempts,omitempty"`
-}
-
-type VerifySpec struct {
-	Connection string   `json:"connection"`
-	Query      string   `json:"query"`
-	Args       []string `json:"args,omitempty"`
 }
 
 type ExtractionSource string

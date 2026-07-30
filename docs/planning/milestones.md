@@ -24,7 +24,7 @@ Exit: the same flow runs under all five modes; a stress run against a rate-limit
 
 ## M3: Python SDK + protocols + agent
 
-Engine as importable Python package (declarative flows compiling to the IR, plus a Python-driven execution path that writes runs — ADR 0012), SDK-side HTTP auto-instrumentation, flows runnable via CLI and `python file.py`, GraphQL, WebSockets, gRPC unary (`RESOURCE_EXHAUSTED` → `throttled`), prompt-observation API (wrap the team's own LLM SDK calls in Python-driven flows: always-on prompt/completion capture, identity hashing, variant labels, in-process pace/timeout guards — ADR 0009), auth scheme coverage, DB verifier (read-only, Postgres), agent v1 with collector time-alignment and engine self-metrics.
+Engine as importable Python package (declarative flows compiling to the IR, plus a Python-driven execution path that writes runs — ADR 0012), SDK-side HTTP auto-instrumentation, flows runnable via CLI and `python file.py`, GraphQL, WebSockets, gRPC unary (`RESOURCE_EXHAUSTED` → `throttled`), prompt-observation API (wrap the team's own LLM SDK calls in Python-driven flows: always-on prompt/completion capture, identity hashing, variant labels, in-process pace/timeout guards — ADR 0009), auth scheme coverage, agent v1 with collector time-alignment and engine self-metrics.
 
 Exit: a Python-driven flow renders fully resolved spans in the run store; an agent-attached run overlays target CPU/memory; a flow wrapping its own SDK call records per-variant prompt/completion pairs, paced under a declared ceiling.
 

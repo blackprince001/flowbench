@@ -133,14 +133,6 @@ func TestValidateRejects(t *testing.T) {
 			},
 			"at least one until condition",
 		},
-		"verify without connection or query": {
-			func(s *ir.Scenario) {
-				s.Flows[0].Steps = append(s.Flows[0].Steps, ir.Step{
-					ID: "check_row", Type: ir.StepVerify, Verify: &ir.VerifySpec{Query: "SELECT 1"},
-				})
-			},
-			"connection and a query",
-		},
 		"extraction var with reserved characters": {
 			func(s *ir.Scenario) { s.Flows[0].Steps[0].Extract[0].Var = "auth.token" },
 			"reserved",
