@@ -18,11 +18,16 @@ import (
 
 	"github.com/blackprince001/flowbench/internal/ir"
 	"github.com/blackprince001/flowbench/internal/span"
+	"github.com/blackprince001/flowbench/internal/version"
 )
 
 const defaultTimeout = 30 * time.Second
 
 const maxRedirects = 10
+
+// userAgent is resolved once: every request on every VU carries it, so it is
+// not worth rebuilding ten thousand times a second.
+var userAgent = version.UserAgent()
 
 type Session struct {
 	client *http.Client
@@ -89,6 +94,19 @@ func (r *Request) SetHeader(name, value string) {
 	r.Headers[name] = value
 }
 
+// declares reports whether the flow set this header itself, in whatever case
+// it wrote it. The map is keyed as authored while header names are not
+// case-sensitive, so `content-type` has to count as declaring Content-Type —
+// otherwise a default would arrive alongside it as a second value.
+func (r *Request) declares(name string) bool {
+	for k := range r.Headers {
+		if strings.EqualFold(k, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // SetQuery sets a query parameter, allocating the map on first use.
 func (r *Request) SetQuery(name, value string) {
 	if r.Query == nil {
@@ -149,6 +167,15 @@ func BuildRequest(spec *ir.CallSpec, resolve Resolver) (*Request, error) {
 			return nil, fmt.Errorf("body: %w", err)
 		}
 		req.Body = []byte(body)
+
+		// The type is known rather than guessed: the parser marshals every
+		// body to JSON and validation refuses anything that isn't. Saying so
+		// is what a server needs to parse it at all. A declared header wins,
+		// and an empty one suppresses this entirely — which is how a flow
+		// tests what its target does with no Content-Type.
+		if !req.declares("Content-Type") {
+			req.SetHeader("Content-Type", "application/json")
+		}
 	}
 	return req, nil
 }
@@ -238,7 +265,21 @@ func (s *Session) newHTTPRequest(ctx context.Context, req *Request) (*http.Reque
 		return nil, err
 	}
 	for k, v := range req.Headers {
+		if v == "" {
+			// An empty value means "send no such header". Setting it would
+			// put a blank one on the wire instead, so the key is left out —
+			// except for User-Agent, where Go substitutes its own default
+			// unless the key is present, and present-but-empty is the only
+			// way to say none at all.
+			if strings.EqualFold(k, "User-Agent") {
+				httpReq.Header.Set("User-Agent", "")
+			}
+			continue
+		}
 		httpReq.Header.Set(k, v)
+	}
+	if !req.declares("User-Agent") {
+		httpReq.Header.Set("User-Agent", userAgent)
 	}
 	return httpReq, nil
 }

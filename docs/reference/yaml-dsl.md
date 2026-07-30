@@ -39,6 +39,28 @@ Common step keys:
 | `auth` | request-making steps | per-step auth, overriding the flow default |
 | `on_failure` | all | `abort_flow` (default) \| `abort_run` \| `record` |
 
+### Headers the engine adds
+
+Two headers are sent for you when the step does not declare them:
+
+| Header | Value | When |
+| --- | --- | --- |
+| `Content-Type` | `application/json` | the step has a `body` |
+| `User-Agent` | `flowbench/<version>` | every call |
+
+`body` is always JSON — the parser converts whatever YAML you write and the validator rejects the rest — so the Content-Type is a fact rather than an assumption. Declaring the header yourself overrides it, in whatever case you write it.
+
+Declaring it **empty** sends no such header at all, which is how you test what a target does without one:
+
+```yaml
+  - id: unlabelled_post
+    call: POST /orders
+    headers: { Content-Type: "" }
+    body: { items: 2 }
+```
+
+The same two rules apply to `User-Agent`, and to both the engine and the Python SDK's direct-execution path — a flow puts the same bytes on the wire whichever runs it.
+
 ### `graphql:`
 
 | Key | Meaning |

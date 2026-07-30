@@ -117,6 +117,8 @@ ctx.http.delete(url, *, json=None, headers=None, query=None)
 
 One HTTP call — at most one per step. `url` is resolved against the target's base URL when relative; an absolute URL must match the target's allow-list. `json` is the request body, `headers` and `query` are string mappings; all three accept extracted values and data-pool fields. Returns a [response](#responses).
 
+A call you did not label carries `Content-Type: application/json` when it has a body, and `User-Agent: flowbench/<version> (python)` always. Passing either in `headers` overrides it; passing it as `""` sends no such header at all. Both paths follow the same rules as [the engine](yaml-dsl.md#headers-the-engine-adds), so a flow sends the same bytes whether it runs through `flowbench run` or `python flow.py`.
+
 ### ctx.graphql
 
 ```python

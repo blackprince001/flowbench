@@ -7,7 +7,12 @@ import pytest
 
 from flowbench.assertions import expect
 from flowbench.context import Context
-from flowbench.drivers.live import FlowAbortedError, LiveDriver
+from flowbench.drivers.live import (
+  USER_AGENT,
+  FlowAbortedError,
+  LiveDriver,
+  apply_header_defaults,
+)
 from flowbench.errors import FlowExecutionError
 from flowbench.redaction import SecretSet
 from flowbench.retry import Retry
@@ -311,3 +316,45 @@ def test_call_rejects_second_call_in_same_step(cfg, server):
   with pytest.raises(FlowExecutionError, match=r"more than one ctx\.http call"):
     step(ctx)
   driver.close()
+
+
+def test_apply_header_defaults():
+  assert apply_header_defaults(None, has_body=False) == {"User-Agent": USER_AGENT}
+  assert apply_header_defaults(None, has_body=True) == {
+    "Content-Type": "application/json",
+    "User-Agent": USER_AGENT,
+  }
+
+  # Declared wins, in whatever case it was written.
+  declared = apply_header_defaults({"content-type": "text/plain"}, has_body=True)
+  assert declared == {"content-type": "text/plain", "User-Agent": USER_AGENT}
+
+  # Empty drops the header rather than sending a blank one.
+  suppressed = {"Content-Type": "", "User-Agent": ""}
+  assert apply_header_defaults(suppressed, has_body=True) == {}
+
+
+def test_sent_header_defaults_reach_the_wire(cfg, server):
+  seen = {}
+
+  def echo(h, b):
+    seen.update({k.lower(): v for k, v in h.headers.items()})
+    seen["_body"] = b
+    h._respond(200, {"ok": True})
+
+  server.routes[("POST", "/echo")] = echo
+
+  run_step(cfg, lambda ctx: ctx.http.post("/echo", json={"amount": 1}))
+  assert seen["content-type"] == "application/json"
+  assert seen["user-agent"] == USER_AGENT
+  assert seen["_body"] == b'{"amount":1}'  # compact, as the engine sends it
+
+  seen.clear()
+  run_step(
+    cfg,
+    lambda ctx: ctx.http.post(
+      "/echo", json={"amount": 1}, headers={"Content-Type": "", "User-Agent": ""}
+    ),
+  )
+  assert "content-type" not in seen
+  assert "user-agent" not in seen

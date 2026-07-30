@@ -12,10 +12,12 @@ failure aborts the flow (integration/system's default), 429 alone is a
 throttle, and every call is captured.
 """
 
+import json as jsonlib
 import os
 import time
 
 from .. import target as target_mod
+from .._version import __version__
 from ..errors import FlowCompileError, FlowExecutionError
 from ..eval import compare
 from ..instrument import Instrumentation
@@ -38,6 +40,31 @@ except ImportError as e:  # pragma: no cover
     "the httpx package is required for live execution; install sdk-python's "
     "dependencies (uv sync --project sdk-python)"
   ) from e
+
+
+# What flowbench tells a target about itself and about what it is sending.
+# The engine adds the same two headers in internal/adapters/http.go; a flow
+# run either way must put the same bytes on the wire, so the rules live here
+# rather than being left to httpx's own defaults. The runner is named because
+# a target's access log is often the first place a divergence shows up.
+USER_AGENT = f"flowbench/{__version__} (python)"
+JSON_CONTENT_TYPE = "application/json"
+
+
+def apply_header_defaults(headers, has_body):
+  """The headers flowbench adds when the flow did not declare them.
+
+  A declared header wins in whatever case it was written, and one declared
+  empty is dropped rather than sent blank -- that is how a flow says "send no
+  Content-Type" and tests what its target does without one.
+  """
+  out = {k: v for k, v in (headers or {}).items() if v != ""}
+  declared = {k.lower() for k in (headers or {})}
+  if has_body and "content-type" not in declared:
+    out["Content-Type"] = JSON_CONTENT_TYPE
+  if "user-agent" not in declared:
+    out["User-Agent"] = USER_AGENT
+  return out
 
 
 class FlowAbortedError(Exception):
@@ -194,6 +221,10 @@ class LiveDriver:
     self._target = target_cfg
     self._base_url = target_cfg.base_url
     self._client = httpx.Client(timeout=timeout)
+    # httpx identifies itself by default. flowbench decides what a target sees
+    # instead, and a flow that suppresses the header has to end up sending
+    # none at all rather than falling back to httpx's.
+    self._client.headers.pop("user-agent", None)
     self._secrets = secrets if secrets is not None else SecretSet()
     self._vars = {}
     self._row = None
@@ -435,7 +466,19 @@ class LiveDriver:
     # instead of gaining a call span the engine path has no counterpart for.
     # Duration, bodies, and call identity are recorded by the instrumentation.
     self._instr.bind_next(span_obj)
-    return self._client.request(method, url, headers=headers, params=query, json=body)
+    content = None
+    if body is not None:
+      # Serialized here rather than handed to httpx's json=, so that the
+      # defaults below own the Content-Type and the bytes match the compact
+      # JSON the engine sends for the same flow.
+      content = jsonlib.dumps(body, separators=(",", ":")).encode()
+    return self._client.request(
+      method,
+      url,
+      headers=apply_header_defaults(headers, body is not None),
+      params=query,
+      content=content,
+    )
 
   def _do_request(self, method, url, headers, query, body, step):
     try:

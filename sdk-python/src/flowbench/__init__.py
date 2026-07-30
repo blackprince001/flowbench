@@ -2,6 +2,7 @@
 the canonical IR (ADR 0002), executed by the Go engine at full VU scale.
 """
 
+from ._version import __version__
 from .assertions import expect, frame
 from .auth import (
   ApiKey,
@@ -19,9 +20,6 @@ from .redaction import secret
 from .retry import Retry
 from .template import env
 
-# Kept in lockstep with pyproject.toml's version by hand; releases check it.
-__version__ = "0.1.0"
-
 __all__ = [
   "ApiKey",
   "Basic",
@@ -35,6 +33,7 @@ __all__ = [
   "OAuth2ClientCredentials",
   "Profile",
   "Retry",
+  "__version__",
   "env",
   "expect",
   "frame",
