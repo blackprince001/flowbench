@@ -1,0 +1,26 @@
+---
+// The repository mark: three stacked bars, the top one carrying the accent.
+// `tone` names the background the mark sits on; the two neutral bars step to
+// the report's ink-3/ink-2 on dark.
+interface Props {
+  size?: number;
+  tone?: "light" | "dark";
+}
+
+const { size = 22, tone = "dark" } = Astro.props;
+const back = tone === "dark" ? "#7c746d" : "#8a8178";
+const mid = tone === "dark" ? "#a9a19a" : "#b9b2ab";
+---
+
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 24 24"
+  width={size}
+  height={size}
+  role="img"
+  aria-label="Flowbench"
+>
+  <rect x="2" y="15.5" width="20" height="6.5" rx="2.2" fill={back}></rect>
+  <rect x="2" y="8.75" width="13" height="6.5" rx="2.2" fill={mid}></rect>
+  <rect x="2" y="2" width="8.5" height="6.5" rx="2.2" fill="#3987e5"></rect>
+</svg>

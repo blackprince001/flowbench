@@ -1,0 +1,503 @@
+---
+import { Code } from "astro:components";
+import { Image } from "astro:assets";
+import Icon from "./Icon.astro";
+import { codeTheme } from "../lib/code-theme";
+import { DOCS_URL } from "../content/site";
+import cardOutcomes from "../assets/product/card-outcomes.png";
+import cardFlame from "../assets/product/card-flame.png";
+
+// One full-width lead card, then two rows of two. No two cards share a visual,
+// and every number is from the captured stress run or a file that exists.
+const STEPS = `flow: checkout_pressure
+steps:
+  - id: checkout
+    call: POST /checkout
+    assert:
+      - status == 200`;
+
+const PROFILES = [
+  { id: "integration", label: "Integration", code: `profile:\n  mode: integration` },
+  {
+    id: "load",
+    label: "Load",
+    code: `profile:
+  mode: load
+  arrival_cap: 150/s
+  thresholds:
+    - p95(latency) < 100ms`,
+  },
+  {
+    id: "stress",
+    label: "Stress",
+    code: `profile:
+  mode: stress
+  arrival_cap: 400/s
+  thresholds:
+    - error_rate < 2%`,
+  },
+  {
+    id: "soak",
+    label: "Soak",
+    code: `profile:
+  mode: soak
+  vus: 10
+  hold: 12s`,
+  },
+];
+
+const RUN_DIR = [
+  "runs/20260730T193042Z/",
+  "  meta.json",
+  "  metrics.json",
+  "  series.json",
+  "  folded.json",
+  "  traces.json",
+];
+---
+
+<section id="features" class="features">
+  <div class="shell">
+    <header class="section-head">
+      <span class="eyebrow">Capabilities</span>
+      <h2>Everything you need to know what actually happened.</h2>
+      <p>
+        One engine, one result model, one set of views — so the answer never depends on which
+        tool you happened to reach for.
+      </p>
+    </header>
+
+    <div class="bento">
+      <article class="card lead" style="--accent:var(--blue)">
+        <div class="lead-copy">
+          <span class="chip"><Icon name="layers" /></span>
+          <p class="category">One authored flow</p>
+          <h3>Change the profile, not the journey.</h3>
+          <p class="para">
+            The steps are the contract — what the journey does, what it extracts, what it
+            asserts. The profile is how hard you push. So the same file is your CI check and
+            your stress run, and when stress finds something you are debugging a journey you
+            already trust.
+          </p>
+          <a class="link" href={DOCS_URL} rel="noopener" target="_blank">
+            Profiles and thresholds
+            <Icon name="arrow" size={12} />
+          </a>
+        </div>
+
+        <div class="window lead-window">
+          <div class="window-bar mono">stress.flow.yaml</div>
+          <div class="window-body">
+            <Code code={STEPS} lang="yaml" theme={codeTheme} />
+            <div class="modes" role="tablist" aria-label="Execution profile">
+              {
+                PROFILES.map((profile, i) => (
+                  <button
+                    type="button"
+                    role="tab"
+                    id={`mode-${profile.id}`}
+                    aria-controls={`profile-${profile.id}`}
+                    aria-selected={i === 2 ? "true" : "false"}
+                    tabindex={i === 2 ? undefined : "-1"}
+                  >
+                    {profile.label}
+                  </button>
+                ))
+              }
+            </div>
+            {
+              PROFILES.map((profile, i) => (
+                <div
+                  class="profile"
+                  id={`profile-${profile.id}`}
+                  role="tabpanel"
+                  aria-labelledby={`mode-${profile.id}`}
+                  data-active={i === 2 ? "" : undefined}
+                >
+                  <Code code={profile.code} lang="yaml" theme={codeTheme} />
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      </article>
+
+      <article class="card" style="--accent:var(--amber)">
+        <span class="chip"><Icon name="gauge" /></span>
+        <p class="category">Honest outcomes</p>
+        <h3>A rate limiter is not a bug.</h3>
+        <p class="para">
+          <code>throttled</code> is its own outcome class, never folded into <code>failed</code
+          >. A working limiter reads as a working limiter — not a 40% failure rate you go
+          hunting for.
+        </p>
+        <div class="window flush">
+          <Image
+            src={cardOutcomes}
+            alt="The results server's outcomes card: 1007 successful, 9 failed and 984 throttled flow-runs above a strip where throttling holds its own amber band."
+            widths={[640, 1120, 1600]}
+            sizes="(max-width: 900px) 94vw, 620px"
+            loading="lazy"
+          />
+        </div>
+      </article>
+
+      <article class="card" style="--accent:var(--orange)">
+        <span class="chip"><Icon name="spans" /></span>
+        <p class="category">One span vocabulary</p>
+        <h3>The widest frame is the answer.</h3>
+        <p class="para">
+          Every view folds the same spans, so the flame graph, the waterfall and the outcome
+          grid cannot tell different stories. Here, the target's wait — not your network — is
+          99.3% of the cost.
+        </p>
+        <div class="window flush">
+          <Image
+            src={cardFlame}
+            alt="The results server's flame graph, spans folded across every iteration: ttfb and http_call as full-width frames above checkout and the flow."
+            widths={[640, 1120, 1600]}
+            sizes="(max-width: 900px) 94vw, 620px"
+            loading="lazy"
+          />
+        </div>
+      </article>
+
+      <article class="card" style="--accent:var(--green)">
+        <span class="chip"><Icon name="box" /></span>
+        <p class="category">Local-first</p>
+        <h3>One binary. Your runs stay yours.</h3>
+        <p class="para">
+          A run is a plain directory of JSON — no hosted control plane, no account, nothing to
+          exfiltrate your latencies. A threshold breach exits non-zero, so CI fails on the
+          finding.
+        </p>
+        <div class="window flush">
+          <div class="window-bar mono">420K on disk</div>
+          <div class="window-body">
+            <ul class="tree mono">
+              {RUN_DIR.map((entry) => <li>{entry}</li>)}
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" style="--accent:var(--red)">
+        <span class="chip"><Icon name="pulse" /></span>
+        <p class="category">Target telemetry</p>
+        <h3>Whose CPU ran out?</h3>
+        <p class="para">
+          Attach the lightweight agent and a breaching stress run classifies its own knee —
+          an enforced limit and genuine saturation stop looking identical.
+        </p>
+        <div class="window flush">
+          <div class="window-bar mono">knee</div>
+          <div class="window-body">
+            <div class="knee">
+              <span class="class mono">throttled</span>
+              <p>
+                throttle rate rose 2.1% → 49.2% across the knee while target CPU stayed flat —
+                the target enforced a rate limit rather than saturating
+              </p>
+            </div>
+          </div>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<script>
+  // Same switcher contract as the product stage: no JS, every profile is
+  // visible and labelled; with JS, one at a time.
+  const list = document.querySelector<HTMLElement>('[aria-label="Execution profile"]');
+  if (list) {
+    const tabs = Array.from(list.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+
+    const select = (tab: HTMLButtonElement, focus = false) => {
+      for (const other of tabs) {
+        const on = other === tab;
+        other.setAttribute("aria-selected", String(on));
+        other.tabIndex = on ? 0 : -1;
+        const panel = document.getElementById(other.getAttribute("aria-controls") ?? "");
+        if (panel) panel.toggleAttribute("data-active", on);
+      }
+      if (focus) tab.focus();
+    };
+
+    list.addEventListener("click", (event) => {
+      const tab = (event.target as HTMLElement).closest<HTMLButtonElement>('[role="tab"]');
+      if (tab) select(tab);
+    });
+
+    list.addEventListener("keydown", (event) => {
+      const i = tabs.indexOf(document.activeElement as HTMLButtonElement);
+      if (i < 0) return;
+      const next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[
+        event.key
+      ];
+      if (next === undefined) return;
+      event.preventDefault();
+      select(tabs[(next + tabs.length) % tabs.length]!, true);
+    });
+  }
+</script>
+
+<style>
+  .features {
+    padding-block: clamp(3.5rem, 8vw, 6.5rem);
+  }
+
+  .bento {
+    --pad: clamp(1.5rem, 2.4vw, 2rem);
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin-top: clamp(2.5rem, 5vw, 4rem);
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+    padding: var(--pad) var(--pad) 0;
+    background: color-mix(in oklab, var(--surface) 72%, var(--ground));
+    border: 1px solid var(--hairline-soft);
+    border-radius: var(--radius-stage);
+    overflow: hidden;
+  }
+
+  .lead {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    align-items: center;
+    gap: clamp(1.5rem, 4vw, 3.5rem);
+    padding: var(--pad);
+    padding-bottom: 0;
+  }
+
+  .lead-copy {
+    padding-bottom: var(--pad);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    background: color-mix(in oklab, var(--accent) 13%, var(--ground));
+    border: 1px solid color-mix(in oklab, var(--accent) 28%, transparent);
+    border-radius: 11px;
+    color: var(--accent);
+  }
+
+  .category {
+    margin-top: 1.125rem;
+    color: var(--accent);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+
+  .card h3 {
+    margin-top: 0.375rem;
+    max-width: 22ch;
+    font-size: clamp(1.3125rem, 2vw, 1.625rem);
+    line-height: 1.12;
+    letter-spacing: -0.02em;
+  }
+
+  .para {
+    margin-top: 0.875rem;
+    max-width: 52ch;
+    color: var(--ink-2);
+    font-size: 0.9375rem;
+    line-height: 1.6;
+  }
+
+  .para code {
+    padding: 0.0625rem 0.3125rem;
+    background: var(--raised);
+    border-radius: 5px;
+    color: var(--amber);
+    font-size: 0.8125rem;
+  }
+
+  .link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin-top: 1.25rem;
+    color: var(--blue);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    text-decoration: none;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .link:hover {
+      text-decoration: underline;
+      text-underline-offset: 0.25em;
+    }
+  }
+
+  /* The visual is an app window cut into the card's bottom edge — it grounds
+     the card the way the reference's demos do, instead of floating in it. */
+  .window {
+    background: var(--ground);
+    border: 1px solid var(--hairline);
+    border-bottom: 0;
+    border-radius: 14px 14px 0 0;
+    overflow: hidden;
+  }
+
+  .window :global(img) {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  /* The paragraph owns the minimum gap; auto margin then pins the window to
+     the card's bottom edge however tall the grid stretches the card. */
+  .card > .window.flush {
+    margin-top: auto;
+  }
+
+  /* Direct children only — the lead card's copy column spaces itself. */
+  .card > .para {
+    margin-bottom: 1.5rem;
+  }
+
+  .lead-window {
+    align-self: end;
+  }
+
+  .window-bar {
+    padding: 0.5625rem 1rem;
+    border-bottom: 1px solid var(--hairline-soft);
+    color: var(--ink-3);
+    font-size: 0.6875rem;
+    letter-spacing: 0.02em;
+  }
+
+  .window-body {
+    display: grid;
+    gap: 0.75rem;
+    padding: 1rem 1.125rem 1.25rem;
+  }
+
+  .modes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--hairline-soft);
+  }
+
+  .modes button {
+    min-height: 30px;
+    padding-inline: 0.6875rem;
+    background: none;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-pill);
+    color: var(--ink-3);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition:
+      background-color 160ms var(--ease-out),
+      border-color 160ms var(--ease-out),
+      color 160ms var(--ease-out);
+  }
+
+  .modes button[aria-selected="true"] {
+    background: color-mix(in oklab, var(--blue) 18%, transparent);
+    border-color: color-mix(in oklab, var(--blue) 45%, transparent);
+    color: var(--ink);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .modes button:hover {
+      color: var(--ink-2);
+    }
+  }
+
+  .profile {
+    min-height: 6.5rem;
+  }
+
+  :global(html.js) .profile {
+    display: none;
+  }
+
+  :global(html.js) .profile[data-active] {
+    display: block;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    :global(html.js) .profile[data-active] {
+      animation: profile-in 200ms var(--ease-out) both;
+    }
+  }
+
+  @keyframes profile-in {
+    from {
+      opacity: 0;
+      translate: 0 4px;
+    }
+  }
+
+  .tree {
+    display: grid;
+    gap: 0.25rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--ink-3);
+    font-size: 0.75rem;
+    line-height: 1.5;
+    white-space: pre;
+  }
+
+  .tree li:first-child {
+    color: var(--ink);
+  }
+
+  .knee {
+    display: grid;
+    gap: 0.625rem;
+    justify-items: start;
+  }
+
+  .knee .class {
+    padding: 0.1875rem 0.5625rem;
+    background: color-mix(in oklab, var(--amber) 16%, transparent);
+    border-radius: 6px;
+    color: var(--amber);
+    font-size: 0.6875rem;
+    font-weight: 500;
+  }
+
+  .knee p {
+    color: var(--ink-2);
+    font-size: 0.8125rem;
+    line-height: 1.55;
+  }
+
+  .features :global(pre) {
+    margin: 0;
+    background: none !important;
+    font-size: 0.75rem;
+    line-height: 1.65;
+    overflow-x: auto;
+  }
+
+  @media (max-width: 900px) {
+    .bento {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .lead {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+    }
+  }
+</style>

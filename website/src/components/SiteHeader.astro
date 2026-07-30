@@ -1,0 +1,284 @@
+---
+import Logo from "./Logo.astro";
+import { NAV_LINKS, PRIMARY_CTA, REPO_URL } from "../content/site";
+
+// The mobile menu is a native <details> so the header still opens without
+// JavaScript. Desktop renders the same links inline and hides the disclosure.
+---
+
+<header class="site-header">
+  <nav class="pill" aria-label="Primary">
+    <a class="brand" href="#top">
+      <Logo tone="dark" size={20} />
+      <span>Flowbench</span>
+    </a>
+
+    <ul class="links">
+      {
+        NAV_LINKS.map((link) => (
+          <li>
+            <a
+              href={link.href}
+              rel={"external" in link && link.external ? "noopener" : undefined}
+              target={"external" in link && link.external ? "_blank" : undefined}
+            >
+              {link.label}
+              {"external" in link && link.external && (
+                <svg class="ext" viewBox="0 0 12 12" width="9" height="9" aria-hidden="true">
+                  <path
+                    d="M3 9 9 3M4.5 3H9v4.5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              )}
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+
+    <a class="cta" href={REPO_URL} rel="noopener" target="_blank">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor">
+        <path
+          d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.23.49-2.7-1.07-2.7-1.07-.36-.93-.89-1.18-.89-1.18-.73-.5.05-.49.05-.49.81.06 1.23.83 1.23.83.72 1.23 1.89.88 2.35.67.07-.52.28-.88.51-1.08-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+        ></path>
+      </svg>
+      <span class="cta-label">{PRIMARY_CTA.label}</span>
+      <span class="cta-label-short" aria-hidden="true">GitHub</span>
+    </a>
+
+    <details class="menu">
+      <summary aria-label="Menu">
+        <span class="bars" aria-hidden="true"></span>
+      </summary>
+      <ul class="drawer">
+        {
+          NAV_LINKS.map((link) => (
+            <li>
+              <a
+                href={link.href}
+                rel={"external" in link && link.external ? "noopener" : undefined}
+                target={"external" in link && link.external ? "_blank" : undefined}
+              >
+                {link.label}
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+    </details>
+  </nav>
+</header>
+
+<style>
+  .site-header {
+    position: fixed;
+    inset: 0.875rem 0 auto;
+    z-index: 50;
+    display: flex;
+    justify-content: center;
+    padding-inline: 1rem;
+    pointer-events: none;
+  }
+
+  /* On a near-black page the pill can't be darker than the page, so it lifts:
+     a translucent raised surface, a hairline, and blur over whatever scrolls
+     under it. */
+  .pill {
+    pointer-events: auto;
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    max-width: 620px;
+    height: 54px;
+    padding: 0 0.4rem 0 1.125rem;
+    background: color-mix(in oklab, var(--surface) 82%, transparent);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-float), var(--edge);
+    backdrop-filter: blur(16px) saturate(140%);
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--ink);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    text-decoration: none;
+  }
+
+  .links {
+    display: none;
+    flex: 1;
+    justify-content: center;
+    gap: 1.25rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .links a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--ink-2);
+    font-size: 0.875rem;
+    text-decoration: none;
+    transition: color 160ms var(--ease-out);
+  }
+
+  .ext {
+    opacity: 0.7;
+  }
+
+  .cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4375rem;
+    height: 40px;
+    margin-left: auto;
+    padding: 0 0.9375rem;
+    background: var(--ink);
+    color: var(--ground);
+    border-radius: var(--radius-pill);
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-decoration: none;
+    white-space: nowrap;
+    transition:
+      background-color 160ms var(--ease-out),
+      scale 140ms var(--ease-out);
+  }
+
+  .cta-label {
+    display: none;
+  }
+
+  .cta:active {
+    scale: 0.97;
+  }
+
+  .menu {
+    position: relative;
+  }
+
+  .menu summary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-pill);
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .menu summary::-webkit-details-marker {
+    display: none;
+  }
+
+  /* Three bars that collapse to a cross when the drawer is open. */
+  .bars,
+  .bars::before,
+  .bars::after {
+    display: block;
+    width: 16px;
+    height: 1.5px;
+    background: var(--ink-2);
+    border-radius: 2px;
+    transition:
+      translate 200ms var(--ease-out),
+      rotate 200ms var(--ease-out),
+      opacity 120ms linear;
+  }
+
+  .bars::before,
+  .bars::after {
+    content: "";
+    position: absolute;
+  }
+
+  .bars::before {
+    translate: 0 -5px;
+  }
+
+  .bars::after {
+    translate: 0 5px;
+  }
+
+  .menu[open] .bars {
+    opacity: 0;
+  }
+
+  .menu[open] .bars::before {
+    translate: 0 0;
+    rotate: 45deg;
+    opacity: 1;
+  }
+
+  .menu[open] .bars::after {
+    translate: 0 0;
+    rotate: -45deg;
+    opacity: 1;
+  }
+
+  .drawer {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 0.75rem);
+    min-width: 190px;
+    margin: 0;
+    padding: 0.5rem;
+    background: var(--raised);
+    border: 1px solid var(--hairline);
+    border-radius: 18px;
+    box-shadow: var(--shadow-float);
+    list-style: none;
+  }
+
+  .drawer a {
+    display: block;
+    padding: 0.625rem 0.75rem;
+    border-radius: var(--radius-chip);
+    color: var(--ink-2);
+    font-size: 0.9375rem;
+    text-decoration: none;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .links a:hover,
+    .drawer a:hover {
+      color: var(--ink);
+    }
+    .cta:hover {
+      background: #fff;
+    }
+  }
+
+  @media (min-width: 860px) {
+    .links {
+      display: flex;
+    }
+    .cta {
+      margin-left: 0;
+    }
+    .cta-label {
+      display: inline;
+    }
+    .cta-label-short {
+      display: none;
+    }
+    .menu {
+      display: none;
+    }
+  }
+</style>

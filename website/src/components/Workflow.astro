@@ -1,0 +1,318 @@
+---
+import { Code } from "astro:components";
+import { Image } from "astro:assets";
+import { codeTheme } from "../lib/code-theme";
+import dashboard from "../assets/product/dashboard.png";
+
+// The ten-minute path from docs/getting-started/quickstart.md, staged in the
+// three programs it actually happens in: an editor, a terminal, a browser.
+const AUTHOR = `flow: checkout_pressure
+steps:
+  - id: checkout
+    call: POST /checkout
+    assert:
+      - status == 200
+profile:
+  mode: stress
+  arrival_cap: 400/s
+  hold: 5s`;
+
+const RUN = `$ flowbench run stress.flow.yaml \\
+    --target target.yaml
+
+2000 flow-run(s) in 5.01s
+error_rate=0.10%
+throttle_rate=40.55%
+p95(latency) < 300ms: ok
+
+$ echo $?
+0`;
+---
+
+<section id="workflow" class="workflow">
+  <div class="shell">
+    <header class="section-head">
+      <span class="eyebrow">How it works</span>
+      <h2>From an empty file to evidence in ten minutes.</h2>
+      <p>
+        No agent to deploy, no dashboard to provision, no account. A binary, a flow file, and a
+        target you are allowed to point it at.
+      </p>
+    </header>
+  </div>
+
+  <div class="wide">
+    <ol>
+      <li>
+        <div class="window">
+          <div class="window-bar">
+            <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="tab mono">stress.flow.yaml</span>
+          </div>
+          <div class="window-body">
+            <Code code={AUTHOR} lang="yaml" theme={codeTheme} />
+          </div>
+        </div>
+        <p class="say">
+          <span class="n mono">01</span>
+          <strong>Author the flow.</strong> A name, ordered steps, and the profile — one YAML
+          document.
+        </p>
+        <span class="joint" aria-hidden="true">
+          <svg viewBox="0 0 12 12" width="11" height="11">
+            <path
+              d="M4 2.5 7.5 6 4 9.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"></path>
+          </svg>
+        </span>
+      </li>
+
+      <li>
+        <div class="window">
+          <div class="window-bar">
+            <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="title mono">flowbench — zsh</span>
+          </div>
+          <div class="window-body">
+            <Code code={RUN} lang="text" theme={codeTheme} />
+          </div>
+        </div>
+        <p class="say">
+          <span class="n mono">02</span>
+          <strong>Run it against a gated target.</strong> The allow-list and ceilings are
+          checked before any load is generated; a breach exits non-zero.
+        </p>
+        <span class="joint" aria-hidden="true">
+          <svg viewBox="0 0 12 12" width="11" height="11">
+            <path
+              d="M4 2.5 7.5 6 4 9.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"></path>
+          </svg>
+        </span>
+      </li>
+
+      <li>
+        <div class="window">
+          <div class="window-bar">
+            <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="url mono">127.0.0.1:7580</span>
+          </div>
+          <div class="window-body is-shot">
+            <Image
+              src={dashboard}
+              alt="The Flowbench results server showing the stress run's summary: 2000 flow-runs, 0.45% error rate, 49.20% throttle rate, thresholds passed."
+              widths={[720, 1120, 1600]}
+              sizes="(max-width: 900px) 94vw, 420px"
+              loading="lazy"
+            />
+          </div>
+        </div>
+        <p class="say">
+          <span class="n mono">03</span>
+          <strong>Read what happened.</strong>
+          <code class="mono">flowbench serve</code> opens every run — the same spans behind every
+          view.
+        </p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<style>
+  .workflow {
+    padding-block: clamp(3.5rem, 8vw, 6.5rem);
+  }
+
+  /* The cards get more room than the text shell: the row breaks out toward
+     the product stage's width so the three programs read at real size. */
+  .wide {
+    width: 100%;
+    max-width: 1400px;
+    margin-inline: auto;
+    padding-inline: var(--gutter);
+  }
+
+  ol {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1.25rem;
+    margin: clamp(2.5rem, 5vw, 4rem) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  li {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    padding: 1rem 1rem 1.75rem;
+    background: color-mix(in oklab, var(--surface) 72%, var(--ground));
+    border: 1px solid var(--hairline-soft);
+    border-radius: var(--radius-stage);
+  }
+
+  .window {
+    background: var(--ground);
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+
+  .window-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5625rem 0.875rem;
+    border-bottom: 1px solid var(--hairline-soft);
+  }
+
+  /* Monochrome window dots: enough chrome to read as an app, no candy. */
+  .dots {
+    display: inline-flex;
+    gap: 0.3125rem;
+  }
+
+  .dots i {
+    width: 8px;
+    height: 8px;
+    background: var(--raised);
+    border: 1px solid var(--hairline);
+    border-radius: 50%;
+  }
+
+  .tab {
+    padding: 0.1875rem 0.625rem;
+    background: var(--raised);
+    border-radius: 7px 7px 0 0;
+    color: var(--ink-2);
+    font-size: 0.6875rem;
+    translate: 0 0.3125rem;
+  }
+
+  .title {
+    color: var(--ink-3);
+    font-size: 0.6875rem;
+  }
+
+  .url {
+    flex: 1;
+    max-width: 12rem;
+    margin-inline: auto;
+    padding: 0.1875rem 0.75rem;
+    background: color-mix(in oklab, var(--surface) 55%, var(--ground));
+    border: 1px solid var(--hairline-soft);
+    border-radius: var(--radius-pill);
+    color: var(--ink-3);
+    font-size: 0.6875rem;
+    text-align: center;
+  }
+
+  /* Fixed height so the three captions start on the same line however long
+     each pane runs. */
+  .window-body {
+    display: flex;
+    align-items: center;
+    height: clamp(14rem, 20vw, 17rem);
+    padding: 1.25rem 1.375rem;
+  }
+
+  .window-body.is-shot {
+    align-items: flex-start;
+    padding: 0;
+  }
+
+  /* The browser pane crops the real dashboard from its top-left, where the
+     run name, PASSED badge and summary tiles live. */
+  .is-shot :global(img) {
+    width: 220%;
+    max-width: none;
+    height: 100%;
+    object-fit: cover;
+    object-position: 12% 4%;
+  }
+
+  .say {
+    margin: 1.5rem 0.75rem 0;
+    color: var(--ink-3);
+    font-size: 1rem;
+    line-height: 1.55;
+  }
+
+  .n {
+    margin-right: 0.625rem;
+    color: var(--blue);
+    font-size: 0.75rem;
+  }
+
+  .say strong {
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  .say code {
+    padding: 0.0625rem 0.3125rem;
+    background: var(--raised);
+    border-radius: 5px;
+    color: var(--ink-2);
+    font-size: 0.8125rem;
+    white-space: nowrap;
+  }
+
+  /* Connectors: each card hands off to the next. */
+  .joint {
+    position: absolute;
+    top: 8.5rem;
+    right: calc(-0.625rem - 13px);
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    background: var(--raised);
+    border: 1px solid var(--hairline);
+    border-radius: 50%;
+    color: var(--ink-2);
+  }
+
+  .workflow :global(pre) {
+    margin: 0;
+    width: 100%;
+    background: none !important;
+    font-size: 0.8125rem;
+    line-height: 1.7;
+    overflow-x: auto;
+  }
+
+  /* Three programs side by side need real width; below this the captions wrap
+     to five lines and the panes squeeze, so the row stacks instead. */
+  @media (max-width: 1080px) {
+    ol {
+      grid-template-columns: minmax(0, 1fr);
+      max-width: 34rem;
+      margin-inline: auto;
+    }
+    .window-body {
+      height: auto;
+    }
+    .window-body.is-shot {
+      height: 15rem;
+    }
+    .joint {
+      top: auto;
+      right: auto;
+      bottom: calc(-0.625rem - 13px);
+      left: 50%;
+      translate: -50% 0;
+      rotate: 90deg;
+    }
+  }
+</style>

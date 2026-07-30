@@ -1,0 +1,286 @@
+---
+import Icon from "./Icon.astro";
+import Logo from "./Logo.astro";
+
+// No named competitors: every row would need a sourced, date-stamped claim.
+// The honest comparison is against what teams assemble instead — a functional
+// suite, a load tool, and a dashboard, wired together by hand.
+const ROWS = [
+  {
+    icon: "layers",
+    label: "One journey across every profile",
+    ours: "The same file, integration through soak",
+    theirs: "Duplicated per tool, then drifts",
+  },
+  {
+    icon: "gauge",
+    label: "Throttling as its own outcome",
+    ours: "throttled never folds into failed",
+    theirs: "429s land in the error bucket",
+  },
+  {
+    icon: "spans",
+    label: "Functional and load share a result model",
+    ours: "One collector, one set of views",
+    theirs: "Two result formats to reconcile",
+  },
+  {
+    icon: "pulse",
+    label: "Aggregate cost and one trace",
+    ours: "Flame graph and waterfall, same spans",
+    theirs: "Instrumentation glue, if at all",
+  },
+  {
+    icon: "shield",
+    label: "Target resources aligned to the run",
+    ours: "Agent samples into the run itself",
+    theirs: "Two timelines, eyeballed side by side",
+  },
+  {
+    icon: "box",
+    label: "Runs as plain local artifacts",
+    ours: "A directory of JSON you own",
+    theirs: "Whatever each tool decided",
+  },
+];
+---
+
+<section id="decide" class="decide">
+  <div class="shell">
+    <header class="section-head">
+      <span class="eyebrow">Comparison</span>
+      <h2>One tool, or three you keep in sync.</h2>
+      <p>
+        Nothing here is a claim about a named product — it is the cost of the stack most teams
+        assemble instead: a functional suite, a load tool, and somewhere to look at the result.
+      </p>
+    </header>
+
+    <div class="wrap">
+      <div class="scroller">
+        <div class="rail" aria-hidden="true"></div>
+        <table>
+          <caption class="sr-only">
+            Flowbench compared with a hand-assembled testing stack
+          </caption>
+          <colgroup>
+            <col class="c-label" />
+            <col class="c-ours" />
+            <col class="c-theirs" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th scope="col"><span class="sr-only">Capability</span></th>
+              <th scope="col" class="ours">
+                <span class="brand">
+                  <Logo size={18} />
+                  Flowbench
+                </span>
+              </th>
+              <th scope="col" class="theirs">A stitched stack</th>
+            </tr>
+          </thead>
+          <tbody>
+            {
+              ROWS.map((row) => (
+                <tr>
+                  <th scope="row">
+                    <span class="cap">
+                      <span class="ico">
+                        <Icon name={row.icon as "layers"} size={15} />
+                      </span>
+                      {row.label}
+                    </span>
+                  </th>
+                  <td class="ours">
+                    <span class="cell">
+                      <span class="dot on">
+                        <Icon name="check" size={12} />
+                      </span>
+                      {row.ours}
+                    </span>
+                  </td>
+                  <td class="theirs">
+                    <span class="cell">
+                      <span class="dot">
+                        <Icon name="dash" size={12} />
+                      </span>
+                      {row.theirs}
+                    </span>
+                  </td>
+                </tr>
+              ))
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .decide {
+    padding-block: clamp(3.5rem, 8vw, 6.5rem);
+  }
+
+  .wrap {
+    margin-top: clamp(2.5rem, 5vw, 4rem);
+  }
+
+  .scroller {
+    position: relative;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    text-align: left;
+  }
+
+  /* Fixed column tracks so the highlight rail can sit exactly behind the
+     Flowbench column — same numbers in both places, nothing eyeballed. */
+  .c-label {
+    width: 42%;
+  }
+  .c-ours {
+    width: 31%;
+  }
+  .c-theirs {
+    width: 27%;
+  }
+
+  .rail {
+    position: absolute;
+    top: -0.875rem;
+    bottom: -0.875rem;
+    left: 42%;
+    width: 31%;
+    background: color-mix(in oklab, var(--blue) 7%, transparent);
+    border: 1px solid color-mix(in oklab, var(--blue) 38%, transparent);
+    border-radius: 18px;
+    pointer-events: none;
+  }
+
+  thead th {
+    padding: 0 1.25rem 1.375rem;
+    color: var(--ink-3);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    vertical-align: middle;
+  }
+
+  thead th:first-child {
+    padding-left: 0;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5625rem;
+    color: var(--ink);
+    font-size: 1rem;
+  }
+
+  tbody th,
+  tbody td {
+    padding: 1.125rem 1.25rem;
+    font-weight: 400;
+    vertical-align: middle;
+  }
+
+  tbody th {
+    padding-left: 0;
+  }
+
+  tbody tr + tr th .cap,
+  tbody tr + tr td .cell {
+    border-top: 0;
+  }
+
+  tbody tr + tr {
+    border-top: 1px solid var(--hairline-soft);
+  }
+
+  .cap {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--ink);
+    font-size: 0.9375rem;
+    font-weight: 500;
+  }
+
+  .ico {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    background: var(--surface);
+    border: 1px solid var(--hairline-soft);
+    border-radius: 9px;
+    color: var(--ink-3);
+  }
+
+  .cell {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.625rem;
+    font-size: 0.9375rem;
+    line-height: 1.45;
+  }
+
+  td.ours .cell {
+    color: var(--ink-2);
+  }
+
+  td.theirs .cell {
+    color: var(--ink-3);
+  }
+
+  .dot {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    margin-top: 0.0625rem;
+    background: var(--raised);
+    border-radius: 50%;
+    color: var(--ink-3);
+  }
+
+  .dot.on {
+    background: color-mix(in oklab, var(--blue) 20%, transparent);
+    color: var(--blue-soft);
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* Below a comfortable measure the table scrolls sideways, rail and all —
+     three stacked blocks per row is unreadable. */
+  @media (max-width: 860px) {
+    .wrap {
+      overflow-x: auto;
+      padding-block: 1rem;
+      scrollbar-width: none;
+    }
+    .wrap::-webkit-scrollbar {
+      display: none;
+    }
+    .scroller {
+      min-width: 46rem;
+    }
+  }
+</style>

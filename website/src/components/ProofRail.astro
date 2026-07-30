@@ -1,0 +1,154 @@
+---
+import { REPO_URL } from "../content/site";
+
+// Measured facts instead of borrowed logos. Every number here comes from
+// docs/benchmarks/10k-vu-footprint.md and the caveat travels with them.
+const BENCHMARK_URL = `${REPO_URL}/blob/main/docs/benchmarks/10k-vu-footprint.md`;
+
+// `to` is what the number counts up to once the rail scrolls into view; the
+// rendered fallback is the same figure, so no-JS readers lose only the motion.
+const FACTS = [
+  { to: 10000, text: "10,000", label: "sustained concurrent VUs" },
+  { to: 70, prefix: "~", suffix: "%", text: "~70%", label: "generator CPU headroom" },
+  { to: 68.8, suffix: " KiB", decimals: 1, text: "68.8 KiB", label: "heap per VU at 10k" },
+  { to: 1, suffix: " flow", text: "1 flow", label: "shared by YAML and Python" },
+];
+---
+
+<section class="rail" aria-label="Measured proof">
+  <div class="shell">
+    <dl>
+      {
+        FACTS.map((fact) => (
+          <div>
+            <dt
+              // class="mono"
+              data-count={fact.to}
+              data-prefix={fact.prefix}
+              data-suffix={fact.suffix}
+              data-decimals={fact.decimals}
+            >
+              {fact.text}
+            </dt>
+            <dd>{fact.label}</dd>
+          </div>
+        ))
+      }
+    </dl>
+    <p class="caveat">
+      Measured on a 10-core Apple-silicon laptop against a 100 ms latency-bound stub. <a
+        href={BENCHMARK_URL}
+        rel="noopener"
+        target="_blank">Read the method</a
+      >
+    </p>
+  </div>
+</section>
+
+<script>
+  import NumberFlow, { define } from "number-flow";
+
+  define("number-flow", NumberFlow);
+
+  const cells = document.querySelectorAll<HTMLElement>("[data-count]");
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+
+  if (cells.length && !reduced.matches) {
+    // Swap the static figure for a <number-flow> starting at zero, then let it
+    // roll to the real value the first time the rail is on screen.
+    const armed = new Map<Element, () => void>();
+
+    for (const cell of cells) {
+      const to = Number(cell.dataset.count);
+      const decimals = Number(cell.dataset.decimals ?? 0);
+      const flow = document.createElement("number-flow");
+      flow.format = {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+      };
+      flow.numberPrefix = cell.dataset.prefix ?? "";
+      flow.numberSuffix = cell.dataset.suffix ?? "";
+      flow.animated = false;
+      flow.update(0);
+      cell.replaceChildren(flow);
+      armed.set(cell, () => {
+        flow.animated = true;
+        flow.update(to);
+      });
+    }
+
+    const seen = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          armed.get(entry.target)?.();
+          seen.unobserve(entry.target);
+        }
+      },
+      { threshold: 0.6 },
+    );
+
+    for (const cell of cells) seen.observe(cell);
+  }
+</script>
+
+<style>
+  .rail {
+    padding-block: clamp(2rem, 5vw, 3.25rem);
+  }
+
+  dl {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1.25rem;
+    margin: 0;
+    text-align: center;
+  }
+
+  dt {
+    color: var(--ink);
+    font-size: clamp(1.25rem, 2.6vw, 1.75rem);
+    font-weight: 500;
+    letter-spacing: -0.03em;
+    /* number-flow measures its own box; keep the row from jumping as digits
+       roll in. */
+    line-height: 1.25;
+  }
+
+  dt :global(number-flow) {
+    --number-flow-char-height: 1em;
+    --number-flow-mask-height: 0.3em;
+  }
+
+  dd {
+    margin: 0.375rem 0 0;
+    color: var(--ink-3);
+    font-size: 0.8125rem;
+    line-height: 1.4;
+  }
+
+  .caveat {
+    margin-top: 1.5rem;
+    color: var(--ink-3);
+    font-size: 0.75rem;
+    text-align: center;
+  }
+
+  .caveat a {
+    color: var(--ink-2);
+    text-decoration-color: var(--hairline);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .caveat a:hover {
+      color: var(--ink);
+    }
+  }
+
+  @media (max-width: 640px) {
+    dl {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1.75rem 1rem;
+    }
+  }
+</style>

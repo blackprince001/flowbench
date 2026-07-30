@@ -1,0 +1,211 @@
+@import "./tokens.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+/* Anchors land below the floating header instead of under it. */
+:target {
+  scroll-margin-top: 7rem;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink-2);
+  font-family: var(--sans);
+  font-size: 1.0625rem;
+  line-height: 1.6;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  text-wrap: balance;
+}
+
+p {
+  margin: 0;
+  text-wrap: pretty;
+}
+
+a {
+  color: inherit;
+  text-decoration-color: var(--ink-3);
+  text-underline-offset: 0.2em;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--blue) 40%, transparent);
+  color: var(--ink);
+}
+
+.shell {
+  width: 100%;
+  max-width: var(--shell);
+  margin-inline: auto;
+  padding-inline: var(--gutter);
+}
+
+/* JetBrains Mono ligates `==` into a single glyph, which is wrong for anything
+   quoting real syntax — a reader should see what they would type. */
+.mono,
+pre,
+code,
+kbd,
+samp {
+  font-family: var(--mono);
+  font-variant-ligatures: none;
+}
+
+/* Section eyebrow: a short pill label above every section heading. */
+.eyebrow {
+  display: inline-block;
+  margin-bottom: 1.25rem;
+  padding: 0.3125rem 0.875rem;
+  background: var(--surface);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-pill);
+  color: var(--ink-2);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* Every long-page section opens the same way: eyebrow, heading, one muted
+   line, all centred. The rhythm is what makes the page scan as one document. */
+.section-head {
+  max-width: 40rem;
+  margin-inline: auto;
+  text-align: center;
+}
+
+.section-head h2 {
+  font-size: clamp(1.875rem, 3.8vw, 3rem);
+  line-height: 1.05;
+}
+
+.section-head p {
+  max-width: 34rem;
+  margin: 1.125rem auto 0;
+  color: var(--ink-2);
+  font-size: 1.0625rem;
+}
+
+.skip-link {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  translate: -50% -120%;
+  z-index: 100;
+  padding: 0.75rem 1.25rem;
+  background: var(--ink);
+  color: var(--ground);
+  border-radius: 0 0 var(--radius-chip) var(--radius-chip);
+  font-weight: 500;
+  text-decoration: none;
+  transition: translate 160ms var(--ease-out);
+}
+
+.skip-link:focus-visible {
+  translate: -50% 0;
+}
+
+/* Shared pill actions. The repository is primary everywhere it appears, so it
+   is always the brightest element in its group. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 46px;
+  padding: 0 1.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--ease-out),
+    border-color 160ms var(--ease-out),
+    color 160ms var(--ease-out),
+    scale 140ms var(--ease-out);
+}
+
+.btn-primary {
+  background: var(--ink);
+  color: var(--ground);
+}
+
+.btn-secondary {
+  background: transparent;
+  border-color: var(--hairline);
+  color: var(--ink);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .btn-primary:hover {
+    background: #fff;
+  }
+  .btn-secondary:hover {
+    border-color: var(--ink-3);
+    background: var(--surface);
+  }
+}
+
+.btn:active {
+  scale: 0.97;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .btn:active {
+    scale: 1;
+  }
+}

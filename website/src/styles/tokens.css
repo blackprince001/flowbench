@@ -1,0 +1,93 @@
+/* The marketing tokens are the results server's own dark tokens, value for
+   value (internal/report/assets/report.css). The page and a screenshot of the
+   product should never disagree about what a surface, a hairline, or a
+   throttled run looks like. */
+
+@font-face {
+  font-family: "Open Runde";
+  src: url("/fonts/OpenRunde-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Open Runde";
+  src: url("/fonts/OpenRunde-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Open Runde";
+  src: url("/fonts/OpenRunde-Semibold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --ground: #0c0a09;
+  --surface: #191614;
+  --raised: #221d19;
+  --hairline: #2e2723;
+  --hairline-soft: #241f1b;
+
+  --ink: #f5f3f0;
+  --ink-2: #a9a19a;
+  --ink-3: #7c746d;
+
+  /* Blue is the only broad marketing accent. The rest stay semantic and appear
+     inside product visuals only — throttled owns amber and never borrows red
+     (ADR 0006). */
+  --blue: #3987e5;
+  --blue-soft: #6ba7ee;
+  --orange: #d95926;
+  --green: #199e70;
+  --ok: #0ca30c;
+  --amber: #fab219;
+  --red: #d03b3b;
+
+  --sans: "Open Runde", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --radius-pill: 999px;
+  --radius-stage: 24px;
+  --radius-card: 14px;
+  --radius-chip: 10px;
+
+  /* On a near-black ground a shadow reads as almost nothing, so depth comes
+     from a lit top edge plus a wide, deep drop. */
+  --edge: inset 0 1px 0 rgb(245 243 240 / 0.06);
+  --shadow-float: 0 1px 2px rgb(0 0 0 / 0.5), 0 16px 40px rgb(0 0 0 / 0.45);
+  --shadow-stage: 0 2px 4px rgb(0 0 0 / 0.4), 0 40px 80px rgb(0 0 0 / 0.55);
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+
+  --shell: 1180px;
+  --measure: 720px;
+  --gutter: clamp(1.25rem, 4vw, 2.5rem);
+
+  color-scheme: dark;
+}
