@@ -19,6 +19,9 @@ from .redaction import secret
 from .retry import Retry
 from .template import env
 
+# Kept in lockstep with pyproject.toml's version by hand; releases check it.
+__version__ = "0.1.0"
+
 __all__ = [
   "ApiKey",
   "Basic",

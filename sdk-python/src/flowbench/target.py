@@ -57,7 +57,8 @@ def _find_binary():
   if found:
     return found
   raise FlowExecutionError(
-    "no flowbench binary found (set $FLOWBENCH_BIN, build one with "
+    "no flowbench binary found (set $FLOWBENCH_BIN, download one from "
+    "https://github.com/blackprince001/flowbench/releases, build one with "
     "`go build -o flowbench ./cmd/flowbench`, or pass base_url= directly "
     "to flow.run() to skip target resolution)"
   )

@@ -1,0 +1,119 @@
+# Release: push a v* tag and this builds the deliverables the README promises —
+# the engine/CLI and agent as versioned binaries, the Python SDK as a wheel —
+# checksums them, and publishes a GitHub release. The binaries are stamped via
+# -ldflags -X into internal/version, so `flowbench version` names the tag.
+#
+# The agent's release matrix is Linux-only on purpose: host sampling reads
+# /proc (ADR 0017), and shipping a darwin/windows agent would be shipping a
+# functional no-op.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: build & publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: sdk-python/uv.lock
+
+      # The same gate CI runs on main — a tag must never outrun the checks.
+      - name: test
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then echo "unformatted: $unformatted"; exit 1; fi
+          go vet ./...
+          uv sync --locked --project sdk-python
+          FLOWBENCH_PYTHON="$PWD/sdk-python/.venv/bin/python" FLOWBENCH_REQUIRE_PYTHON=1 go test -race ./...
+          uv run --locked --directory sdk-python pytest -q
+          # the SDK's two version declarations must agree before either ships
+          pkg="$(uv run --locked --directory sdk-python python -c 'import flowbench; print(flowbench.__version__)')"
+          toml="$(sed -n 's/^version = "\(.*\)"/\1/p' sdk-python/pyproject.toml)"
+          test "$pkg" = "$toml" || { echo "flowbench.__version__ ($pkg) != pyproject version ($toml)"; exit 1; }
+
+      - name: build binaries
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          COMMIT="$(git rev-parse --short HEAD)"
+          LD="-s -w -X github.com/blackprince001/flowbench/internal/version.Version=${VERSION} \
+              -X github.com/blackprince001/flowbench/internal/version.Commit=${COMMIT}"
+          mkdir -p dist
+
+          package() { # package <binary> <os> <arch> <built-file>
+            local name="$1_${VERSION}_$2_$3" dir="dist/stage/$1_$2_$3"
+            mkdir -p "$dir"
+            cp "$4" "$dir/"
+            cp internal/report/assets/fonts/*-OFL.txt "$dir/"   # embedded-font licenses ride along
+            if [ "$2" = windows ]; then
+              (cd "$dir" && zip -q "../../${name}.zip" ./*)
+            else
+              tar -C "$dir" -czf "dist/${name}.tar.gz" .
+            fi
+          }
+
+          for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            GOOS="${platform%/*}"; GOARCH="${platform#*/}"
+            ext=""; [ "$GOOS" = windows ] && ext=".exe"
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -trimpath -ldflags "$LD" -o "build/flowbench${ext}" ./cmd/flowbench
+            package flowbench "$GOOS" "$GOARCH" "build/flowbench${ext}"
+          done
+
+          for platform in linux/amd64 linux/arm64; do
+            GOOS="${platform%/*}"; GOARCH="${platform#*/}"
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -trimpath -ldflags "$LD" -o build/flowbench-agent ./cmd/flowbench-agent
+            package flowbench-agent "$GOOS" "$GOARCH" build/flowbench-agent
+          done
+
+      - name: smoke the stamped binary
+        run: |
+          go build -ldflags "-X github.com/blackprince001/flowbench/internal/version.Version=${GITHUB_REF_NAME} \
+            -X github.com/blackprince001/flowbench/internal/version.Commit=$(git rev-parse --short HEAD)" \
+            -o build/flowbench-host ./cmd/flowbench
+          ./build/flowbench-host version | grep -F "${GITHUB_REF_NAME}"
+
+      - name: build python sdk
+        run: |
+          uv build --project sdk-python --out-dir dist
+
+      - name: checksums
+        run: |
+          # Named rather than globbed with *, so checksums.txt can never
+          # end up listing itself.
+          cd dist && rm -rf stage && sha256sum flowbench* > checksums.txt
+
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md) for what changed."
+            echo
+            echo "| Artifact | File |"
+            echo "| --- | --- |"
+            echo "| Engine + CLI | \`flowbench_${GITHUB_REF_NAME}_<os>_<arch>\` (linux/darwin amd64+arm64, windows amd64) |"
+            echo "| Agent (Linux hosts) | \`flowbench-agent_${GITHUB_REF_NAME}_linux_<arch>\` |"
+            echo "| Python SDK | the \`.whl\` / \`.tar.gz\` (\`pip install flowbench-*.whl\`; needs Python ≥ 3.10) |"
+            echo
+            echo "Binaries embed the report's web fonts; their OFL license texts ship inside each archive."
+            echo "Verify downloads against \`checksums.txt\`."
+          } > notes.md
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "flowbench ${GITHUB_REF_NAME}" \
+            --notes-file notes.md

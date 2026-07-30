@@ -195,7 +195,7 @@ func (c *GRPCConns) Invoke(ctx context.Context, stepID string, call *GRPCCall, a
 		return fail(err)
 	}
 
-	phases := &grpcPhases{anchor: anchor, leg: leg}
+	phases := &grpcPhases{anchor: anchor, leg: leg, start: time.Since(anchor)}
 	defer phases.finish()
 	callCtx := context.WithValue(ctx, grpcPhaseKey{}, phases)
 	if md := outgoingMetadata(call.Request.Headers); md.Len() > 0 {
@@ -451,11 +451,36 @@ type grpcPhases struct {
 	anchor time.Time
 	leg    *span.Span
 
+	// start is when the call was about to go out, the fallback ttfb is
+	// measured from when the send itself has not been observed yet.
+	start      time.Duration
 	sent       time.Duration
 	hasSent    bool
 	headers    time.Duration
 	hasHeaders bool
 	done       bool
+}
+
+// firstByte records ttfb the first time the target answers, measured from the
+// moment the request went out.
+//
+// It deliberately does not wait to have seen OutPayload. grpc-go writes the
+// request to the transport and only then calls the stats handler for
+// OutPayload (csAttempt.sendMsg), while InHeader arrives on the transport's
+// own reader goroutine — so against a fast target, under enough scheduling
+// pressure, the answer is observed before the send it answers. Requiring the
+// send first dropped ttfb in that window, and with it transfer, which keys
+// off the headers ttfb records: the leg was left holding connect alone.
+func (p *grpcPhases) firstByte(now time.Duration) {
+	if p.hasHeaders {
+		return
+	}
+	from := p.start
+	if p.hasSent {
+		from = p.sent
+	}
+	p.leg.Child("ttfb", from).Duration = now - from
+	p.headers, p.hasHeaders = now, true
 }
 
 func (p *grpcPhases) finish() {
@@ -477,20 +502,13 @@ func (p *grpcPhases) handle(s stats.RPCStats) {
 		p.sent, p.hasSent = now, true
 
 	case *stats.InHeader:
-		// Time to first response byte: the request is on the wire and the
-		// target has started answering.
-		if p.hasSent && !p.hasHeaders {
-			p.leg.Child("ttfb", p.sent).Duration = now - p.sent
-			p.headers, p.hasHeaders = now, true
-		}
+		// Time to first response byte: the target has started answering.
+		p.firstByte(now)
 
 	case *stats.InTrailer:
 		// A trailers-only response — the shape of most errors — never sends
 		// headers, so this is where its first byte arrives.
-		if p.hasSent && !p.hasHeaders {
-			p.leg.Child("ttfb", p.sent).Duration = now - p.sent
-			p.headers, p.hasHeaders = now, true
-		}
+		p.firstByte(now)
 
 	case *stats.InPayload:
 		if p.hasHeaders {
