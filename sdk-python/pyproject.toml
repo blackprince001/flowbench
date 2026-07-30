@@ -1,19 +1,42 @@
 [project]
 name = "flowbench"
-version = "0.1.0"
+# Read from the package rather than declared twice: _version.py is a bare
+# literal, so setuptools resolves it without importing flowbench (which would
+# need httpx present at build time).
+dynamic = ["version"]
 description = "Python authoring surface that compiles declarative flows to the flowbench canonical IR"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Ephraim Duncan", email = "hello@ephraimduncan.com" }]
+keywords = ["load-testing", "integration-testing", "performance", "api-testing", "flows"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Testing",
+  "Topic :: Software Development :: Testing :: Traffic Generation",
+  "Topic :: System :: Benchmark",
+]
 dependencies = ["httpx>=0.27"]
 
 [project.urls]
 Repository = "https://github.com/blackprince001/flowbench"
 Documentation = "https://github.com/blackprince001/flowbench/blob/main/docs/README.md"
 Issues = "https://github.com/blackprince001/flowbench/issues"
+Changelog = "https://github.com/blackprince001/flowbench/blob/main/CHANGELOG.md"
 
+# license/license-files as SPDX expressions (PEP 639) need setuptools 77+.
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = { attr = "flowbench._version.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
