@@ -220,6 +220,9 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 	if m.Mode == "soak" {
 		page.Trend = report.TrendFrom(series, m.Thresholds)
 	}
+	if m.Mode == "stress" {
+		page.Knee = report.KneeFrom(m.Knee, m.Breached)
+	}
 	render(w, report.RenderRun, page)
 }
 

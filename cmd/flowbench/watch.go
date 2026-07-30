@@ -271,6 +271,7 @@ func runLive(stdout, stderr io.Writer, sc *ir.Scenario, tgt *target.Target, pool
 		outcomes = append(outcomes, collector.EvaluateTrends(res)...)
 	}
 	breached := printOutcomes(stdout, outcomes)
+	printKnee(stdout, sc.Profile.Mode, res, outcomes, agentSeries)
 
 	if dir, err := saveRun(storeRoot, scenarioPath, sc, tgt, startedAt, res, outcomes, agentSeries); err != nil {
 		fmt.Fprintf(stderr, "flowbench: could not save run: %v\n", err)

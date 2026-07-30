@@ -9,8 +9,8 @@ import (
 
 // defaultAgentPollInterval matches internal/executor's self-metrics sample
 // interval, so a target's resource series and the generator's own line up
-// on the same cadence.
-const defaultAgentPollInterval = time.Second
+// on the same cadence. A var so short-lived tests can poll faster.
+var defaultAgentPollInterval = time.Second
 
 // startAgentPoll begins polling addr's attached agent (issue #32), if addr
 // is non-empty, for the duration between this call and the returned stop

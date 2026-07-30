@@ -69,6 +69,14 @@ type Meta struct {
 	Thresholds []collector.Outcome `json:"thresholds,omitempty"`
 	Breached   bool                `json:"breached,omitempty"`
 
+	// Knee is the stress knee's classification (issue #39): when a stress
+	// run's thresholds broke, whether they broke because the target was
+	// genuinely saturating or because it enforced a rate limit, correlated
+	// against the agent series saved beside it. Nil for every other mode,
+	// for stress runs that held, and for runs written before it existed —
+	// a reader treats absence as "not classified", never as "held".
+	Knee *collector.Knee `json:"knee,omitempty"`
+
 	// Identities are the structural span names this run recorded that an
 	// author chose — its steps, and the prompt observations its code opened,
 	// as the dot-paths folding keys them by (`classify.classify@concise`).
@@ -190,6 +198,12 @@ func metaFrom(id string, info RunInfo, res *executor.Result, outcomes []collecto
 			break
 		}
 	}
+	// Mode is a plain string here by the same convention the server reads it
+	// back with (m.Mode == "soak"); store deliberately doesn't import ir.
+	var knee *collector.Knee
+	if info.Mode == "stress" {
+		knee = collector.ClassifyKnee(res, outcomes, agentSeries)
+	}
 	return Meta{
 		ID:            id,
 		Scenario:      info.Scenario,
@@ -210,6 +224,7 @@ func metaFrom(id string, info RunInfo, res *executor.Result, outcomes []collecto
 		Aborted:       res.Aborted,
 		Thresholds:    outcomes,
 		Breached:      breached,
+		Knee:          knee,
 		AgentAttached: len(agentSeries) > 0,
 	}
 }

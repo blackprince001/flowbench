@@ -274,6 +274,7 @@ type RunPage struct {
 	Gates   []Gate
 	Agent   AgentOverlay  // the target-metrics overlay: charts once attached, an empty-state note otherwise
 	Trend   *TrendSection // soak runs only; nil otherwise
+	Knee    *KneeSection  // stress runs only; nil otherwise
 	Links   []Jump
 }
 
