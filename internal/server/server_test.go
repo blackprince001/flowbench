@@ -1166,3 +1166,193 @@ func TestDashboardRedirectsIntoTheRunPage(t *testing.T) {
 		t.Error("the dashboard tab should be gone, not merely redirected")
 	}
 }
+
+// -- prompt diff view (issue #45) ------------------------------------------
+
+// promptRun is what the Python-driven producer writes: a run whose step opened
+// two prompt observations, one per variant. `edited` moves the concise
+// variant's prompt, which is the change the view exists to separate from the
+// model answering differently on its own.
+func promptRun(edited bool) *executor.Result {
+	concise := "Classify the ticket in one word."
+	answer := "refund_request"
+	if edited {
+		concise = "Classify the ticket in one word, lowercase."
+		answer = "refund"
+	}
+
+	root := span.New("flow:triage", 0)
+	root.Duration = 30 * time.Millisecond
+	step := root.Child("classify", 0)
+	step.Duration = 28 * time.Millisecond
+
+	add := func(name, variant, prompt, completion, hash string, out int) {
+		sp := step.Child(name, 0)
+		sp.Duration = 12 * time.Millisecond
+		sp.Payload = &span.Payload{
+			Prompt: prompt, Completion: completion, PromptHash: hash, Variant: variant,
+			Usage: &span.Usage{PromptTokens: 24, CompletionTokens: out, TotalTokens: 24 + out},
+		}
+	}
+	add("classify@concise", "concise", concise, answer, "hash-concise-"+answer, 3)
+	add("classify@verbose", "verbose", "Classify and explain.", "It is a refund_request, because the card was charged twice.", "hash-verbose", 14)
+
+	folded := span.NewFolded()
+	folded.Add(root)
+	return &executor.Result{
+		Duration:   time.Second,
+		Iterations: 1,
+		Samples:    []executor.Sample{{Flow: "triage", Service: 30 * time.Millisecond, Outcome: span.OutcomeOK}},
+		Folded:     folded,
+		Traces:     []*span.Span{root},
+	}
+}
+
+// servePrompts writes two runs of one scenario around a prompt edit — the #45
+// acceptance shape — and returns the newer run's base path and the older run's
+// id to use as a baseline.
+func servePrompts(t *testing.T) (*server.Server, string, string) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "triage")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for i, edited := range []bool{false, true} {
+		rd, err := st.Save(store.RunInfo{
+			Scenario:  "triage.py",
+			Mode:      "integration",
+			Target:    "local",
+			Initiator: "ada",
+			StartedAt: time.Date(2026, 7, 30, 9, i, 0, 0, time.UTC),
+		}, promptRun(edited), nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, filepath.Base(rd))
+	}
+	ws, err := store.NewWorkspace([]string{"triage=" + dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return server.New(ws), "/p/triage/runs/" + ids[1], ids[0]
+}
+
+func TestPromptsTabAppearsOnlyForRunsWithObservations(t *testing.T) {
+	s, runBase, _ := servePrompts(t)
+	_, body := get(t, s, runBase)
+	if !strings.Contains(body, runBase+"/prompts") {
+		t.Error("a run with observations should offer the Prompts tab")
+	}
+
+	// A run of ordinary HTTP steps has none, and an empty tab is worse than no
+	// tab: prompt observation is Python-surface-only by construction.
+	other, otherBase := serve(t)
+	_, body = get(t, other, otherBase)
+	if strings.Contains(body, otherBase+"/prompts") {
+		t.Error("a run with no observations should not offer the tab")
+	}
+}
+
+func TestPromptsPageDiffsTwoVariantsWithinTheRun(t *testing.T) {
+	s, runBase, _ := servePrompts(t)
+
+	code, body := get(t, s, runBase+"/prompts")
+	if code != http.StatusOK {
+		t.Fatalf("prompts page returned %d", code)
+	}
+	for _, want := range []string{"concise", "verbose", "Variant diff", "prompt changed"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("variant diff missing %q", want)
+		}
+	}
+}
+
+// The acceptance: around a prompt edit, the edited variant flags its changed
+// prompt and the untouched one reports an empty diff.
+func TestPromptsPageSeparatesAPromptEditFromAnUnchangedRerun(t *testing.T) {
+	s, runBase, baseline := servePrompts(t)
+
+	_, edited := get(t, s, runBase+"/prompts?with="+baseline+"&a=classify@concise")
+	if !strings.Contains(edited, "prompt changed") {
+		t.Error("the edited variant must flag its changed prompt hash")
+	}
+	if !strings.Contains(edited, "d-mark-add") {
+		t.Error("the edited variant's output diff should mark what changed")
+	}
+
+	_, steady := get(t, s, runBase+"/prompts?with="+baseline+"&a=classify@verbose")
+	if !strings.Contains(steady, "same prompt") {
+		t.Error("the untouched variant carries the same prompt hash in both runs")
+	}
+	if !strings.Contains(steady, "identical") {
+		t.Error("an unchanged prompt with an unchanged answer is an empty diff")
+	}
+}
+
+func TestPromptsPageOffersBothLayouts(t *testing.T) {
+	s, runBase, _ := servePrompts(t)
+
+	_, split := get(t, s, runBase+"/prompts")
+	if !strings.Contains(split, "diff-split") {
+		t.Error("side by side is the default layout")
+	}
+	_, inline := get(t, s, runBase+"/prompts?mode=inline")
+	if !strings.Contains(inline, "diff-inline") {
+		t.Error("?mode=inline switches the layout, so a layout is shareable too")
+	}
+}
+
+func TestPromptsPageOnARunWithoutObservationsExplainsItself(t *testing.T) {
+	s, runBase := serve(t)
+	code, body := get(t, s, runBase+"/prompts")
+	if code != http.StatusOK {
+		t.Fatalf("the page should render rather than 404: %d", code)
+	}
+	if !strings.Contains(body, "no prompt observations") {
+		t.Error("reaching the URL directly should say why it is empty")
+	}
+}
+
+// -- open runs as tabs -----------------------------------------------------
+
+func TestEveryRunPageCarriesItsOwnTab(t *testing.T) {
+	s, runBase := serve(t)
+	for _, view := range []string{"", "/flame", "/waterfall", "/outcomes", "/failures", "/compare"} {
+		_, body := get(t, s, runBase+view)
+		if !strings.Contains(body, `class="tabstrip"`) {
+			t.Errorf("%s has no run tab strip", view)
+		}
+		if !strings.Contains(body, `class="runtab is-active"`) {
+			t.Errorf("%s does not render its own tab server-side", view)
+		}
+	}
+
+	// The run list is not a run, so it wears no tab of its own.
+	_, body := get(t, s, projectOf(runBase))
+	if strings.Contains(body, `class="tabstrip"`) {
+		t.Error("the run list is not an open run")
+	}
+}
+
+func TestRunsOfOneScenarioShareABadgeAndColour(t *testing.T) {
+	s, runBase, baseline := servePrompts(t)
+	_, newer := get(t, s, runBase)
+	_, older := get(t, s, "/p/triage/runs/"+baseline)
+
+	badge := regexp.MustCompile(`data-tab-badge="([^"]*)" data-tab-tone="([^"]*)"`)
+	a, b := badge.FindStringSubmatch(newer), badge.FindStringSubmatch(older)
+	if a == nil || b == nil {
+		t.Fatal("both pages should describe their tab")
+	}
+	if a[1] != b[1] || a[2] != b[2] {
+		t.Errorf("two runs of one scenario differ: %v vs %v", a[1:], b[1:])
+	}
+	if a[1] != "T" {
+		t.Errorf("badge = %q, want the scenario's first letter", a[1])
+	}
+}
