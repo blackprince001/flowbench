@@ -81,14 +81,18 @@ func liveCheckoutStub() (*httptest.Server, *int32, *headerLog) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /auth/login", func(w http.ResponseWriter, r *http.Request) {
 		logins.add(r.Header)
-		w.Write([]byte(`{"data":{"access_token":"tok-live"}}`))
+		if _, err := w.Write([]byte(`{"data":{"access_token":"tok-live"}}`)); err != nil {
+			return
+		}
 	})
 	mux.HandleFunc("POST /orders", func(w http.ResponseWriter, r *http.Request) {
 		if atomic.AddInt32(&orderHits, 1) == 1 {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
-		w.Write([]byte(`{"data":{"id":"ord-live-1"}}`))
+		if _, err := w.Write([]byte(`{"data":{"id":"ord-live-1"}}`)); err != nil {
+			return
+		}
 	})
 	mux.HandleFunc("POST /orders/{id}/pay", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
