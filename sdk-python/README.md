@@ -32,7 +32,10 @@ def classify(ctx):
   substituted value does.
 - **`variant="concise"` is a label**, not machinery: what varies is your code,
   and the label gives that version its own span identity (`classify@concise`)
-  so folding, metrics and diffs stay per-variant.
+  so folding, metrics and diffs stay per-variant. Because it is an identity,
+  renaming one splits a flame graph into a before and an after — a clean run
+  warns on stderr when a name earlier runs of the same scenario recorded is
+  no longer there.
 - **`pace="20/m"` is a client-side ceiling** keyed to the observation name, so
   a run over 500 fixture rows doesn't trip the provider's rate limit in the
   first place. `burst=` lets the first N calls go unspaced. A wait shows up as
