@@ -9,6 +9,28 @@
 <script>{{ shellJS }}</script>
 </head>
 <body>
+
+{{ if .OpenTab }}
+<!-- The strip of runs a reader is holding open. The server renders exactly the
+     one this page is, because that is the only one it knows about; the script
+     adds the others back from what the browser remembers. With JavaScript off
+     it stays a correct, single-tab strip rather than disappearing. -->
+<div class="tabstrip" data-tab-id="{{ .OpenTab.ID }}" data-tab-label="{{ .OpenTab.Label }}"
+     data-tab-sub="{{ .OpenTab.Sub }}" data-tab-href="{{ .OpenTab.Href }}"
+     data-tab-badge="{{ .OpenTab.Badge }}" data-tab-tone="{{ .OpenTab.Tone }}">
+  <nav class="tabstrip-tabs" aria-label="Open runs">
+    <a class="runtab is-active" href="{{ .OpenTab.Href }}" style="--tone:var(--{{ .OpenTab.Tone }})">
+      <span class="runtab-badge" aria-hidden="true">{{ .OpenTab.Badge }}</span>
+      <span class="runtab-label">{{ .OpenTab.Label }}</span>
+      <span class="runtab-sub">{{ .OpenTab.Sub }}</span>
+    </a>
+  </nav>
+  <a class="runtab-add" href="{{ .OpenTab.ListHref }}"
+     title="Open another run" aria-label="Open another run">+</a>
+</div>
+<script>{{ tabsJS }}</script>
+{{ end }}
+
 <div class="shell">
 
   <nav class="side" aria-label="Runs and projects">
