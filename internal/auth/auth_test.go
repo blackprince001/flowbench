@@ -174,6 +174,55 @@ func TestBasicRegistersTheEncodedBlob(t *testing.T) {
 	}
 }
 
+// TestBearerRegistersTheToken guards a value that only self-registers when it
+// resolves from {{ env.* }} (scope.go's Resolve): a token an earlier step
+// extracted and carried forward — the login-then-act pattern auth.md
+// documents — took a different path and was never registered before.
+func TestBearerRegistersTheToken(t *testing.T) {
+	p := auth.NewProvider(auth.Options{})
+	req := &adapters.Request{Method: "GET", URL: "http://host/x"}
+
+	secrets := apply(t, p, &ir.AuthSpec{Scheme: ir.AuthBearer, Token: "extracted-token"}, req)
+
+	if got, want := req.Headers["Authorization"], "Bearer extracted-token"; got != want {
+		t.Errorf("Authorization = %q, want %q", got, want)
+	}
+	if !secrets.Contains("extracted-token") {
+		t.Error("the bearer token was not registered for redaction")
+	}
+}
+
+// TestAPIKeyRegistersTheValue covers both places the value can ride, header
+// or query, same reasoning as TestBearerRegistersTheToken.
+func TestAPIKeyRegistersTheValue(t *testing.T) {
+	p := auth.NewProvider(auth.Options{})
+
+	headerReq := &adapters.Request{Method: "GET", URL: "http://host/x"}
+	secrets := apply(t, p, &ir.AuthSpec{Scheme: ir.AuthAPIKey, Name: "X-Api-Key", Value: "extracted-key"}, headerReq)
+	if !secrets.Contains("extracted-key") {
+		t.Error("the header-borne api key was not registered for redaction")
+	}
+
+	queryReq := &adapters.Request{Method: "GET", URL: "http://host/x"}
+	secrets = apply(t, p, &ir.AuthSpec{Scheme: ir.AuthAPIKey, Name: "api_key", Value: "extracted-key", In: ir.InQuery}, queryReq)
+	if !secrets.Contains("extracted-key") {
+		t.Error("the query-borne api key was not registered for redaction")
+	}
+}
+
+// TestCookieRegistersTheValue is the same reasoning as
+// TestBearerRegistersTheToken, for the cookie scheme.
+func TestCookieRegistersTheValue(t *testing.T) {
+	p := auth.NewProvider(auth.Options{})
+	req := &adapters.Request{Method: "GET", URL: "http://host/x"}
+
+	secrets := apply(t, p, &ir.AuthSpec{Scheme: ir.AuthCookie, Name: "session", Value: "extracted-session"}, req)
+
+	if !secrets.Contains("extracted-session") {
+		t.Error("the cookie value was not registered for redaction")
+	}
+}
+
 // TestOAuth2FallsBackToBodyCredentials covers the half of RFC 6749 that HTTP
 // Basic does not: a server that only accepts the credentials as form fields.
 func TestOAuth2FallsBackToBodyCredentials(t *testing.T) {

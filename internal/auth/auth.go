@@ -106,6 +106,7 @@ func (p *Provider) Apply(ctx context.Context, spec *ir.AuthSpec, req *adapters.R
 
 	switch r.Scheme {
 	case ir.AuthBearer:
+		secrets.Add(r.Token)
 		req.SetHeader("Authorization", "Bearer "+r.Token)
 	case ir.AuthBasic:
 		blob := base64.StdEncoding.EncodeToString([]byte(r.Username + ":" + r.Password))
@@ -114,12 +115,14 @@ func (p *Provider) Apply(ctx context.Context, spec *ir.AuthSpec, req *adapters.R
 		secrets.Add(blob)
 		req.SetHeader("Authorization", "Basic "+blob)
 	case ir.AuthAPIKey:
+		secrets.Add(r.Value)
 		if r.In == ir.InQuery {
 			req.SetQuery(r.Name, r.Value)
 		} else {
 			req.SetHeader(r.Name, r.Value)
 		}
 	case ir.AuthCookie:
+		secrets.Add(r.Value)
 		req.AddCookie(r.Name, r.Value)
 	case ir.AuthOAuth2:
 		token, err := p.token(ctx, r)
