@@ -207,7 +207,7 @@ func (r *Runner) runStep(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 }
 
 func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor time.Time, it *Iteration) (*span.Span, bool, error) {
-	req, err := adapters.BuildRequest(st.Call, scope.Resolve)
+	req, err := adapters.BuildRequest(st.Call, scope)
 	if err != nil {
 		return nil, false, fmt.Errorf("step %q: %w", st.ID, err)
 	}
@@ -218,7 +218,7 @@ func (r *Runner) runCall(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 // extra reading: the operation's own errors, which arrive in the body of a
 // `200 OK` and so cannot be classified from the status.
 func (r *Runner) runGraphQL(ctx context.Context, st *ir.Step, scope *Scope, anchor time.Time, it *Iteration) (*span.Span, bool, error) {
-	req, err := adapters.BuildGraphQLRequest(st.GraphQL, scope.Resolve)
+	req, err := adapters.BuildGraphQLRequest(st.GraphQL, scope)
 	if err != nil {
 		return nil, false, fmt.Errorf("step %q: %w", st.ID, err)
 	}

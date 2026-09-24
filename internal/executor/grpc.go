@@ -34,7 +34,7 @@ func (r *Runner) runGRPC(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 	if err != nil {
 		return nil, false, fmt.Errorf("step %q: %w", st.ID, err)
 	}
-	req, err := adapters.BuildGRPCRequest(st.GRPC, scope.Resolve)
+	req, err := adapters.BuildGRPCRequest(st.GRPC, scope)
 	if err != nil {
 		return nil, false, fmt.Errorf("step %q: %w", st.ID, err)
 	}

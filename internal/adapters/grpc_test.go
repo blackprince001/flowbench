@@ -53,13 +53,13 @@ func billingMethod(t *testing.T, method string) *adapters.GRPCMethod {
 }
 
 func grpcResolver(vars map[string]string) adapters.Resolver {
-	return func(ref string) (string, error) {
+	return adapters.ResolverFunc(func(ref string) (string, error) {
 		v, ok := vars[ref]
 		if !ok {
 			return "", errors.New("no such reference: " + ref)
 		}
 		return v, nil
-	}
+	})
 }
 
 // invoke runs one call against address and returns what came back.

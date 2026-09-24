@@ -188,12 +188,12 @@ func TestBuildRequestExpandsTemplates(t *testing.T) {
 		"flag":     "on",
 		"note":     `say "hi"`, // JSON-escaped inside the body
 	}
-	resolve := func(ref string) (string, error) {
+	resolve := adapters.ResolverFunc(func(ref string) (string, error) {
 		if v, ok := vals[ref]; ok {
 			return v, nil
 		}
 		return "", errors.New("unknown ref")
-	}
+	})
 
 	spec := &ir.CallSpec{
 		Method:  "POST",
@@ -224,7 +224,7 @@ func TestBuildRequestExpandsTemplates(t *testing.T) {
 }
 
 func TestBuildRequestDefaultsContentType(t *testing.T) {
-	identity := func(ref string) (string, error) { return ref, nil }
+	identity := adapters.ResolverFunc(func(ref string) (string, error) { return ref, nil })
 
 	for _, tc := range []struct {
 		name    string

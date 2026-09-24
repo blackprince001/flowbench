@@ -2,6 +2,16 @@
 
 Human-curated, newest first. Versions are tags; the tag is the source of truth. Until v1, minor versions may change surfaces without a deprecation cycle — the run-store format written by the two producers (Go engine, Python SDK) is the compatibility contract to watch.
 
+## Unreleased
+
+### Changed
+
+- **A JSON value that is exactly one template now keeps its type.** In a `body`, GraphQL `variables`, a gRPC `message`, or a WebSocket `send` frame, `"{{ n }}"` used to send the value as a string, so an extracted `42` went out as `"42"` and an array went out as its JSON text. It now goes out as `42`, or as the array itself. Extracted `true`, `null` and objects keep their types the same way. Two things do not change:
+  - A template inside a longer string (`"id-{{ n }}"`), in an object key, or in a URL, header, or query parameter is still text.
+  - Data-pool fields and `{{ env.* }}` values are always strings. A CSV cell `007` still arrives as `"007"`.
+
+  If a target expects a string for an extracted number, put the template inside a longer string, or extract a value that is already a string.
+
 ## v0.1.1 — 2026-07-30
 
 ### Added

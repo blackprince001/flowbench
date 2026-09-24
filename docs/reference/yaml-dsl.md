@@ -183,6 +183,8 @@ Asserting on a variable nothing extracts is a pre-run error.
 
 `{{ name }}` or `{{ name.path }}`; the root must match `[A-Za-z_][A-Za-z0-9_-]*`. Available roots: `env` (process environment, always registered for redaction), the data pool root (`user`), and variables extracted by **earlier** steps. Templated fields: URL, headers, query, body, GraphQL url/headers/variables (not the document), WS url/headers/send, gRPC url/headers/message (not proto/method), and all auth fields except `sign`. An unresolvable reference is a pre-run error quoting the template.
 
+In a JSON payload (`body`, GraphQL `variables`, WS `send`, gRPC `message`), a value that is exactly one template, `"{{ n }}"`, is sent with the type it was extracted with: number, boolean, null, array, or object. A template inside a longer string, or in an object key, is spliced in as escaped text. Data-pool fields and `{{ env.* }}` values are always strings.
+
 ## `profile:`
 
 | Key | Form |

@@ -20,7 +20,7 @@ import (
 // call bodies use, so a quote or newline in an extracted value cannot break
 // out of the document.
 func BuildGraphQLRequest(spec *ir.GraphQLSpec, resolve Resolver) (*Request, error) {
-	url, err := ir.ExpandTemplates(spec.URL, resolve)
+	url, err := ir.ExpandTemplates(spec.URL, resolve.Resolve)
 	if err != nil {
 		return nil, fmt.Errorf("url: %w", err)
 	}
@@ -33,7 +33,7 @@ func BuildGraphQLRequest(spec *ir.GraphQLSpec, resolve Resolver) (*Request, erro
 		payload["operationName"] = spec.Operation
 	}
 	if len(spec.Variables) > 0 {
-		expanded, err := ir.ExpandTemplates(string(spec.Variables), jsonEscaped(resolve))
+		expanded, err := expandJSON(string(spec.Variables), resolve)
 		if err != nil {
 			return nil, fmt.Errorf("variables: %w", err)
 		}
@@ -53,7 +53,7 @@ func BuildGraphQLRequest(spec *ir.GraphQLSpec, resolve Resolver) (*Request, erro
 	req.SetHeader("Content-Type", "application/json")
 	req.SetHeader("Accept", "application/json")
 	for k, v := range spec.Headers {
-		value, err := ir.ExpandTemplates(v, resolve)
+		value, err := ir.ExpandTemplates(v, resolve.Resolve)
 		if err != nil {
 			return nil, fmt.Errorf("header %s: %w", k, err)
 		}
