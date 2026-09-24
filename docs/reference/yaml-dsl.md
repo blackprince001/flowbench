@@ -11,6 +11,8 @@ The complete schema of a flow file and a target file. A flow file is exactly one
 | `profile` | mapping | the execution contract; defaults to `mode: integration` when absent |
 | `auth` | mapping | flow-level default auth, applied to every request-making step without its own |
 | `data` | string | fixture path shorthand — binds a pool whose rows arrive as `{{ user.* }}` |
+| `inputs` | mapping | values this flow takes when another flow uses it: `name: default`, or `name:` with no default for a required input. Steps read them as `{{ inputs.<name> }}`. A default may reference only `{{ env.* }}` |
+| `outputs` | list | variables this flow hands back to a flow that uses it; each must be extracted by one of its steps |
 
 ## Steps
 
@@ -24,6 +26,7 @@ Every step needs `id` (unique in the flow; dots and `@` are reserved for span na
 | `grpc` | mapping — see below |
 | `wait` | duration string (`500ms`, `30s`, `10m`) |
 | `poll` | mapping — see below |
+| `use` | path to another `.flow.yaml`, relative to this file — see below |
 
 Common step keys:
 
@@ -104,6 +107,33 @@ The same two rules apply to `User-Agent`, and to both the engine and the Python 
 | `until` | list of assertions, at least one |
 | `interval` | must be > 0 |
 | `timeout` / `max_attempts` | at least one bound required |
+
+### `use:`
+
+Runs another flow file as one step, in the same VU and iteration.
+
+```yaml
+  - id: auth
+    use: ./login.flow.yaml
+    with: { email: "{{ user.email }}", password: "{{ user.password }}" }
+  - id: create_order
+    call: POST /orders
+    headers: { Authorization: "Bearer {{ auth.token }}" }
+```
+
+| Key | Meaning |
+| --- | --- |
+| `use` | path to a `.flow.yaml` file, relative to this file; absolute paths are refused |
+| `with` | mapping of the used flow's inputs to values, templated in this flow's scope |
+
+- The used flow sees only its `inputs` and `{{ env.* }}`, never this flow's variables or data row.
+- This flow sees only the used flow's `outputs`, as `{{ <step id>.<output> }}`.
+- The used flow's steps nest under the `use` step in the trace. If one fails, the `use` step fails and its own `on_failure` decides what happens next.
+- In the used file, `profile` is ignored (the caller's profile runs) and `data` is refused (values arrive through `inputs`). Its `auth` applies to its own steps.
+- `extract`, `assert`, `throttle`, `retry`, and `headers`/`query`/`body` belong inside the used flow, not on the `use` step.
+- A used flow cannot itself `use` another flow yet.
+
+Pre-run errors: a required input with no `with` value, a `with` key that is not an input, a reference to an output or input that is not declared, an output nothing extracts, a `use` step id that clashes with `env`, `inputs`, the data pool, or an extracted variable, and a path that is absolute, not a `.flow.yaml`, or not readable.
 
 ### `retry:`
 
