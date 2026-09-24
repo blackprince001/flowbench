@@ -72,9 +72,8 @@ func (t *Target) Allows(rawURL string) (bool, error) {
 // at request time and are enforced there via Allows.
 func (t *Target) Check(sc *ir.Scenario) error {
 	var problems []string
-	for _, f := range sc.Flows {
-		for i := range f.Steps {
-			st := &f.Steps[i]
+	for i := range sc.Flows {
+		sc.Flows[i].Walk(func(f *ir.Flow, st *ir.Step) {
 			for _, raw := range stepURLs(st) {
 				if !hasScheme(raw) {
 					continue // relative → resolves against the base URL
@@ -87,7 +86,7 @@ func (t *Target) Check(sc *ir.Scenario) error {
 					problems = append(problems, fmt.Sprintf("flow %q step %q calls %s", f.Name, st.ID, raw))
 				}
 			}
-		}
+		})
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("target %q allows only %v; refused: %s",

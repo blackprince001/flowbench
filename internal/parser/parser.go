@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -98,6 +99,11 @@ func renameWarnings(sc *ir.Scenario, prior map[string][]string) []Warning {
 type walker struct {
 	file string
 	errs []error
+
+	// used is set while walking a flow file that another flow loads through
+	// `use:`, so a use inside it is refused rather than followed (nesting,
+	// with cycle detection, is #103).
+	used bool
 }
 
 func (w *walker) scenario(body ast.Node) *ir.Scenario {
@@ -106,7 +112,7 @@ func (w *walker) scenario(body ast.Node) *ir.Scenario {
 
 	entries, ok := mapEntries(body)
 	if !ok {
-		w.errAt(body, "a flow file is a mapping with flow/auth/data/steps/profile keys")
+		w.errAt(body, "a flow file is a mapping with flow/inputs/outputs/auth/data/steps/profile keys")
 		return sc
 	}
 	var flowAuth *ir.AuthSpec
@@ -128,10 +134,14 @@ func (w *walker) scenario(body ast.Node) *ir.Scenario {
 					flow.Steps = append(flow.Steps, w.step(item))
 				}
 			}
+		case "inputs":
+			flow.Inputs = w.inputs(e.Value)
+		case "outputs":
+			flow.Outputs = w.strList(e.Value, "outputs")
 		case "profile":
 			sc.Profile = w.profile(e.Value)
 		default:
-			w.errAt(keyNode, "unknown key %q in flow file (expected flow, auth, data, steps, profile)", key)
+			w.errAt(keyNode, "unknown key %q in flow file (expected flow, inputs, outputs, auth, data, steps, profile)", key)
 		}
 	}
 	if flow.Name == "" {
@@ -152,7 +162,7 @@ func (w *walker) step(n ast.Node) ir.Step {
 		return st
 	}
 
-	var callNode, graphqlNode, wsNode, grpcNode, waitNode, pollNode ast.Node
+	var callNode, graphqlNode, wsNode, grpcNode, waitNode, pollNode, useNode, withNode ast.Node
 	var headers, query map[string]string
 	var body json.RawMessage
 	var headersNode, queryNode, bodyNode ast.Node
@@ -175,6 +185,10 @@ func (w *walker) step(n ast.Node) ir.Step {
 			waitNode = e.Value
 		case "poll":
 			pollNode = e.Value
+		case "use":
+			useNode = e.Value
+		case "with":
+			withNode = e.Value
 		case "headers":
 			headers = w.strMap(e.Value, "headers")
 			headersNode = keyNode
@@ -207,16 +221,19 @@ func (w *walker) step(n ast.Node) ir.Step {
 	}
 
 	kinds := 0
-	for _, kn := range []ast.Node{callNode, graphqlNode, wsNode, grpcNode, waitNode, pollNode} {
+	for _, kn := range []ast.Node{callNode, graphqlNode, wsNode, grpcNode, waitNode, pollNode, useNode} {
 		if kn != nil {
 			kinds++
 		}
 	}
+	if withNode != nil && useNode == nil {
+		w.errAt(withNode, "with passes a used flow its inputs, so it belongs on a use step")
+	}
 	switch {
 	case kinds == 0:
-		w.errAt(n, "step %q needs one of call, graphql, ws, grpc, wait, poll", st.ID)
+		w.errAt(n, "step %q needs one of call, graphql, ws, grpc, wait, poll, use", st.ID)
 	case kinds > 1:
-		w.errAt(n, "step %q sets more than one of call, graphql, ws, grpc, wait, poll", st.ID)
+		w.errAt(n, "step %q sets more than one of call, graphql, ws, grpc, wait, poll, use", st.ID)
 	case callNode != nil:
 		st.Type = ir.StepCall
 		spec := w.callShorthand(callNode)
@@ -276,8 +293,133 @@ func (w *walker) step(n ast.Node) ir.Step {
 		st.Type = ir.StepPoll
 		st.Poll = w.poll(pollNode)
 		w.rejectCallOnly(callOnlyNodes, "poll (put them inside the poll block)")
+	case useNode != nil:
+		st.Type = ir.StepUse
+		st.Use = w.use(useNode, withNode)
+		w.rejectCallOnly(callOnlyNodes, "use (pass values to the used flow with `with:`)")
 	}
 	return st
+}
+
+// use loads the flow file a use step names. The path is relative to the
+// calling file and names another .flow.yaml; an absolute path is refused so a
+// flow tree stays portable between machines. Flow files are reviewed code
+// with the same trust as the file that uses them, so `..` is allowed.
+func (w *walker) use(n, withNode ast.Node) *ir.UseSpec {
+	spec := &ir.UseSpec{}
+	if withNode != nil {
+		spec.With = w.strMap(withNode, "with")
+	}
+	rel, ok := w.str(n, "use")
+	if !ok {
+		return spec
+	}
+	spec.Path = rel
+	switch {
+	case w.used:
+		w.errAt(n, "a used flow cannot use another flow yet (nested use is #103)")
+		return spec
+	case filepath.IsAbs(rel):
+		w.errAt(n, "use path %q must be relative to this file", rel)
+		return spec
+	case !strings.HasSuffix(rel, ".flow.yaml"):
+		w.errAt(n, "use path %q must name a .flow.yaml file", rel)
+		return spec
+	}
+
+	path := filepath.Join(filepath.Dir(w.file), rel)
+	src, err := os.ReadFile(path)
+	if err != nil {
+		w.errAt(n, "use %q: cannot read %s: %v", rel, path, errors.Unwrap(err))
+		return spec
+	}
+	file, err := parser.ParseBytes(src, 0)
+	if err != nil {
+		w.errAt(n, "use %q: %s: %v", rel, path, err)
+		return spec
+	}
+	if len(file.Docs) != 1 || file.Docs[0].Body == nil {
+		w.errAt(n, "use %q: %s: a flow file holds exactly one YAML document", rel, path)
+		return spec
+	}
+
+	child := &walker{file: path, used: true}
+	sc := child.scenario(file.Docs[0].Body)
+	w.errs = append(w.errs, child.errs...)
+	if len(sc.Flows) == 1 {
+		f := sc.Flows[0]
+		rebaseProtos(&f, filepath.Dir(rel))
+		spec.Flow = &f
+	}
+	return spec
+}
+
+// rebaseProtos keeps a used flow's proto paths relative to the file that
+// declares them: the run resolves protos against the entry flow's directory,
+// so a path written in shared/login.flow.yaml gains its shared/ prefix here.
+func rebaseProtos(f *ir.Flow, dir string) {
+	if dir == "." {
+		return
+	}
+	rebase := func(p string) string {
+		if p == "" || filepath.IsAbs(p) {
+			return p
+		}
+		return filepath.Join(dir, p)
+	}
+	for i := range f.Steps {
+		g := f.Steps[i].GRPC
+		if g == nil {
+			continue
+		}
+		g.Proto = rebase(g.Proto)
+		for j := range g.ImportPaths {
+			g.ImportPaths[j] = rebase(g.ImportPaths[j])
+		}
+	}
+}
+
+// inputs reads a flow's inputs: a mapping of name to a default template, or
+// to nothing (`email:` or `email: ~`) for an input the caller must pass.
+func (w *walker) inputs(n ast.Node) []ir.Input {
+	entries, ok := mapEntries(n)
+	if !ok {
+		w.errAt(n, "inputs must be a mapping of name to default (leave the default empty to make an input required)")
+		return nil
+	}
+	ins := make([]ir.Input, 0, len(entries))
+	for _, e := range entries {
+		name, _ := w.key(e)
+		in := ir.Input{Name: name}
+		switch v := e.Value.(type) {
+		case nil, *ast.NullNode:
+		case *ast.StringNode:
+			d := v.Value
+			in.Default = &d
+		case *ast.IntegerNode, *ast.FloatNode, *ast.BoolNode:
+			d := e.Value.GetToken().Value
+			in.Default = &d
+		default:
+			w.errAt(e.Value, "default for input %q must be a scalar", name)
+		}
+		ins = append(ins, in)
+	}
+	return ins
+}
+
+// strList reads a list of plain strings.
+func (w *walker) strList(n ast.Node, what string) []string {
+	seq, ok := w.seq(n, what)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(seq.Values))
+	for _, v := range seq.Values {
+		if s, ok := w.str(v, what+" entry"); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func (w *walker) rejectCallOnly(nodes []ast.Node, kind string) {
