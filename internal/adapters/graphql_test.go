@@ -11,13 +11,13 @@ import (
 
 func vars(t *testing.T, values map[string]string) adapters.Resolver {
 	t.Helper()
-	return func(ref string) (string, error) {
+	return adapters.ResolverFunc(func(ref string) (string, error) {
 		v, ok := values[ref]
 		if !ok {
 			return "", errNotFound{ref}
 		}
 		return v, nil
-	}
+	})
 }
 
 type errNotFound struct{ ref string }

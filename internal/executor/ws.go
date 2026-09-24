@@ -77,7 +77,7 @@ func (r *Runner) runWS(ctx context.Context, st *ir.Step, scope *Scope, anchor ti
 
 	var sent []byte
 	if len(spec.Send) > 0 {
-		frame, err := adapters.BuildWSFrame(spec, scope.Resolve)
+		frame, err := adapters.BuildWSFrame(spec, scope)
 		if err != nil {
 			return sp, false, fmt.Errorf("step %q: %w", st.ID, err)
 		}
@@ -123,7 +123,7 @@ func (r *Runner) runWS(ctx context.Context, st *ir.Step, scope *Scope, anchor ti
 // auth, and classifies the same way a call step's request does.
 func (r *Runner) openWS(ctx context.Context, st *ir.Step, sp *span.Span, scope *Scope, anchor time.Time, it *Iteration) (*wsSession, bool, error) {
 	spec := st.WS
-	req, err := adapters.BuildWSOpen(spec, scope.Resolve)
+	req, err := adapters.BuildWSOpen(spec, scope)
 	if err != nil {
 		return nil, false, fmt.Errorf("step %q: %w", st.ID, err)
 	}

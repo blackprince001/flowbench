@@ -17,13 +17,13 @@ import (
 )
 
 func wsResolver(vars map[string]string) adapters.Resolver {
-	return func(ref string) (string, error) {
+	return adapters.ResolverFunc(func(ref string) (string, error) {
 		v, ok := vars[ref]
 		if !ok {
 			return "", errors.New("no such reference: " + ref)
 		}
 		return v, nil
-	}
+	})
 }
 
 // The handshake is an ordinary GET, which is what lets auth, the allow-list

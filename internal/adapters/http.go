@@ -12,6 +12,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptrace"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -52,7 +53,25 @@ func NewSession(opts SessionOptions) *Session {
 	return &Session{client: &http.Client{Jar: jar, Timeout: opts.Timeout, Transport: transport}}
 }
 
-type Resolver func(ref string) (string, error)
+// Resolver expands a `{{ ref }}` to text. The iteration scope is the one the
+// engine passes; ResolverFunc adapts a plain function.
+type Resolver interface {
+	Resolve(ref string) (string, error)
+}
+
+// ResolverFunc adapts a function to a Resolver.
+type ResolverFunc func(ref string) (string, error)
+
+func (f ResolverFunc) Resolve(ref string) (string, error) { return f(ref) }
+
+// JSONResolver is a Resolver that can also hand back a reference's value as
+// JSON, type intact. A JSON payload uses it for a string that is exactly one
+// template, so an extracted number, array, or object is sent as itself rather
+// than as its text.
+type JSONResolver interface {
+	Resolver
+	ResolveJSON(ref string) (json.RawMessage, error)
+}
 
 type Request struct {
 	Method  string
@@ -139,7 +158,7 @@ func (r *Request) AddCookie(name, value string) {
 func BuildRequest(spec *ir.CallSpec, resolve Resolver) (*Request, error) {
 	req := &Request{Method: spec.Method}
 
-	u, err := ir.ExpandTemplates(spec.URL, resolve)
+	u, err := ir.ExpandTemplates(spec.URL, resolve.Resolve)
 	if err != nil {
 		return nil, fmt.Errorf("url: %w", err)
 	}
@@ -148,7 +167,7 @@ func BuildRequest(spec *ir.CallSpec, resolve Resolver) (*Request, error) {
 	if len(spec.Headers) > 0 {
 		req.Headers = make(map[string]string, len(spec.Headers))
 		for k, v := range spec.Headers {
-			if req.Headers[k], err = ir.ExpandTemplates(v, resolve); err != nil {
+			if req.Headers[k], err = ir.ExpandTemplates(v, resolve.Resolve); err != nil {
 				return nil, fmt.Errorf("header %s: %w", k, err)
 			}
 		}
@@ -156,13 +175,13 @@ func BuildRequest(spec *ir.CallSpec, resolve Resolver) (*Request, error) {
 	if len(spec.Query) > 0 {
 		req.Query = make(map[string]string, len(spec.Query))
 		for k, v := range spec.Query {
-			if req.Query[k], err = ir.ExpandTemplates(v, resolve); err != nil {
+			if req.Query[k], err = ir.ExpandTemplates(v, resolve.Resolve); err != nil {
 				return nil, fmt.Errorf("query %s: %w", k, err)
 			}
 		}
 	}
 	if len(spec.Body) > 0 {
-		body, err := ir.ExpandTemplates(string(spec.Body), jsonEscaped(resolve))
+		body, err := expandJSON(string(spec.Body), resolve)
 		if err != nil {
 			return nil, fmt.Errorf("body: %w", err)
 		}
@@ -180,9 +199,85 @@ func BuildRequest(spec *ir.CallSpec, resolve Resolver) (*Request, error) {
 	return req, nil
 }
 
-func jsonEscaped(resolve Resolver) Resolver {
+// wholeValueRe matches a JSON string token that is exactly one template.
+var wholeValueRe = regexp.MustCompile(`^"\{\{\s*([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*)\s*\}\}"$`)
+
+// expandJSON templates a JSON document string token by string token. A value
+// that is exactly `"{{ ref }}"` becomes the reference's JSON value when the
+// resolver can give one, so its type survives; a template inside a longer
+// string, or in an object key, is spliced in as escaped text. Everything
+// outside string tokens is copied through untouched.
+func expandJSON(doc string, resolve Resolver) (string, error) {
+	if !strings.Contains(doc, "{{") {
+		return doc, nil
+	}
+	typed, _ := resolve.(JSONResolver)
+	text := jsonEscaped(resolve)
+	var b strings.Builder
+	b.Grow(len(doc))
+	for i := 0; i < len(doc); {
+		if doc[i] != '"' {
+			b.WriteByte(doc[i])
+			i++
+			continue
+		}
+		end := i + 1
+		for end < len(doc) && doc[end] != '"' {
+			if doc[end] == '\\' {
+				end++
+			}
+			end++
+		}
+		if end >= len(doc) {
+			return "", fmt.Errorf("unterminated string in JSON document")
+		}
+		tok := doc[i : end+1]
+		i = end + 1
+		if !strings.Contains(tok, "{{") {
+			b.WriteString(tok)
+			continue
+		}
+
+		if ref, ok := wholeValueRef(tok); ok && typed != nil && !isKey(doc[i:]) {
+			v, err := typed.ResolveJSON(ref)
+			if err != nil {
+				return "", fmt.Errorf("resolve {{ %s }}: %w", ref, err)
+			}
+			b.Write(v)
+			continue
+		}
+		s, err := ir.ExpandTemplates(tok, text)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(s)
+	}
+	return b.String(), nil
+}
+
+// wholeValueRef returns the reference when a string token is exactly one
+// template. The prefix check keeps the regex off most tokens.
+func wholeValueRef(tok string) (string, bool) {
+	if !strings.HasPrefix(tok, `"{{`) || !strings.HasSuffix(tok, `}}"`) {
+		return "", false
+	}
+	m := wholeValueRe.FindStringSubmatch(tok)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
+// isKey reports whether the string token just read is an object key: the
+// next non-space byte is a colon.
+func isKey(rest string) bool {
+	rest = strings.TrimLeft(rest, " \t\r\n")
+	return rest != "" && rest[0] == ':'
+}
+
+func jsonEscaped(resolve Resolver) func(string) (string, error) {
 	return func(ref string) (string, error) {
-		v, err := resolve(ref)
+		v, err := resolve.Resolve(ref)
 		if err != nil {
 			return "", err
 		}

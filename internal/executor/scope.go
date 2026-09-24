@@ -47,30 +47,51 @@ func (s *Scope) Lookup(name string) (any, bool) {
 
 // Resolve turns a template reference into its string form for injection.
 func (s *Scope) Resolve(ref string) (string, error) {
+	v, err := s.value(ref)
+	if err != nil {
+		return "", err
+	}
+	return stringify(v)
+}
+
+// ResolveJSON gives a reference's value as JSON with its type intact, for a
+// JSON payload whose value is exactly one template. Env values and data-pool
+// fields are always strings — a CSV cell "007" stays "007" — while an
+// extracted value keeps the type it had in the response, null included.
+func (s *Scope) ResolveJSON(ref string) (json.RawMessage, error) {
+	v, err := s.value(ref)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(v)
+}
+
+// value looks a reference up in the scope's roots.
+func (s *Scope) value(ref string) (any, error) {
 	root, rest, hasDot := strings.Cut(ref, ".")
 	switch {
 	case root == "env":
 		if !hasDot {
-			return "", fmt.Errorf("env reference needs a variable name")
+			return nil, fmt.Errorf("env reference needs a variable name")
 		}
 		v, ok := s.env(rest)
 		if !ok {
-			return "", fmt.Errorf("environment variable %q is not set", rest)
+			return nil, fmt.Errorf("environment variable %q is not set", rest)
 		}
 		s.secrets.Add(v)
 		return v, nil
 	case s.pool != "" && root == s.pool:
 		v, ok := s.row[rest]
 		if !ok {
-			return "", fmt.Errorf("data row has no field %q", rest)
+			return nil, fmt.Errorf("data row has no field %q", rest)
 		}
 		return v, nil
 	default:
 		v, ok := s.vars[ref]
 		if !ok {
-			return "", fmt.Errorf("variable %q has no value yet", ref)
+			return nil, fmt.Errorf("variable %q has no value yet", ref)
 		}
-		return stringify(v)
+		return v, nil
 	}
 }
 

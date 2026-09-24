@@ -66,13 +66,13 @@ type Frame struct {
 // ordinary GET, which is the point: everything that decorates a request —
 // templating, auth, the allow-list — applies to it unchanged.
 func BuildWSOpen(spec *ir.WSSpec, resolve Resolver) (*Request, error) {
-	url, err := ir.ExpandTemplates(spec.URL, resolve)
+	url, err := ir.ExpandTemplates(spec.URL, resolve.Resolve)
 	if err != nil {
 		return nil, fmt.Errorf("url: %w", err)
 	}
 	req := &Request{Method: http.MethodGet, URL: url}
 	for k, v := range spec.Headers {
-		value, err := ir.ExpandTemplates(v, resolve)
+		value, err := ir.ExpandTemplates(v, resolve.Resolve)
 		if err != nil {
 			return nil, fmt.Errorf("header %s: %w", k, err)
 		}
@@ -85,7 +85,7 @@ func BuildWSOpen(spec *ir.WSSpec, resolve Resolver) (*Request, error) {
 // the same resolver call bodies use, so an extracted value carrying a quote
 // cannot rewrite the message.
 func BuildWSFrame(spec *ir.WSSpec, resolve Resolver) ([]byte, error) {
-	frame, err := ir.ExpandTemplates(string(spec.Send), jsonEscaped(resolve))
+	frame, err := expandJSON(string(spec.Send), resolve)
 	if err != nil {
 		return nil, fmt.Errorf("send: %w", err)
 	}

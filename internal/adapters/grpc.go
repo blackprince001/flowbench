@@ -95,7 +95,7 @@ type GRPCCall struct {
 // The URL is left as the step wrote it; the executor resolves it against the
 // target's base address and appends the method, since the method is the path.
 func BuildGRPCRequest(spec *ir.GRPCSpec, resolve Resolver) (*Request, error) {
-	address, err := ir.ExpandTemplates(spec.URL, resolve)
+	address, err := ir.ExpandTemplates(spec.URL, resolve.Resolve)
 	if err != nil {
 		return nil, fmt.Errorf("url: %w", err)
 	}
@@ -103,7 +103,7 @@ func BuildGRPCRequest(spec *ir.GRPCSpec, resolve Resolver) (*Request, error) {
 	req := &Request{Method: http.MethodPost, URL: address}
 	req.SetHeader("Content-Type", "application/grpc")
 	for k, v := range spec.Headers {
-		value, err := ir.ExpandTemplates(v, resolve)
+		value, err := ir.ExpandTemplates(v, resolve.Resolve)
 		if err != nil {
 			return nil, fmt.Errorf("metadata %s: %w", k, err)
 		}
@@ -111,7 +111,7 @@ func BuildGRPCRequest(spec *ir.GRPCSpec, resolve Resolver) (*Request, error) {
 	}
 
 	if len(spec.Message) > 0 {
-		body, err := ir.ExpandTemplates(string(spec.Message), jsonEscaped(resolve))
+		body, err := expandJSON(string(spec.Message), resolve)
 		if err != nil {
 			return nil, fmt.Errorf("message: %w", err)
 		}
