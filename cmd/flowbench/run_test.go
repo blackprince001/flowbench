@@ -88,6 +88,50 @@ func TestRunChainedFlowPasses(t *testing.T) {
 	}
 }
 
+// TestRunFlowUsingAnotherFlowPasses is the #102 acceptance through the CLI:
+// the checkout chain with its login moved into a reusable flow file runs
+// exactly as the inline version does.
+func TestRunFlowUsingAnotherFlowPasses(t *testing.T) {
+	srv := checkoutStub(t, http.StatusAccepted)
+	usingLogin := strings.NewReplacer(
+		`  - id: login
+    call: POST /auth/login
+    body: { email: "{{ user.email }}", password: "{{ user.password }}" }
+    extract: { token: $.data.access_token }
+    assert: [ status == 200, token != null ]
+`, `  - id: auth
+    use: login.flow.yaml
+    with: { email: "{{ user.email }}", password: "{{ user.password }}" }
+`,
+		"{{ token }}", "{{ auth.token }}",
+	).Replace(checkoutFlow)
+	scenario, targetPath := writeScenario(t, usingLogin, srv.URL)
+	login := `flow: login
+inputs:
+  email:
+  password:
+steps:
+  - id: login
+    call: POST /auth/login
+    body: { email: "{{ inputs.email }}", password: "{{ inputs.password }}" }
+    extract: { token: $.data.access_token }
+    assert: [ status == 200, token != null ]
+outputs: [token]
+`
+	if err := os.WriteFile(filepath.Join(filepath.Dir(scenario), "login.flow.yaml"), []byte(login), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	code := run(&stdout, &stderr, []string{"run", scenario, "--target", targetPath, "--store", t.TempDir()})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if out := stdout.String(); !strings.Contains(out, "2 iteration(s): 2 passed, 0 failed") {
+		t.Errorf("summary missing from output:\n%s", out)
+	}
+}
+
 func TestRunFailingAssertionExitsNonzero(t *testing.T) {
 	srv := checkoutStub(t, http.StatusInternalServerError) // pay returns 500, not 202
 	scenario, targetPath := writeScenario(t, checkoutFlow, srv.URL)

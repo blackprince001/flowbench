@@ -17,7 +17,10 @@ var templateRe = regexp.MustCompile(`\{\{\s*([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z
 
 var openBraceRe = regexp.MustCompile(`\{\{`)
 
-const envRoot = "env"
+const (
+	envRoot    = "env"
+	inputsRoot = "inputs"
+)
 
 func (s *Scenario) Validate() error {
 	var errs []error
@@ -107,11 +110,20 @@ func (p *DataPool) validate(path string) []error {
 }
 
 func (f *Flow) validate(path string, pools map[string]bool) []error {
+	return f.validateAs(path, pools, false)
+}
+
+// validateAs checks a flow. used is true for a flow another flow runs as a
+// `use` step: it takes its values through inputs rather than a data pool,
+// and it may not use a flow of its own yet (nesting is #103).
+func (f *Flow) validateAs(path string, pools map[string]bool, used bool) []error {
 	var errs []error
 	if !identRe.MatchString(f.Name) {
 		errs = append(errs, errf(path, "name %q must match %s", f.Name, identRe))
 	}
-	if f.Data != "" && !pools[f.Data] {
+	if f.Data != "" && used {
+		errs = append(errs, errf(path, "a used flow takes its values through inputs, not a data pool (%q)", f.Data))
+	} else if f.Data != "" && !pools[f.Data] {
 		errs = append(errs, errf(path, "data pool %q is not declared by the scenario", f.Data))
 	}
 	if len(f.Steps) == 0 {
@@ -123,12 +135,19 @@ func (f *Flow) validate(path string, pools map[string]bool) []error {
 		available[f.Data] = true
 	}
 
+	// fields holds the roots whose members are a closed, declared set — the
+	// flow's inputs and each use step's outputs — so a reference to one that
+	// isn't declared fails here rather than resolving to nothing at run time.
+	fields := map[string]map[string]bool{}
+	errs = append(errs, f.validateInputs(path, available, fields)...)
+
 	// Sessions resolve the same way variables do: an earlier step opens one,
 	// later steps work on it, and a reference to one nothing opens is a
 	// pre-run error rather than a connection refused at request time.
 	open := map[string]bool{}
 
 	ids := map[string]bool{}
+	extracted := map[string]bool{}
 	for i, st := range f.Steps {
 		sp := fmt.Sprintf("%s: %sstep %d (%q)", path, posPrefix(st.Pos), i, st.ID)
 		if ids[st.ID] {
@@ -147,19 +166,36 @@ func (f *Flow) validate(path string, pools map[string]bool) []error {
 				open[st.WS.Session] = true
 			}
 		}
+		if st.Use != nil && used {
+			errs = append(errs, errf(sp, "a used flow cannot use another flow yet (nested use is #103)"))
+		}
 
 		for _, ref := range st.templateRefs() {
-			if !available[rootOf(ref)] {
-				errs = append(errs, errf(sp,
-					"template {{ %s }} has no upstream source: not the env, not the flow's data pool, and no earlier step extracts %q",
-					ref, rootOf(ref)))
-			}
+			errs = append(errs, checkRef(sp, ref, available, fields)...)
 		}
 		errs = append(errs, st.malformedTemplates(sp)...)
 
+		if st.Use != nil {
+			if available[st.ID] {
+				errs = append(errs, errf(sp, "use step id %q clashes with an existing variable root (env, inputs, the data pool, or an extracted variable)", st.ID))
+			}
+			available[st.ID] = true
+			outs := map[string]bool{}
+			if st.Use.Flow != nil {
+				for _, o := range st.Use.Flow.Outputs {
+					outs[o] = true
+				}
+			}
+			fields[st.ID] = outs
+		}
 		for _, ex := range st.Extract {
+			if _, closed := fields[ex.Var]; closed {
+				errs = append(errs, errf(sp, "extracts %q, which already names the flow's inputs or a use step's outputs", ex.Var))
+				continue
+			}
 			if identRe.MatchString(ex.Var) {
 				available[ex.Var] = true
+				extracted[ex.Var] = true
 			}
 		}
 		for j, a := range st.Assert {
@@ -168,7 +204,74 @@ func (f *Flow) validate(path string, pools map[string]bool) []error {
 			}
 		}
 	}
+
+	seen := map[string]bool{}
+	for _, o := range f.Outputs {
+		switch {
+		case !identRe.MatchString(o):
+			errs = append(errs, errf(path, "output %q must match %s", o, identRe))
+		case seen[o]:
+			errs = append(errs, errf(path, "duplicate output %q", o))
+		case !extracted[o]:
+			errs = append(errs, errf(path, "output %q is not extracted by any step in this flow", o))
+		}
+		seen[o] = true
+	}
 	return errs
+}
+
+// validateInputs checks the declared inputs and makes {{ inputs.<name> }}
+// available. A default resolves in the used flow's own scope before any step
+// runs, so it can reach only the env.
+func (f *Flow) validateInputs(path string, available map[string]bool, fields map[string]map[string]bool) []error {
+	if len(f.Inputs) == 0 {
+		return nil
+	}
+	var errs []error
+	names := map[string]bool{}
+	for _, in := range f.Inputs {
+		ip := fmt.Sprintf("%s: input %q", path, in.Name)
+		switch {
+		case !identRe.MatchString(in.Name):
+			errs = append(errs, errf(ip, "name must match %s", identRe))
+		case names[in.Name]:
+			errs = append(errs, errf(ip, "duplicate input"))
+		}
+		names[in.Name] = true
+		if in.Default == nil {
+			continue
+		}
+		for _, m := range templateRe.FindAllStringSubmatch(*in.Default, -1) {
+			if rootOf(m[1]) != envRoot {
+				errs = append(errs, errf(ip, "default {{ %s }} can only reference the env: it resolves before any step runs", m[1]))
+			}
+		}
+		if len(openBraceRe.FindAllString(*in.Default, -1)) != len(templateRe.FindAllString(*in.Default, -1)) {
+			errs = append(errs, errf(ip, "malformed template placeholder in %q", *in.Default))
+		}
+	}
+	available[inputsRoot] = true
+	fields[inputsRoot] = names
+	return errs
+}
+
+// checkRef reports a template reference with no upstream source, or one into
+// a closed root (inputs, a use step's outputs) naming a member it lacks.
+func checkRef(path, ref string, available map[string]bool, fields map[string]map[string]bool) []error {
+	root, rest, _ := strings.Cut(ref, ".")
+	if !available[root] {
+		return []error{errf(path,
+			"template {{ %s }} has no upstream source: not the env, not the flow's data pool, and no earlier step extracts %q",
+			ref, root)}
+	}
+	members, closed := fields[root]
+	if !closed || members[rest] {
+		return nil
+	}
+	if root == inputsRoot {
+		return []error{errf(path, "template {{ %s }}: the flow declares no input %q", ref, rest)}
+	}
+	return []error{errf(path, "template {{ %s }}: the flow used by step %q declares no output %q", ref, root, rest)}
 }
 
 func (st *Step) validate(path string) []error {
@@ -178,7 +281,7 @@ func (st *Step) validate(path string) []error {
 	}
 
 	specs := 0
-	for _, set := range []bool{st.Call != nil, st.GraphQL != nil, st.WS != nil, st.GRPC != nil, st.Wait != nil, st.Poll != nil} {
+	for _, set := range []bool{st.Call != nil, st.GraphQL != nil, st.WS != nil, st.GRPC != nil, st.Wait != nil, st.Poll != nil, st.Use != nil} {
 		if set {
 			specs++
 		}
@@ -194,11 +297,12 @@ func (st *Step) validate(path string) []error {
 		StepGRPC:    st.GRPC != nil,
 		StepWait:    st.Wait != nil,
 		StepPoll:    st.Poll != nil,
+		StepUse:     st.Use != nil,
 	}
 	matches, known := specFor[st.Type]
 	switch {
 	case !known:
-		errs = append(errs, errf(path, "unknown step type %q (v0 executes call, graphql, ws, grpc, wait, poll)", st.Type))
+		errs = append(errs, errf(path, "unknown step type %q (v0 executes call, graphql, ws, grpc, wait, poll, use)", st.Type))
 	case !matches:
 		errs = append(errs, errf(path, "type is %q but the %q spec is not set", st.Type, st.Type))
 	}
@@ -217,6 +321,11 @@ func (st *Step) validate(path string) []error {
 		errs = append(errs, errf(path, "wait duration must be positive"))
 	case st.Poll != nil:
 		errs = append(errs, st.Poll.validate(path)...)
+	case st.Use != nil:
+		errs = append(errs, st.Use.validate(path)...)
+		if len(st.Extract) > 0 || len(st.Assert) > 0 || st.Throttle != nil {
+			errs = append(errs, errf(path, "a use step returns its flow's outputs: extract, assert, and throttle belong inside the used flow"))
+		}
 	}
 
 	if st.Retry != nil {
@@ -562,6 +671,39 @@ func (g *GraphQLSpec) validate(path string) []error {
 	return errs
 }
 
+// validate checks the used flow on its own terms and the contract between it
+// and the caller: every with key names an input, every required input gets a
+// value.
+func (u *UseSpec) validate(path string) []error {
+	var errs []error
+	if u.Path == "" {
+		errs = append(errs, errf(path, "use needs the path of a flow file"))
+	}
+	if u.Flow == nil {
+		return append(errs, errf(path, "use %q has no loaded flow", u.Path))
+	}
+	errs = append(errs, u.Flow.validateAs(fmt.Sprintf("%s: used flow %s%q", path, posPrefix(u.Flow.Pos), u.Flow.Name), nil, true)...)
+
+	declared := map[string]bool{}
+	for _, in := range u.Flow.Inputs {
+		declared[in.Name] = true
+		if _, given := u.With[in.Name]; !given && in.Default == nil {
+			errs = append(errs, errf(path, "flow %q requires input %q: pass it with `with:` or give it a default", u.Flow.Name, in.Name))
+		}
+	}
+	keys := make([]string, 0, len(u.With))
+	for k := range u.With {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if !declared[k] {
+			errs = append(errs, errf(path, "with sets %q, which flow %q does not declare as an input", k, u.Flow.Name))
+		}
+	}
+	return errs
+}
+
 func (p *PollSpec) validate(path string) []error {
 	var errs []error
 	errs = append(errs, p.Call.validate(path)...)
@@ -756,6 +898,11 @@ func (st *Step) templatedFields() []string {
 		}
 		if len(st.GRPC.Message) > 0 {
 			fields = append(fields, string(st.GRPC.Message))
+		}
+	}
+	if st.Use != nil {
+		for _, w := range st.Use.With {
+			fields = append(fields, w)
 		}
 	}
 	if st.Auth != nil {

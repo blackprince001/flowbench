@@ -17,6 +17,7 @@ const (
 	StepGRPC    StepType = "grpc"
 	StepWait    StepType = "wait"
 	StepPoll    StepType = "poll"
+	StepUse     StepType = "use"
 )
 
 type Mode string
@@ -80,6 +81,44 @@ type Flow struct {
 	Data  string `json:"data,omitempty"`
 	Steps []Step `json:"steps"`
 	Pos   *Pos   `json:"pos,omitempty"`
+
+	// Inputs and Outputs are the flow's contract when another flow uses it:
+	// a used flow sees only its inputs (as {{ inputs.<name> }}) and the env,
+	// and its caller sees only the outputs, as {{ <use step id>.<output> }}.
+	Inputs  []Input  `json:"inputs,omitempty"`
+	Outputs []string `json:"outputs,omitempty"`
+}
+
+// Walk calls fn for every step the flow runs, including the steps of flows it
+// uses, with the flow each step belongs to. Anything that must see every
+// request a run can send — the host allow-list, schema preparation — walks
+// this rather than the top-level steps alone.
+func (f *Flow) Walk(fn func(owner *Flow, st *Step)) {
+	for i := range f.Steps {
+		st := &f.Steps[i]
+		fn(f, st)
+		if st.Use != nil && st.Use.Flow != nil {
+			st.Use.Flow.Walk(fn)
+		}
+	}
+}
+
+// Input is one value a flow takes from its caller. A nil Default makes the
+// input required; otherwise Default is a template resolved in the used
+// flow's own scope, which is what lets the file still run on its own.
+type Input struct {
+	Name    string  `json:"name"`
+	Default *string `json:"default,omitempty"`
+}
+
+// UseSpec runs another flow as one step, in the same VU and iteration, with
+// an isolated scope: With fills the used flow's inputs, resolved in the
+// caller's scope, and only the used flow's declared outputs come back.
+type UseSpec struct {
+	// Path is the used flow file as written, relative to the calling file.
+	Path string            `json:"path"`
+	With map[string]string `json:"with,omitempty"`
+	Flow *Flow             `json:"flow"`
 }
 
 type Step struct {
@@ -92,6 +131,7 @@ type Step struct {
 	GRPC    *GRPCSpec    `json:"grpc,omitempty"`
 	Wait    *WaitSpec    `json:"wait,omitempty"`
 	Poll    *PollSpec    `json:"poll,omitempty"`
+	Use     *UseSpec     `json:"use,omitempty"`
 
 	Extract   []Extraction  `json:"extract,omitempty"`
 	Assert    []Assertion   `json:"assert,omitempty"`

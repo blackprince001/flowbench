@@ -57,16 +57,15 @@ func NewProtoRegistry(root string) *ProtoRegistry {
 // reported before the first request rather than by every VU at once.
 func (r *ProtoRegistry) Prepare(ctx context.Context, sc *ir.Scenario) error {
 	var problems []string
-	for _, f := range sc.Flows {
-		for i := range f.Steps {
-			st := &f.Steps[i]
+	for i := range sc.Flows {
+		sc.Flows[i].Walk(func(f *ir.Flow, st *ir.Step) {
 			if st.GRPC == nil {
-				continue
+				return
 			}
 			if _, err := r.Method(ctx, st.GRPC); err != nil {
 				problems = append(problems, fmt.Sprintf("flow %q step %q: %v", f.Name, st.ID, err))
 			}
-		}
+		})
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("gRPC schema: %s", strings.Join(problems, "; "))
