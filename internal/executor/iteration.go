@@ -41,6 +41,10 @@ type Runner struct {
 	Protos *adapters.ProtoRegistry
 }
 
+// inputsPrefix is how a used flow's inputs sit in its scope, so
+// {{ inputs.<name> }} resolves like any other variable.
+const inputsPrefix = "inputs."
+
 // Failure is one recorded assertion or extraction failure within an iteration.
 type Failure struct {
 	StepID string
@@ -88,24 +92,96 @@ func (it *Iteration) markSession(name string, sess *wsSession) {
 // scope as values are extracted. A transport or setup error stops the flow
 // and is returned; assertion failures are recorded per the step's on_failure.
 func (r *Runner) RunFlow(ctx context.Context, flow ir.Flow, scope *Scope) (*Iteration, error) {
-	anchor := time.Now()
 	it := &Iteration{Outcome: span.OutcomeOK}
 	defer it.closeSessions()
-	for i := range flow.Steps {
-		st := &flow.Steps[i]
-		sp, cont, err := r.runStep(ctx, st, scope, anchor, it)
+	_, err := r.runSteps(ctx, flow.Steps, scope, time.Now(), it, func(sp *span.Span) {
+		it.Spans = append(it.Spans, sp)
+		it.Outcome = worst(it.Outcome, sp.Outcome)
+	})
+	return it, err
+}
+
+// runSteps runs steps in order, handing each step's span to add. It reports
+// whether the flow should go on: false once a failure's on_failure stops it.
+func (r *Runner) runSteps(ctx context.Context, steps []ir.Step, scope *Scope, anchor time.Time, it *Iteration, add func(*span.Span)) (bool, error) {
+	for i := range steps {
+		sp, cont, err := r.runStep(ctx, &steps[i], scope, anchor, it)
 		if sp != nil {
-			it.Spans = append(it.Spans, sp)
-			it.Outcome = worst(it.Outcome, sp.Outcome)
+			add(sp)
 		}
 		if err != nil {
-			return it, err
+			return false, err
 		}
 		if !cont {
-			break
+			return false, nil
 		}
 	}
-	return it, nil
+	return true, nil
+}
+
+// runUse runs a used flow as one step. Its steps' spans become this step's
+// children, on the same trace clock. It runs in a child scope that holds only
+// its inputs, and only its declared outputs come back, as <step id>.<output>.
+// Its WebSocket sessions close when it ends, so they cannot collide with the
+// caller's. If it records a failure, this step fails and this step's
+// on_failure decides what the caller does next.
+func (r *Runner) runUse(ctx context.Context, st *ir.Step, scope *Scope, anchor time.Time, it *Iteration) (*span.Span, bool, error) {
+	used := st.Use.Flow
+	child := scope.Child()
+	for _, in := range used.Inputs {
+		var v string
+		var err error
+		if raw, given := st.Use.With[in.Name]; given {
+			v, err = ir.ExpandTemplates(raw, scope.Resolve)
+		} else {
+			v, err = ir.ExpandTemplates(*in.Default, child.Resolve)
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("step %q: input %q: %w", st.ID, in.Name, err)
+		}
+		child.Set(inputsPrefix+in.Name, v)
+	}
+
+	sp := span.New(st.ID, time.Since(anchor))
+	sub := &Iteration{Outcome: span.OutcomeOK}
+	_, err := r.runSteps(ctx, used.Steps, child, anchor, sub, func(c *span.Span) {
+		sp.Children = append(sp.Children, c)
+		sp.Outcome = worst(sp.Outcome, c.Outcome)
+	})
+	sub.closeSessions()
+	sp.Duration = time.Since(anchor) - sp.Start
+
+	for _, f := range sub.Failures {
+		it.Failures = append(it.Failures, Failure{StepID: st.ID + "/" + f.StepID, Detail: f.Detail})
+	}
+	it.Throttled = it.Throttled || sub.Throttled
+	it.Aborted = it.Aborted || sub.Aborted
+	if err != nil {
+		return sp, false, fmt.Errorf("step %q: %w", st.ID, err)
+	}
+
+	for _, o := range used.Outputs {
+		if v, ok := child.Lookup(o); ok {
+			scope.Set(st.ID+"."+o, v)
+		}
+	}
+
+	if sub.Aborted {
+		return sp, false, nil
+	}
+	if len(sub.Failures) == 0 {
+		return sp, true, nil
+	}
+	sp.Outcome = span.OutcomeFailed
+	switch effectiveAction(st.OnFailure, r.Mode) {
+	case ir.FailureAbortRun:
+		it.Aborted = true
+		return sp, false, nil
+	case ir.FailureAbortFlow:
+		return sp, false, nil
+	default:
+		return sp, true, nil
+	}
 }
 
 func (r *Runner) runStep(ctx context.Context, st *ir.Step, scope *Scope, anchor time.Time, it *Iteration) (*span.Span, bool, error) {
@@ -118,6 +194,8 @@ func (r *Runner) runStep(ctx context.Context, st *ir.Step, scope *Scope, anchor 
 		return r.runWS(ctx, st, scope, anchor, it)
 	case ir.StepGRPC:
 		return r.runGRPC(ctx, st, scope, anchor, it)
+	case ir.StepUse:
+		return r.runUse(ctx, st, scope, anchor, it)
 	case ir.StepWait:
 		sp := span.New(st.ID, time.Since(anchor))
 		time.Sleep(time.Duration(st.Wait.Duration))

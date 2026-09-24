@@ -25,6 +25,13 @@ func NewScope(pool string, row map[string]string) *Scope {
 	return &Scope{pool: pool, row: row, vars: map[string]any{}, env: os.LookupEnv, secrets: secret.NewSet()}
 }
 
+// Child returns the scope a used flow runs in: the same env and secret set,
+// so every env value it resolves is still redacted, but no data row and none
+// of the caller's variables. Values reach it only as inputs.
+func (s *Scope) Child() *Scope {
+	return &Scope{vars: map[string]any{}, env: s.env, secrets: s.secrets}
+}
+
 // Secrets is the set of env-sourced values that must be scrubbed from any
 // captured artifact before it reaches storage.
 func (s *Scope) Secrets() *secret.Set { return s.secrets }
