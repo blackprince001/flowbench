@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -60,7 +61,11 @@ func ParseFlow(src []byte, filename string, opts *Options) (*Result, error) {
 		return nil, fmt.Errorf("%s: a flow file holds exactly one YAML document", filename)
 	}
 
-	w := &walker{file: filename}
+	w := &walker{file: filename, load: &useLoad{
+		root:  filepath.Dir(filename),
+		stack: []string{filepath.Clean(filename)},
+		done:  map[string]*ir.Flow{},
+	}}
 	sc := w.scenario(file.Docs[0].Body)
 	if err := errors.Join(w.errs...); err != nil {
 		return nil, err
@@ -100,10 +105,31 @@ type walker struct {
 	file string
 	errs []error
 
-	// used is set while walking a flow file that another flow loads through
-	// `use:`, so a use inside it is refused rather than followed (nesting,
-	// with cycle detection, is #103).
-	used bool
+	// name is the flow's own name, read ahead of the walk so an error further
+	// down a used-flow chain can name this flow even when `flow:` comes late.
+	name string
+
+	// chain is the use steps that led here, outermost first, as "flow:step".
+	// It is empty for the entry file and rides on every error from a used one.
+	chain []string
+
+	load *useLoad
+}
+
+// maxUseDepth bounds how many `use:` levels one flow can nest, so a long
+// chain fails with a clear error instead of a slow parse and a deep span tree.
+const maxUseDepth = 8
+
+// useLoad is what one parse of an entry file shares across every flow file it
+// reaches through `use:`.
+type useLoad struct {
+	// root is the entry file's directory, which protos are resolved against.
+	root string
+	// stack holds the files being compiled right now, entry first; a use that
+	// names one of them is a cycle.
+	stack []string
+	// done holds each file's compiled flow, so a file used twice compiles once.
+	done map[string]*ir.Flow
 }
 
 func (w *walker) scenario(body ast.Node) *ir.Scenario {
@@ -114,6 +140,13 @@ func (w *walker) scenario(body ast.Node) *ir.Scenario {
 	if !ok {
 		w.errAt(body, "a flow file is a mapping with flow/inputs/outputs/auth/data/steps/profile keys")
 		return sc
+	}
+	for _, e := range entries {
+		if k, ok := e.Key.(*ast.StringNode); ok && k.Value == "flow" {
+			if v, ok := e.Value.(*ast.StringNode); ok {
+				w.name = v.Value
+			}
+		}
 	}
 	var flowAuth *ir.AuthSpec
 	for _, e := range entries {
@@ -295,7 +328,7 @@ func (w *walker) step(n ast.Node) ir.Step {
 		w.rejectCallOnly(callOnlyNodes, "poll (put them inside the poll block)")
 	case useNode != nil:
 		st.Type = ir.StepUse
-		st.Use = w.use(useNode, withNode)
+		st.Use = w.use(st.ID, useNode, withNode)
 		w.rejectCallOnly(callOnlyNodes, "use (pass values to the used flow with `with:`)")
 	}
 	return st
@@ -305,7 +338,11 @@ func (w *walker) step(n ast.Node) ir.Step {
 // calling file and names another .flow.yaml; an absolute path is refused so a
 // flow tree stays portable between machines. Flow files are reviewed code
 // with the same trust as the file that uses them, so `..` is allowed.
-func (w *walker) use(n, withNode ast.Node) *ir.UseSpec {
+//
+// A file that is already being compiled is a cycle, refused before it is
+// followed; a chain past maxUseDepth is refused too. A file reached twice is
+// compiled once and both steps share the result.
+func (w *walker) use(id string, n, withNode ast.Node) *ir.UseSpec {
 	spec := &ir.UseSpec{}
 	if withNode != nil {
 		spec.With = w.strMap(withNode, "with")
@@ -316,9 +353,6 @@ func (w *walker) use(n, withNode ast.Node) *ir.UseSpec {
 	}
 	spec.Path = rel
 	switch {
-	case w.used:
-		w.errAt(n, "a used flow cannot use another flow yet (nested use is #103)")
-		return spec
 	case filepath.IsAbs(rel):
 		w.errAt(n, "use path %q must be relative to this file", rel)
 		return spec
@@ -328,6 +362,21 @@ func (w *walker) use(n, withNode ast.Node) *ir.UseSpec {
 	}
 
 	path := filepath.Join(filepath.Dir(w.file), rel)
+	key := filepath.Clean(path)
+	load := w.load
+	if i := slices.Index(load.stack, key); i >= 0 {
+		w.errAt(n, "use cycle: %s", w.cycle(load.stack[i:], key))
+		return spec
+	}
+	if len(load.stack) > maxUseDepth {
+		w.errAt(n, "use %q nests more than %d levels of use; flatten the chain or merge flows", rel, maxUseDepth)
+		return spec
+	}
+	if f, done := load.done[key]; done {
+		spec.Flow = f
+		return spec
+	}
+
 	src, err := os.ReadFile(path)
 	if err != nil {
 		w.errAt(n, "use %q: cannot read %s: %v", rel, path, errors.Unwrap(err))
@@ -343,15 +392,42 @@ func (w *walker) use(n, withNode ast.Node) *ir.UseSpec {
 		return spec
 	}
 
-	child := &walker{file: path, used: true}
+	child := &walker{file: path, load: load, chain: append(slices.Clone(w.chain), w.label()+":"+id)}
+	load.stack = append(load.stack, key)
 	sc := child.scenario(file.Docs[0].Body)
+	load.stack = load.stack[:len(load.stack)-1]
 	w.errs = append(w.errs, child.errs...)
 	if len(sc.Flows) == 1 {
 		f := sc.Flows[0]
-		rebaseProtos(&f, filepath.Dir(rel))
+		if dir, err := filepath.Rel(load.root, filepath.Dir(path)); err == nil {
+			rebaseProtos(&f, dir)
+		}
+		load.done[key] = &f
 		spec.Flow = &f
 	}
 	return spec
+}
+
+// label names this file's flow in a chain: its flow name, or its file when it
+// has none.
+func (w *walker) label() string {
+	if w.name != "" {
+		return w.name
+	}
+	return strings.TrimSuffix(filepath.Base(w.file), ".flow.yaml")
+}
+
+// cycle spells out a use cycle as the files it passes through, relative to the
+// entry file's directory, closing back on the file that started it.
+func (w *walker) cycle(files []string, again string) string {
+	names := make([]string, 0, len(files)+1)
+	for _, f := range append(slices.Clone(files), again) {
+		if r, err := filepath.Rel(w.load.root, f); err == nil {
+			f = r
+		}
+		names = append(names, filepath.ToSlash(f))
+	}
+	return strings.Join(names, " → ")
 }
 
 // rebaseProtos keeps a used flow's proto paths relative to the file that
@@ -1022,6 +1098,12 @@ func (w *walker) pos(n ast.Node) *ir.Pos {
 	return &ir.Pos{File: w.file}
 }
 
+// errAt records an error at a node. In a used flow it ends with the chain of
+// use steps that led there, so the author sees which caller to look at.
 func (w *walker) errAt(n ast.Node, format string, args ...any) {
-	w.errs = append(w.errs, fmt.Errorf("%s: %s", w.pos(n), fmt.Sprintf(format, args...)))
+	msg := fmt.Sprintf(format, args...)
+	if len(w.chain) > 0 {
+		msg += " (used via " + strings.Join(w.chain, " → ") + ")"
+	}
+	w.errs = append(w.errs, fmt.Errorf("%s: %s", w.pos(n), msg))
 }

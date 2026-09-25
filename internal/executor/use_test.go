@@ -207,3 +207,58 @@ func TestSecretPassedThroughWithStaysRedacted(t *testing.T) {
 		}
 	}
 }
+
+// TestNestedUsedFlowsNestTheirSpans covers #103's acceptance: A uses B uses C
+// runs, the spans nest three levels, and a failure deep down is named by the
+// whole path of use steps that led to it.
+func TestNestedUsedFlowsNestTheirSpans(t *testing.T) {
+	fail := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail {
+			w.WriteHeader(500)
+			return
+		}
+		w.Write([]byte(`{"data":{"access_token":"t"}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FLOWBENCH_TEST_EMAIL", "default@b.com")
+
+	mid := &ir.Flow{Name: "token", Steps: []ir.Step{{
+		ID: "login", Type: ir.StepUse,
+		Use: &ir.UseSpec{Path: "login.flow.yaml", Flow: loginFlow(), With: map[string]string{"password": "pw"}},
+	}}}
+	flow := ir.Flow{Name: "a", Steps: []ir.Step{{
+		ID: "auth", Type: ir.StepUse,
+		Use: &ir.UseSpec{Path: "token.flow.yaml", Flow: mid},
+	}}}
+	sc := &ir.Scenario{Name: "s", Flows: []ir.Flow{flow}, Profile: ir.Profile{Mode: ir.ModeIntegration}}
+	if err := sc.Validate(); err != nil {
+		t.Fatalf("three levels should validate: %v", err)
+	}
+
+	r := &executor.Runner{Session: adapters.NewSession(adapters.SessionOptions{}), BaseURL: srv.URL, Mode: ir.ModeIntegration}
+	it, err := r.RunFlow(context.Background(), flow, executor.NewScope("", nil))
+	if err != nil {
+		t.Fatalf("RunFlow: %v", err)
+	}
+	if it.Outcome != span.OutcomeOK || len(it.Spans) != 1 {
+		t.Fatalf("want one clean top-level span, got outcome %q, %d spans", it.Outcome, len(it.Spans))
+	}
+	auth := it.Spans[0]
+	if len(auth.Children) != 1 || auth.Children[0].Name != "login" {
+		t.Fatalf("login (a use step) should nest under auth, got %v", childNames(auth))
+	}
+	login := auth.Children[0]
+	if len(login.Children) != 1 || login.Children[0].Name != "login" {
+		t.Fatalf("the request should nest under login, got %v", childNames(login))
+	}
+
+	fail = true
+	it, err = r.RunFlow(context.Background(), flow, executor.NewScope("", nil))
+	if err != nil {
+		t.Fatalf("RunFlow: %v", err)
+	}
+	if len(it.Failures) != 1 || it.Failures[0].StepID != "auth/login/login" {
+		t.Errorf("failures = %+v, want one at auth/login/login", it.Failures)
+	}
+}
