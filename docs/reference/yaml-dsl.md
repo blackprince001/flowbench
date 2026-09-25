@@ -131,9 +131,12 @@ Runs another flow file as one step, in the same VU and iteration.
 - The used flow's steps nest under the `use` step in the trace. If one fails, the `use` step fails and its own `on_failure` decides what happens next.
 - In the used file, `profile` is ignored (the caller's profile runs) and `data` is refused (values arrive through `inputs`). Its `auth` applies to its own steps.
 - `extract`, `assert`, `throttle`, `retry`, and `headers`/`query`/`body` belong inside the used flow, not on the `use` step.
-- A used flow cannot itself `use` another flow yet.
+- A used flow can `use` another flow, up to 8 levels deep. Spans nest one level per `use`, and a failure deep down is named by the whole path (`auth/token/login`).
+- A file used more than once in a flow is read and checked once.
 
 Pre-run errors: a required input with no `with` value, a `with` key that is not an input, a reference to an output or input that is not declared, an output nothing extracts, a `use` step id that clashes with `env`, `inputs`, the data pool, or an extracted variable, and a path that is absolute, not a `.flow.yaml`, or not readable.
+
+Two more apply to nesting. A cycle (`a.flow.yaml → b.flow.yaml → a.flow.yaml`) is refused before the run and the message names every file in it, as is a chain deeper than 8. An error inside a used file points at that file's own line and column and ends with the `use` steps that led there, like `(used via checkout:auth → login:token)`, so you edit the right file.
 
 ### `retry:`
 
