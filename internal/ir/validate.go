@@ -114,8 +114,7 @@ func (f *Flow) validate(path string, pools map[string]bool) []error {
 }
 
 // validateAs checks a flow. used is true for a flow another flow runs as a
-// `use` step: it takes its values through inputs rather than a data pool,
-// and it may not use a flow of its own yet (nesting is #103).
+// `use` step: it takes its values through inputs rather than a data pool.
 func (f *Flow) validateAs(path string, pools map[string]bool, used bool) []error {
 	var errs []error
 	if !identRe.MatchString(f.Name) {
@@ -165,9 +164,6 @@ func (f *Flow) validateAs(path string, pools map[string]bool, used bool) []error
 			case st.WS.Opens():
 				open[st.WS.Session] = true
 			}
-		}
-		if st.Use != nil && used {
-			errs = append(errs, errf(sp, "a used flow cannot use another flow yet (nested use is #103)"))
 		}
 
 		for _, ref := range st.templateRefs() {

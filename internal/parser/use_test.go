@@ -187,15 +187,6 @@ func TestUseStepPreRunErrors(t *testing.T) {
 			want:   `takes its values through inputs, not a data pool`,
 		},
 		{
-			name: "nested use",
-			files: map[string]string{
-				"login.flow.yaml": strings.Replace(loginFlow, "outputs:", "  - id: deeper\n    use: other.flow.yaml\noutputs:", 1),
-				"c.flow.yaml":     caller(useLogin),
-			},
-			wantAt: "login.flow.yaml:11",
-			want:   `nested use is #103`,
-		},
-		{
 			name: "input default reaches past the env",
 			files: map[string]string{
 				"login.flow.yaml": strings.Replace(loginFlow, "{{ env.SHOP_USER }}", "{{ user.email }}", 1),
