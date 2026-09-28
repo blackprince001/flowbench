@@ -83,7 +83,7 @@ def expect(subject):
   if isinstance(subject, RecordedText):
     return LiveAssertionBuilder(subject)
   if isinstance(subject, LiveValue):
-    if subject.kind in ("user", "env"):
+    if subject.kind in ("user", "env", "input"):
       raise FlowExecutionError(
         f"expect() cannot assert on {subject.kind}.{subject.key} directly; "
         "only extracted ctx.vars values support assertions"
