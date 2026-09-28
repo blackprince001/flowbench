@@ -1,0 +1,15 @@
+# A reusable login flow (#102), used both directly (issue #102's acceptance:
+# "login.flow.yaml also runs alone") and as a nested `use:` in
+# authenticated_checkout_use.flow.yaml / .py -- #104's conformance case that
+# both surfaces embed this exact file's IR when they use it.
+flow: login
+inputs:
+  email: "{{ env.FLOWBENCH_TEST_EMAIL }}"
+  password:
+steps:
+  - id: login
+    call: POST /auth/login
+    body: { email: "{{ inputs.email }}", password: "{{ inputs.password }}" }
+    extract: { token: $.data.access_token }
+    assert: [ status == 200, token != null ]
+outputs: [token]
