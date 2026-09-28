@@ -1,0 +1,29 @@
+# authenticated_checkout.flow.yaml rewritten so its login step is a `use:` of
+# login.flow.yaml (#104's conformance case). Compiles to IR equivalent to
+# authenticated_checkout_use.py, which uses the same file through
+# Flow.load(...) -- the acceptance for "flow.use(...) compiles to the same
+# use IR".
+flow: authenticated_checkout_use
+data: fixtures/users.csv
+steps:
+  - id: auth
+    use: login.flow.yaml
+    with: { email: "{{ user.email }}", password: "{{ user.password }}" }
+
+  - id: create_order
+    call: POST /orders
+    headers: { Authorization: "Bearer {{ auth.token }}" }
+    body: { items: "{{ user.cart }}" }
+    extract: { order_id: $.data.id }
+    retry:
+      on_status: [429, 503]
+      backoff: honor_retry_after
+      max_attempts: 5
+
+  - id: pay
+    call: POST /orders/{{ order_id }}/pay
+    headers: { Authorization: "Bearer {{ auth.token }}" }
+    assert: [ status == 202 ]
+
+profile:
+  mode: integration

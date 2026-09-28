@@ -21,11 +21,12 @@ import (
 // fixtures are the flows written twice, once per surface. Each name resolves
 // to ../../tests/flows/<name>.flow.yaml and ../../tests/flows/<name>.py.
 var fixtures = []string{
-	"authenticated_checkout", // the PRD section 11 sample: chaining (#22)
-	"auth_schemes",           // every auth scheme, plus flow default and opt-out (#30)
-	"graphql_operations",     // query, chained mutation, error policy (#26)
-	"ws_session",             // sessions across steps, frame matching (#27)
-	"grpc_unary",             // unary calls, chained through a proto schema (#28)
+	"authenticated_checkout",     // the PRD section 11 sample: chaining (#22)
+	"authenticated_checkout_use", // login rewritten as a use step (#104), both surfaces loading login.flow.yaml
+	"auth_schemes",               // every auth scheme, plus flow default and opt-out (#30)
+	"graphql_operations",         // query, chained mutation, error policy (#26)
+	"ws_session",                 // sessions across steps, frame matching (#27)
+	"grpc_unary",                 // unary calls, chained through a proto schema (#28)
 }
 
 func TestTwoSurfaceParity(t *testing.T) {
@@ -66,11 +67,22 @@ func compilePythonFlow(t *testing.T, path string) []byte {
 		t.Fatalf("resolving repo root: %v", err)
 	}
 	python := pythonInterpreter(t, repoRoot)
+	bin := flowbenchBinary(t, repoRoot) // Flow.load(...) (#104) shells out to it
 
-	cmd := exec.Command(python, path)
+	// Run with the flow file's own directory as cwd, and just its base name
+	// as the script argument -- Flow.load("login.flow.yaml") (#104) opens a
+	// path relative to the process's cwd, the same way a YAML use: path is
+	// relative to its own file, not to wherever `go test` happens to run.
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatalf("resolving %s: %v", path, err)
+	}
+	cmd := exec.Command(python, filepath.Base(absPath))
+	cmd.Dir = filepath.Dir(absPath)
 	cmd.Env = append(os.Environ(),
 		"FLOWBENCH_COMPILE_ONLY=1",
 		"PYTHONPATH="+filepath.Join(repoRoot, "sdk-python", "src"),
+		"FLOWBENCH_BIN="+bin,
 	)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

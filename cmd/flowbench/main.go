@@ -19,6 +19,7 @@ Commands:
   run        run a scenario against a target (add --watch for a live view)
   serve      browse recorded runs from a run store on localhost
   target     resolve a target config and print it as JSON
+  compile    parse and validate a flow file and print its IR as JSON
   version    print the flowbench build identity
 
 Run 'flowbench help' to show this message.
@@ -48,6 +49,8 @@ func run(stdout, stderr io.Writer, args []string) int {
 		return serve(stdout, stderr, args[1:])
 	case "target":
 		return targetCmd(stdout, stderr, args[1:])
+	case "compile":
+		return compileCmd(stdout, stderr, args[1:])
 	case "version", "--version":
 		fmt.Fprintln(stdout, version.String())
 		return exitOK

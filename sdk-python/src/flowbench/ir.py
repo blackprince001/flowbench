@@ -8,8 +8,12 @@ scenario diffs cleanly against the YAML parser's output for the same flow.
 _DATA_POOL_VAR = "user"
 
 
-def build_scenario(name, data_source, steps, profile):
+def build_scenario(name, data_source, steps, profile, inputs=None, outputs=None):
   flow = {"name": name, "steps": steps}
+  if inputs:
+    flow["inputs"] = inputs
+  if outputs:
+    flow["outputs"] = outputs
 
   data_pools = []
   if data_source:

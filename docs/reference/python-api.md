@@ -14,10 +14,18 @@ The exported names are: `Flow`, `Profile`, `Retry`, `expect`, `frame`, `secret`,
 ## Flow
 
 ```python
-Flow(name, data=None, auth=None)
+Flow(name, data=None, auth=None, inputs=None, outputs=None)
 ```
 
-The unit of authorship: an ordered sequence of steps. `name` names the flow (it becomes the root span's identity). `data` binds a data pool — a CSV path relative to the flow file, one iteration per row, rows exposed as `ctx.user[...]`. `auth` sets a default auth scheme every step inherits unless it declares its own.
+The unit of authorship: an ordered sequence of steps. `name` names the flow (it becomes the root span's identity). `data` binds a data pool — a CSV path relative to the flow file, one iteration per row, rows exposed as `ctx.user[...]`. `auth` sets a default auth scheme every step inherits unless it declares its own. `inputs` and `outputs` are a used flow's contract with its caller (see [`ctx.use`](#ctxuse)) — the Python spelling of YAML's `inputs:`/`outputs:` blocks: `inputs` is a mapping of name to default (`None` makes it required), read inside a step as `ctx.inputs[name]`; `outputs` is a list of names a later `ctx.vars[...]` read must have set.
+
+### Flow.load
+
+```python
+Flow.load(path)
+```
+
+Loads a `.flow.yaml` file's IR by shelling out to `flowbench compile <path>` — the same parser `flowbench run` uses, so a used flow authored in YAML has byte-identical IR whichever surface names it. `path` is resolved the same way a YAML `use:` path is: relative to the process's working directory (a step function has no file of its own to be relative to, unlike a YAML flow file). The result has no step functions of its own and is only useful as [`ctx.use(...)`](#ctxuse)'s target. Needs a `flowbench` binary — `$FLOWBENCH_BIN`, or one on `PATH`. Raises `FlowCompileError` for a path that doesn't parse or validate.
 
 ### @flow.step
 
@@ -26,7 +34,7 @@ The unit of authorship: an ordered sequence of steps. `name` names the flow (it 
 @flow.step(retry=None, auth=None)
 ```
 
-Registers a step function, in declaration order. The function's name is the step's id — a structural span identity, so renaming it splits cross-run flame data. Each step function must make exactly one call (`ctx.http`, `ctx.graphql`, `ctx.ws`, or `ctx.grpc`); on the Python-driven path, a call your own client makes or a recorded prompt observation satisfies the rule too. `retry` takes a [`Retry`](#retry); `auth` takes an auth scheme, overriding the flow default (`NoAuth()` opts the step out).
+Registers a step function, in declaration order. The function's name is the step's id — a structural span identity, so renaming it splits cross-run flame data. Each step function must make exactly one call (`ctx.http`, `ctx.graphql`, `ctx.ws`, `ctx.grpc`, or `ctx.use`); on the Python-driven path, a call your own client makes or a recorded prompt observation satisfies the rule too. `retry` takes a [`Retry`](#retry); `auth` takes an auth scheme, overriding the flow default (`NoAuth()` opts the step out) — auth on a `ctx.use` step is dropped rather than applied, since a use step makes no request of its own.
 
 ### flow.compile
 
@@ -145,6 +153,20 @@ ctx.grpc(method, *, proto, message=None, url=None, headers=None,
 ```
 
 One unary gRPC call. `method` is fully qualified, `"package.Service/Method"`. `proto` names the schema file relative to the flow file; `import_paths` adds proto import roots. `message` is the request message as a mapping of field to value. `url` is optional and only an address — the method is the path. `headers` are gRPC metadata (HTTP/2 headers on the wire), so every auth scheme reaches a gRPC call unchanged.
+
+### ctx.use
+
+```python
+ctx.use(target, with_=None)
+```
+
+Runs another flow as one step, in the same VU and iteration — the Python spelling of YAML's `use:`. `target` is a `Flow` (used directly) or a [`Flow.load(...)`](#flowload) result. `with_` fills the used flow's declared `inputs`, templated in this step's own scope, the same as `ctx.http`'s `json=`/`headers=` do. A required input with no `with_` value and no default raises `FlowCompileError`/`FlowExecutionError` (compile time / live execution respectively), as does a `with_` key the used flow doesn't declare.
+
+The used flow sees only its own `inputs` and `{{ env.* }}` — never this flow's variables or data row — and this flow sees only the used flow's declared `outputs`, read from a *later* step as `ctx.vars["<this step's id>.<output>"]`, matching `{{ auth.token }}` on the YAML side. `ctx.use(...)`'s own return value has no `.status`/`.header(...)`/`.json_path(...)` — those, and `expect(...)`, belong inside the used flow, not on the use step, matching the Go engine's rule.
+
+A used flow can itself `use` another flow, Python-authored or `Flow.load(...)`, the same way a top-level flow does. A `Flow.load(...)` target's own nesting is bounded at 8 levels, since it was parsed by the YAML side (see the [YAML reference](yaml-dsl.md#use)); nesting Python-authored flows has no such cap, but a flow that uses itself, directly or through another flow, is refused as a cycle before it runs.
+
+Live execution (`python flow.py`) runs a Python-authored target's own step functions directly, and interprets a loaded YAML target's IR without ever calling back into the Go engine (ADR 0012) — scoped today to `call`/`extract`/`assert` steps with no `retry`; anything else raises `FlowExecutionError` pointing at `flowbench run`.
 
 ### ctx.prompt
 

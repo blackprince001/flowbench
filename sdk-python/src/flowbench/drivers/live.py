@@ -14,10 +14,12 @@ throttle, and every call is captured.
 
 import json as jsonlib
 import os
+import re
 import time
 
 from .. import target as target_mod
 from .._version import __version__
+from ..context import Context
 from ..errors import FlowCompileError, FlowExecutionError
 from ..eval import compare
 from ..instrument import Instrumentation
@@ -198,6 +200,45 @@ class LiveAssertionBuilder:
     return self._check("not_exists", None)
 
 
+class UseResultLive:
+  """ctx.use(...)'s live-execution return value -- refuses response
+  operations the same way trace.py's UseResult does at compile time: a used
+  flow's outputs are read from a later step, as ctx.vars[...].
+  """
+
+  def __init__(self, step_id, outputs):
+    self.step_id = step_id
+    self.outputs = outputs
+
+  def _refuse(self, what):
+    raise FlowExecutionError(
+      f"step {self.step_id!r}: {what} does not apply to a use step -- read "
+      "its flow's outputs from a later step, as "
+      f"ctx.vars[{self.step_id!r} + '.' + <output name>]"
+    )
+
+  @property
+  def status(self):
+    self._refuse("status")
+
+  def header(self, name):
+    self._refuse("header(...)")
+
+  def json_path(self, path):
+    self._refuse("json_path(...)")
+
+
+class _IRSubject:
+  """A minimal assertion subject -- just enough for _detail() -- for an
+  assertion driven by a used YAML flow's IR dict rather than the fluent
+  expect(...) builder.
+  """
+
+  def __init__(self, kind, key):
+    self.kind = kind
+    self.key = key
+
+
 class IterationResult:
   """One flow-run's outcome: the completed span tree, the worst outcome
   across its steps, recorded failures, and whether any step throttled --
@@ -357,6 +398,271 @@ class LiveDriver:
 
     return LiveResponse(resp, self)
 
+  def use(self, target, with_=None):
+    """ctx.use(...)'s live-execution counterpart (#104): runs the used flow
+    for real, in this same process -- never a call back into the Go engine
+    (ADR 0012 rules that out). A Python-authored target's own @flow.step
+    functions run directly (_use_python_flow); a Flow.load(...) target's
+    steps are interpreted from its IR (_use_loaded_flow), scoped to what a
+    used flow's own body may reference (its inputs and the env) and, for
+    now, to call/extract/assert steps -- the same subset a used YAML flow
+    needs for the login-flow shape #102/#103 established.
+    """
+    if self._call_made:
+      raise FlowExecutionError(
+        f"step {self._current_step_id!r} makes more than one ctx.http/"
+        "ctx.use call; each @flow.step function must make exactly one "
+        "(split it into two steps)"
+      )
+    self._call_made = True
+
+    step_id = self._current_step_id
+    use_span = self._current_span
+    if not hasattr(target, "_compiled_flow_shape"):
+      raise FlowExecutionError(
+        f"ctx.use(...) needs a Flow or a Flow.load(...) result, got "
+        f"{type(target).__name__}"
+      )
+    flow_ir = target._compiled_flow_shape()
+    flow_name = flow_ir["name"]
+
+    with_map = {k: _stringify(_unwrap(v)) for k, v in (with_ or {}).items()}
+    declared = {i["name"] for i in flow_ir.get("inputs", [])}
+    for k in with_map:
+      if k not in declared:
+        raise FlowExecutionError(
+          f"step {step_id!r}: with_ sets {k!r}, which flow {flow_name!r} "
+          "does not declare as an input"
+        )
+    inputs_vals = {}
+    for i in flow_ir.get("inputs", []):
+      name = i["name"]
+      if name in with_map:
+        inputs_vals[name] = with_map[name]
+      elif "default" in i:
+        inputs_vals[name] = self._resolve_ir_text(i["default"], {})
+      else:
+        raise FlowExecutionError(
+          f"step {step_id!r}: flow {flow_name!r} requires input {name!r}: "
+          "pass it with with_= or give it a default"
+        )
+
+    loaded = getattr(target, "_loaded", None)
+    if loaded is not None:
+      outputs, ok = self._use_loaded_flow(loaded, inputs_vals, step_id, use_span)
+    else:
+      outputs, ok = self._use_python_flow(target, inputs_vals, step_id, use_span)
+
+    use_span.duration = self._elapsed() - use_span.start
+    # Mirrors Go's runUse: the use step's own outcome is the worst of its
+    # used flow's steps, not hardcoded to failed -- a 429 partway through
+    # aborts the same way a failed assertion does, but stays "throttled".
+    for child in use_span.children:
+      use_span.outcome = _worst(use_span.outcome, child.outcome)
+    if not ok:
+      raise FlowAbortedError()
+
+    for o in flow_ir.get("outputs", []):
+      if o in outputs:
+        self._vars[f"{step_id}.{o}"] = outputs[o]
+
+    return UseResultLive(step_id, list(flow_ir.get("outputs", [])))
+
+  def _use_python_flow(self, target, inputs_vals, step_id, use_span):
+    """Runs a Python-authored used flow's own @flow.step functions in an
+    isolated scope -- fresh vars, no data-pool row -- with their spans
+    nested under the use step's span. Failures record as
+    "<use step id>/<inner step id>", matching Go's runUse.
+
+    Deliberately doesn't reuse begin_step/end_step: those aren't reentrant
+    (Instrumentation.begin_step resets per-step counters with no stack, so a
+    second call mid-step would stomp the outer step's own), so this manages
+    the same handful of fields directly instead. One known gap from that:
+    a nested step's auto-instrumented or observed calls (not ctx.http) are
+    attributed to the outer scope rather than nested here -- ctx.http itself
+    is unaffected, since it binds its span explicitly rather than through
+    Instrumentation's parent tracking.
+    """
+    saved_vars, saved_row = self._vars, self._row
+    saved_step_id, saved_span = self._current_step_id, self._current_span
+    saved_retry, saved_call_made = self._current_retry, self._call_made
+
+    self._vars = {f"inputs.{k}": v for k, v in inputs_vals.items()}
+    self._row = None
+    ok = True
+    try:
+      for func, retry, auth in target._steps:
+        if auth is not None and auth.to_ir()["scheme"] != "none":
+          raise FlowExecutionError(
+            f"step {func.__name__!r} declares auth, which live execution "
+            "does not yet apply -- run `flowbench run <file>.py` instead"
+          )
+        inner_id = func.__name__
+        self._current_step_id = f"{step_id}/{inner_id}"
+        self._current_span = Span(inner_id, self._elapsed())
+        self._current_retry = retry.to_ir() if retry is not None else None
+        self._call_made = False
+        ctx = Context(self, has_data_pool=False, has_inputs=bool(target.inputs))
+        try:
+          func(ctx)
+        except FlowAbortedError:
+          ok = False
+        else:
+          if not self._call_made:
+            raise FlowExecutionError(
+              f"step {inner_id!r} made no HTTP call; every @flow.step "
+              "function must make one"
+            )
+        self._current_span.duration = self._elapsed() - self._current_span.start
+        use_span.children.append(self._current_span)
+        if not ok:
+          break
+      outputs = {o: self._vars[o] for o in target.outputs if o in self._vars}
+    finally:
+      self._vars, self._row = saved_vars, saved_row
+      self._current_step_id, self._current_span = saved_step_id, saved_span
+      self._current_retry, self._call_made = saved_retry, saved_call_made
+    return outputs, ok
+
+  def _use_loaded_flow(self, flow_ir, inputs_vals, step_id, use_span):
+    """Interprets a Flow.load(...) target's IR directly -- no subprocess, no
+    call back into the Go engine, just this flow's own steps run the way
+    LiveDriver already knows how to run a call step. Scoped to call/extract/
+    assert/no-retry today (docstring on `use` above); anything else fails
+    loud rather than silently skipping.
+    """
+    scope = {f"inputs.{k}": v for k, v in inputs_vals.items()}
+    ok = True
+    for ir_step in flow_ir.get("steps", []):
+      if ir_step.get("type") != "call":
+        raise FlowExecutionError(
+          f"step {step_id!r}: live execution of a used YAML flow supports "
+          f"only call steps today, got {ir_step.get('type')!r} step "
+          f"{ir_step.get('id')!r} -- run `flowbench run <file>.py` instead"
+        )
+      if ir_step.get("retry"):
+        raise FlowExecutionError(
+          f"step {step_id!r}: live execution of a used YAML flow does not "
+          f"yet support retry (step {ir_step.get('id')!r}) -- run "
+          "`flowbench run <file>.py` instead"
+        )
+      if not self._run_loaded_call_step(ir_step, scope, step_id, use_span):
+        ok = False
+        break
+    outputs = {o: scope[o] for o in flow_ir.get("outputs", []) if o in scope}
+    return outputs, ok
+
+  def _run_loaded_call_step(self, ir_step, scope, use_step_id, use_span):
+    inner_id = ir_step["id"]
+    saved = (
+      self._current_step_id,
+      self._current_span,
+      self._current_retry,
+      self._call_made,
+    )
+    self._current_step_id = f"{use_step_id}/{inner_id}"
+    self._current_span = use_span.child(inner_id, self._elapsed())
+    self._current_retry = None
+    self._call_made = False
+    ok = True
+    try:
+      spec = ir_step["call"]
+      resp = self.call(
+        spec["method"],
+        self._resolve_ir_text(spec["url"], scope),
+        json=self._resolve_ir_body(spec.get("body"), scope),
+        headers={
+          k: self._resolve_ir_text(v, scope) for k, v in spec.get("headers", {}).items()
+        }
+        or None,
+        query={
+          k: self._resolve_ir_text(v, scope) for k, v in spec.get("query", {}).items()
+        }
+        or None,
+      )
+      for ex in ir_step.get("extract", []):
+        pending = resp.json_path(ex["path"])
+        child = self._current_span.child(ex["var"], self._elapsed())
+        if not pending.found:
+          child.outcome = OUTCOME_FAILED
+          self._record_failure(child, f"extract {ex['var']!r} found nothing")
+        scope[ex["var"]] = pending.value
+      for a in ir_step.get("assert", []):
+        self._check_ir_assert(a, resp, scope)
+    except FlowAbortedError:
+      ok = False
+    finally:
+      self._current_span.duration = self._elapsed() - self._current_span.start
+      self._current_step_id, self._current_span = saved[0], saved[1]
+      self._current_retry, self._call_made = saved[2], saved[3]
+    return ok
+
+  def _check_ir_assert(self, a, resp, scope):
+    source, op, key = a["source"], a["op"], a.get("key")
+    if source == "status":
+      actual, kind, akey = resp.status.value, "status", None
+    elif source == "header":
+      actual, kind, akey = resp.header(key).value, "header", key
+    elif source == "body":
+      value, found = query_json(resp._resp.content, key)
+      actual, kind, akey = (value if found else None), "body", key
+    elif source == "var":
+      actual, kind, akey = scope.get(key), "var", key
+    else:
+      raise FlowExecutionError(f"unsupported assertion source {source!r}")
+
+    if op == "exists":
+      passed = actual is not None
+    elif op == "not_exists":
+      passed = actual is None
+    else:
+      passed = compare(op, actual, a.get("value"))
+
+    if not passed:
+      child = self._current_span.child(_assert_name(kind, akey), self._elapsed())
+      child.outcome = OUTCOME_FAILED
+      detail = _detail(_IRSubject(kind, akey), op, actual, a.get("value"))
+      self._record_failure(child, detail)
+
+  # -- a used YAML flow's own templates: {{ inputs.x }} / {{ env.X }} / a
+  # flat name its own extract set -- ir.ExpandTemplates's scope, minus the
+  # roots a used flow cannot see (ADR: it sees only its inputs and the env).
+
+  _WHOLE_TEMPLATE_RE = re.compile(r"^\{\{\s*(.+?)\s*\}\}$")
+  _TEMPLATE_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}")
+
+  def _ir_lookup(self, ref, scope):
+    if ref in scope:
+      return scope[ref]
+    if ref.startswith("env."):
+      value = os.environ.get(ref[len("env.") :], "")
+      self._secrets.add(value)
+      return value
+    raise FlowExecutionError(f"template {{{{ {ref} }}}} has no upstream source")
+
+  def _resolve_ir_text(self, value, scope):
+    if value is None:
+      return None
+    return self._TEMPLATE_RE.sub(
+      lambda m: _stringify(self._ir_lookup(m.group(1), scope)), value
+    )
+
+  def _resolve_ir_body(self, value, scope):
+    # Mirrors #101: a body value that is exactly one template keeps its
+    # looked-up type; embedded in a longer string it's stringified in place.
+    if value is None:
+      return None
+    if isinstance(value, str):
+      m = self._WHOLE_TEMPLATE_RE.fullmatch(value)
+      if m:
+        return self._ir_lookup(m.group(1), scope)
+      return self._resolve_ir_text(value, scope)
+    if isinstance(value, dict):
+      return {k: self._resolve_ir_body(v, scope) for k, v in value.items()}
+    if isinstance(value, list):
+      return [self._resolve_ir_body(v, scope) for v in value]
+    return value
+
   def graphql(
     self,
     url,
@@ -438,6 +744,14 @@ class LiveDriver:
         f"ctx.vars[{key!r}] read before it was extracted by an earlier step"
       )
     return LiveValue(self._vars[key], kind="var", driver=self, key=key)
+
+  def get_input_field(self, name):
+    ref = f"inputs.{name}"
+    if ref not in self._vars:
+      raise FlowExecutionError(
+        f"ctx.inputs[{name!r}] is not declared by this flow's inputs"
+      )
+    return LiveValue(self._vars[ref], kind="input", driver=self, key=name)
 
   def get_user_field(self, field):
     if self._row is None:

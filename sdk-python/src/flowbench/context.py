@@ -222,6 +222,28 @@ class Prompt:
     )
 
 
+class Use:
+  """``ctx.use(...)`` — runs another flow as one step (#104), the Python
+  spelling of YAML's ``use:``.
+
+  ``target`` is a ``Flow`` (Python-authored, used directly) or a
+  ``Flow.load(...)`` result (a YAML flow's already-compiled IR). ``with_``
+  fills the used flow's declared inputs, templated in this step's own scope
+  -- the same values ``ctx.http`` and friends would template into a body.
+
+  A use step makes no request of its own and returns nothing to extract or
+  assert on: its flow's declared outputs become available to a *later* step
+  as ``ctx.vars["<this step's id>.<output>"]``, matching ``{{ auth.token }}``
+  on the YAML side.
+  """
+
+  def __init__(self, driver):
+    self._driver = driver
+
+  def __call__(self, target, with_=None):
+    return self._driver.use(target, with_=with_)
+
+
 def _make_method(verb):
   def method(self, url, *, json=None, headers=None, query=None):
     return self._call(verb.upper(), url, json=json, headers=headers, query=query)
@@ -262,17 +284,41 @@ class EnvProxy:
     return self._driver.get_env(name)
 
 
+class InputsProxy:
+  """``ctx.inputs[name]`` — a value this flow's caller passed with ``with_``,
+  or its own default. Only available in a flow that declares ``inputs=``
+  (``Flow(..., inputs={...})``), the Python spelling of a used flow's
+  ``inputs:`` block.
+  """
+
+  def __init__(self, driver):
+    self._driver = driver
+
+  def __getitem__(self, name):
+    return self._driver.get_input_field(name)
+
+
 class Context:
-  def __init__(self, driver, has_data_pool):
+  def __init__(self, driver, has_data_pool, has_inputs=False):
     self._driver = driver
     self.http = Http(driver)
     self.graphql = GraphQL(driver)
     self.ws = WS(driver)
     self.grpc = GRPC(driver)
     self.prompt = Prompt(driver)
+    self.use = Use(driver)
     self.vars = VarsProxy(driver)
     self.env = EnvProxy(driver)
     self._has_data_pool = has_data_pool
+    self._has_inputs = has_inputs
+
+  @property
+  def inputs(self):
+    if not self._has_inputs:
+      raise FlowCompileError(
+        "ctx.inputs is only available when Flow(..., inputs=...) declares inputs"
+      )
+    return InputsProxy(self._driver)
 
   def secret(self, value):
     """Flags a value the step computed -- a token minted mid-flow, a signed
