@@ -44,14 +44,43 @@ class Response:
     return PendingExtraction(self._builder, path)
 
 
+class UseResult:
+  """What ``ctx.use(...)`` returns. A used flow's outputs are read from a
+  *later* step, as ``ctx.vars[...]`` -- not from this call's return value --
+  matching the Go engine's rule that a use step cannot itself extract,
+  assert, or throttle (its flow already declared what it returns).
+  """
+
+  def __init__(self, step_id, outputs):
+    self.step_id = step_id
+    self.outputs = outputs
+
+  def _refuse(self, what):
+    raise FlowCompileError(
+      f"step {self.step_id!r}: {what} does not apply to a use step -- read "
+      "its flow's outputs from a later step, as "
+      f"ctx.vars[{self.step_id!r} + '.' + <output name>]"
+    )
+
+  @property
+  def status(self):
+    self._refuse("status")
+
+  def header(self, name):
+    self._refuse("header(...)")
+
+  def json_path(self, path):
+    self._refuse("json_path(...)")
+
+
 class TraceDriver:
   """Accumulates the pieces of one ``ir.Step`` as a step function traces.
 
-  Implements the driver protocol Http/GraphQL/WS/GRPC/VarsProxy/UserProxy/
-  EnvProxy call into: call(), graphql(), ws(), grpc(), set_var(), get_var(),
-  get_user_field(), get_env(). kind/spec is the IR step type the traced
-  request compiles to ("call", "graphql", "ws" or "grpc") and that type's
-  block.
+  Implements the driver protocol Http/GraphQL/WS/GRPC/Use/VarsProxy/
+  UserProxy/EnvProxy/InputsProxy call into: call(), graphql(), ws(), grpc(),
+  use(), set_var(), get_var(), get_user_field(), get_env(), get_input_field().
+  kind/spec is the IR step type the traced request compiles to ("call",
+  "graphql", "ws", "grpc" or "use") and that type's block.
   """
 
   def __init__(self, step_id, available_vars):
@@ -154,6 +183,43 @@ class TraceDriver:
       spec["headers"] = {k: str(v) for k, v in headers.items()}
     self.set_request("grpc", spec)
     return Response(self)
+
+  def use(self, target, with_=None):
+    flow_ir = target._compiled_flow_shape()
+    flow_name = flow_ir["name"]
+    with_map = {k: str(v) for k, v in (with_ or {}).items()}
+    declared = {i["name"] for i in flow_ir.get("inputs", [])}
+    for k in with_map:
+      if k not in declared:
+        raise FlowCompileError(
+          f"step {self.step_id!r}: with_ sets {k!r}, which flow {flow_name!r} "
+          "does not declare as an input"
+        )
+    for i in flow_ir.get("inputs", []):
+      if i["name"] not in with_map and "default" not in i:
+        raise FlowCompileError(
+          f"step {self.step_id!r}: flow {flow_name!r} requires input "
+          f"{i['name']!r}: pass it with with_= or give it a default"
+        )
+
+    spec = {"path": target._use_path(), "flow": flow_ir}
+    if with_map:
+      spec["with"] = with_map
+    self.set_request("use", spec)
+    outputs = flow_ir.get("outputs", [])
+    for o in outputs:
+      self.available_vars.add(f"{self.step_id}.{o}")
+    return UseResult(self.step_id, outputs)
+
+  def get_input_field(self, name):
+    ref = f"inputs.{name}"
+    if ref not in self.available_vars:
+      declared = sorted(r[7:] for r in self.available_vars if r.startswith("inputs."))
+      raise FlowCompileError(
+        f"ctx.inputs[{name!r}] is not declared by this flow's inputs "
+        f"(available: {declared!r})"
+      )
+    return TemplateRef(ref, builder=self)
 
   def prompt(
     self, name, *, template=None, variant=None, timeout=None, pace=None, burst=None
