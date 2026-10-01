@@ -96,6 +96,88 @@ func TestWaterfallOrdersCausallyAndKindsSpans(t *testing.T) {
 	}
 }
 
+// useTrace builds a flow root shaped like #102/#105's authenticated_checkout:
+// a `use` step ("auth") whose child is the used flow's own call step
+// ("login"), which in turn gets the usual network and extraction children.
+// The used flow's step sits one level deeper than a flat flow's steps do —
+// the shape #105 checks flame/waterfall classification against.
+func useTrace() *span.Span {
+	root := span.New("flow:authenticated_checkout_use", 0)
+	root.Duration = 50 * time.Millisecond
+
+	auth := span.New("auth", 0)
+	auth.Duration = 40 * time.Millisecond
+	root.Children = []*span.Span{auth}
+
+	login := span.New("login", 0)
+	login.Duration = 35 * time.Millisecond
+	auth.Children = []*span.Span{login}
+
+	call := login.Child("http_call", 0)
+	call.Duration = 30 * time.Millisecond
+	login.Child("token", 30*time.Millisecond).Duration = 0
+
+	return root
+}
+
+// TestWaterfallClassifiesNestedUseStepsAsSteps pins #105's fix: a used flow's
+// own step ("login") nests one level deeper than a flat flow's steps, but it
+// is still a step — not the flow's own extraction/assertion logic, which is
+// the only other thing classify() previously expected to find below depth 1.
+func TestWaterfallClassifiesNestedUseStepsAsSteps(t *testing.T) {
+	rows := report.WaterfallRows(useTrace())
+	byName := map[string]report.Row{}
+	for _, r := range rows {
+		byName[r.Name] = r
+	}
+
+	if got := byName["auth"].Kind; got != report.KindStep {
+		t.Errorf("auth (the use step) classified %q, want %q", got, report.KindStep)
+	}
+	if got := byName["login"].Kind; got != report.KindStep {
+		t.Errorf("login (the used flow's step, depth 2) classified %q, want %q", got, report.KindStep)
+	}
+	if got := byName["http_call"].Kind; got != report.KindNet {
+		t.Errorf("http_call under a nested step classified %q, want %q", got, report.KindNet)
+	}
+	if got := byName["token"].Kind; got != report.KindLogic {
+		t.Errorf("the extraction leaf classified %q, want %q", got, report.KindLogic)
+	}
+}
+
+// TestFlameFramesNestUnderUseStep checks the folded path and kind for a
+// used flow's step: "auth.login", a step frame, not flow/logic.
+func TestFlameFramesNestUnderUseStep(t *testing.T) {
+	f := span.NewFolded()
+	f.Add(useTrace())
+	frames := report.FlameFrames(f)
+
+	byPath := map[string]report.Frame{}
+	for _, fr := range frames {
+		byPath[fr.Path] = fr
+	}
+
+	path := "flow:authenticated_checkout_use.auth.login"
+	login, ok := byPath[path]
+	if !ok {
+		t.Fatalf("no frame at %s, got paths %v", path, pathsOf(frames))
+	}
+	if login.Kind != report.KindStep {
+		t.Errorf("%s classified %q, want %q", path, login.Kind, report.KindStep)
+	}
+	if login.Total != 35*time.Millisecond {
+		t.Errorf("auth.login total = %v, want 35ms", login.Total)
+	}
+}
+
+func pathsOf(frames []report.Frame) []string {
+	out := make([]string, len(frames))
+	for i, f := range frames {
+		out[i] = f.Path
+	}
+	return out
+}
+
 func TestPickTracePrefersFailureThenThrottle(t *testing.T) {
 	ok := span.New("flow:a", 0)
 	ok.Duration = time.Second // slowest, but healthy

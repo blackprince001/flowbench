@@ -26,11 +26,15 @@ var phases = map[string]bool{
 	"transfer":  true,
 }
 
-// classify maps a span name at a given depth to its kind. Extraction spans are
-// named for the variable they bind, so they are identified by position: any
-// unrecognized name below a step is the flow's own logic. A retry's `attempt N`
-// wrapper is network, not logic — it is the call, made again.
-func classify(name string, depth int) Kind {
+// classify maps a span to its kind from its name, depth, and whether it has
+// children. Extraction spans are named for the variable they bind, so below
+// depth 1 they are told apart from a used flow's own nested steps (#105) by
+// children: an extraction or assertion leaf never has any, while a nested
+// step almost always does (at least a network leg) — the one structural
+// signal left once a flow can nest inside a `use` step, since spans carry no
+// kind of their own (ADR 0007). A retry's `attempt N` wrapper is network, not
+// logic — it is the call, made again.
+func classify(name string, depth int, hasChildren bool) Kind {
 	switch {
 	case depth == 0 || strings.HasPrefix(name, "flow:"):
 		return KindFlow
@@ -40,7 +44,7 @@ func classify(name string, depth int) Kind {
 		return KindRetry
 	case strings.HasPrefix(name, "assert_"):
 		return KindLogic
-	case depth == 1:
+	case depth == 1, hasChildren:
 		return KindStep
 	default:
 		return KindLogic

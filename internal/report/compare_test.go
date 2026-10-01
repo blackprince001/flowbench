@@ -133,6 +133,69 @@ func TestMarkRegressedStepFindsTheSlowedStep(t *testing.T) {
 	}
 }
 
+// slowUseTrace is useTrace with the nested "login" step inflated — a
+// regression inside a used flow, not at the top level.
+func slowUseTrace() *span.Span {
+	root := span.New("flow:authenticated_checkout_use", 0)
+	root.Duration = 250 * time.Millisecond
+
+	auth := span.New("auth", 0)
+	auth.Duration = 240 * time.Millisecond
+	root.Children = []*span.Span{auth}
+
+	login := span.New("login", 0)
+	login.Duration = 235 * time.Millisecond
+	auth.Children = []*span.Span{login}
+	login.Child("http_call", 0).Duration = 230 * time.Millisecond
+	login.Child("token", 230*time.Millisecond).Duration = 0
+
+	return root
+}
+
+// TestMarkRegressedStepSeesInsideAUseStep is #105's "cumulative folding across
+// runs works" acceptance, the regression half. MarkRegressedStep only looks at
+// KindStep frames, so before the classify fix a used flow's own step (depth 2,
+// previously misclassified as logic) was invisible to it — comparing two runs
+// of a flow with a `use` step either found nothing or pointed at the wrong
+// frame. auth wraps login with no component of its own, so a slowdown inside
+// login necessarily grows auth by the same amount — the two tie, and
+// MarkRegressedStep reports the outer step first, same as an inflated http_call
+// reporting its wrapping step (TestMarkRegressedStepFindsTheSlowedStep). What
+// #105 adds is proving the inner path still folds and compares correctly on
+// its own.
+func TestMarkRegressedStepSeesInsideAUseStep(t *testing.T) {
+	base := span.NewFolded()
+	base.Add(useTrace()) // login ~35ms
+	cur := span.NewFolded()
+	cur.Add(slowUseTrace()) // login ~235ms
+
+	framesCur := report.FlameFrames(cur)
+	framesBase := report.FlameFrames(base)
+	reg := report.MarkRegressedStep(framesCur, framesBase)
+	if reg == nil || reg.Step != "auth" {
+		t.Fatalf("the regression should be found (wrapping the slowed step), got %+v", reg)
+	}
+
+	loginPath := "flow:authenticated_checkout_use.auth.login"
+	var curLogin, baseLogin report.Frame
+	for _, f := range framesCur {
+		if f.Path == loginPath {
+			curLogin = f
+		}
+	}
+	for _, f := range framesBase {
+		if f.Path == loginPath {
+			baseLogin = f
+		}
+	}
+	if curLogin.Kind != report.KindStep || baseLogin.Kind != report.KindStep {
+		t.Fatalf("login must fold to a step frame in both runs, got cur=%q base=%q", curLogin.Kind, baseLogin.Kind)
+	}
+	if delta := curLogin.Total - baseLogin.Total; delta != 200*time.Millisecond {
+		t.Errorf("login grew by %v across runs, want 200ms (base=%v cur=%v)", delta, baseLogin.Total, curLogin.Total)
+	}
+}
+
 func TestRenderCompareShowsDeltasAndTheRegressedStep(t *testing.T) {
 	base := span.NewFolded()
 	base.Add(trace(0))

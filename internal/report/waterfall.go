@@ -51,7 +51,7 @@ func WaterfallRows(root *span.Span) []Row {
 	out := []Row{{
 		Name:     root.Name,
 		Path:     "0",
-		Kind:     classify(root.Name, 0),
+		Kind:     classify(root.Name, 0, len(root.Children) > 0),
 		Width:    100,
 		Duration: root.Duration,
 		Self:     root.SelfTime(),
@@ -69,7 +69,7 @@ func walk(out *[]Row, s *span.Span, path string, depth int, total time.Duration)
 	*out = append(*out, Row{
 		Name:     s.Name,
 		Path:     path,
-		Kind:     classify(s.Name, depth),
+		Kind:     classify(s.Name, depth, len(s.Children) > 0),
 		Depth:    depth,
 		Left:     left,
 		Width:    clamp(percent(s.Duration, total)+left) - left,

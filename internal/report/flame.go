@@ -78,7 +78,7 @@ func FlameFramesAt(f *span.Folded, zoom string) []Frame {
 	// while classification still sees the frame's real depth in the tree.
 	real := depthOf(zoom)
 	out := []Frame{{
-		Name: node.Name, Path: zoom, Kind: classify(node.Name, real),
+		Name: node.Name, Path: zoom, Kind: classify(node.Name, real, len(node.Children) > 0),
 		Left: 0, Width: 100, Total: node.Total, Self: node.Self, Count: node.Count,
 	}}
 	layout(&out, node, zoom, 1, real+1, 0, 100, node.Total)
@@ -166,7 +166,7 @@ func layout(out *[]Frame, n *span.FoldNode, parent string, depth, real int, left
 		*out = append(*out, Frame{
 			Name:  c.Name,
 			Path:  path,
-			Kind:  classify(c.Name, real),
+			Kind:  classify(c.Name, real, len(c.Children) > 0),
 			Depth: depth,
 			Left:  left,
 			Width: w,
