@@ -72,6 +72,63 @@ func TestThrottleStressVsIntegration(t *testing.T) {
 	}
 }
 
+// nestedCallFlow wraps callFlow's single call one level inside a `use` step —
+// the #105 acceptance shape for throttle classification: a throttle the
+// executor sees inside a used flow must still land as one Sample.Throttled on
+// the iteration, the same as a flat call, never double-counted (one use step
+// cannot see two throttled attempts) and never dropped.
+func nestedCallFlow(throttle *ir.ThrottleSpec) ir.Flow {
+	child := callFlow(throttle)
+	return ir.Flow{Name: "wrapper", Steps: []ir.Step{{
+		ID: "auth", Type: ir.StepUse,
+		Use: &ir.UseSpec{Path: "hit.flow.yaml", Flow: &child},
+	}}}
+}
+
+// TestThrottleInsideUseCountsOnce is #105's F3: nesting the throttled call
+// inside a `use` step must not change throttle_rate against the same flat run,
+// proving runUse's it.Throttled = it.Throttled || sub.Throttled (one bool per
+// iteration, not a counter) holds once a child flow is actually involved.
+func TestThrottleInsideUseCountsOnce(t *testing.T) {
+	srv := statusStub(http.StatusTooManyRequests)
+	defer srv.Close()
+
+	flat, err := executor.Run(context.Background(), executor.Options{
+		Schedule: holdSchedule(ir.ModeStress, 20, 200*time.Millisecond),
+		Flows:    []ir.Flow{callFlow(nil)},
+		BaseURL:  srv.URL,
+	})
+	if err != nil {
+		t.Fatalf("flat Run: %v", err)
+	}
+
+	nested, err := executor.Run(context.Background(), executor.Options{
+		Schedule: holdSchedule(ir.ModeStress, 20, 200*time.Millisecond),
+		Flows:    []ir.Flow{nestedCallFlow(nil)},
+		BaseURL:  srv.URL,
+	})
+	if err != nil {
+		t.Fatalf("nested Run: %v", err)
+	}
+
+	if nested.ThrottleRate() != 1 {
+		t.Fatalf("nested: ThrottleRate() = %.2f, want 1 (every iteration throttled once)", nested.ThrottleRate())
+	}
+	if len(nested.Samples) == 0 || nested.Throttled() != len(nested.Samples) {
+		t.Fatalf("nested: %d of %d flow-runs throttled, want all — nesting must not drop the signal", nested.Throttled(), len(nested.Samples))
+	}
+	if nested.ErrorRate() != 0 || nested.Failed() != 0 || nested.Aborted {
+		t.Fatalf("nested: 429s must not count as errors in stress, got error_rate %.2f failed %d aborted %v",
+			nested.ErrorRate(), nested.Failed(), nested.Aborted)
+	}
+	// Same stub, same mode, same shape — the only difference is the use step
+	// wrapping the call, so the two runs' throttle accounting must match.
+	if nested.ThrottleRate() != flat.ThrottleRate() {
+		t.Errorf("nesting the call inside a use step changed throttle_rate: flat %.2f vs nested %.2f — a throttle inside a child must count exactly like a flat one",
+			flat.ThrottleRate(), nested.ThrottleRate())
+	}
+}
+
 // TestThrottleMappingAndOverride covers author-mapped statuses and the per-step
 // as_error override.
 func TestThrottleMappingAndOverride(t *testing.T) {
