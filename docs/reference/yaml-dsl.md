@@ -138,6 +138,8 @@ Pre-run errors: a required input with no `with` value, a `with` key that is not 
 
 Two more apply to nesting. A cycle (`a.flow.yaml → b.flow.yaml → a.flow.yaml`) is refused before the run and the message names every file in it, as is a chain deeper than 8. An error inside a used file points at that file's own line and column and ends with the `use` steps that led there, like `(used via checkout:auth → login:token)`, so you edit the right file.
 
+`use` is measured and safe under load: the used flow is compiled once, not per iteration, with under 8 KiB of per-VU overhead at 10,000 VUs (see [the benchmark](../benchmarks/10k-vu-use-overhead.md)), and its steps fold and render correctly in the flame graph and waterfall, nested one level under the `use` step.
+
 ### `retry:`
 
 | Key | Meaning |
